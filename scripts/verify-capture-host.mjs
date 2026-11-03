@@ -205,7 +205,7 @@ try {
   process.chdir(temporary);
   const plugin = webObsDevApiPlugin();
   process.chdir(root);
-  preview = await createServer({ configFile: false, root: temporary, plugins: [plugin], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error' });
+  preview = await createServer({ configFile: false, root: temporary, plugins: [plugin], server: { host: '127.0.0.1', port: 0, watch: null }, logLevel: 'error' });
   await preview.listen();
   const endpoint = `http://127.0.0.1:${preview.httpServer.address().port}`;
   const response = await fetch(endpoint + '/__web_obs/crawl', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: origin, maxPages: 1, renderMode: 'never', downloadImages: false }) });
