@@ -235,7 +235,7 @@ try {
   });
   assert.equal(continued.status, 200);
   const continuationEvents = (await continued.text()).trim().split('\n').map(line => JSON.parse(line));
-  assert.equal(continuationEvents.filter(event => event.event === 'complete').length, 1);
+  assert.equal(continuationEvents.filter(event => event.event === 'complete').length, 1, 'Continuation must complete once: ' + JSON.stringify(continuationEvents.slice(-3)).slice(-2000));
   assert.equal(continuationEvents.at(-1).event, 'complete');
   assert.equal(continuationEvents.at(-1).operation, 'continue-links');
   assert.equal(continuationEvents.at(-1).siteId, id);
