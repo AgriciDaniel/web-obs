@@ -77,7 +77,7 @@ def is_same_site_host(candidate_host: str, target_host: str) -> bool:
 
 
 def canonicalize_crawl_url(url: str) -> Optional[str]:
-    """Normalize URL for deduplication (strip fragments, tracking params, trailing slash normalization)."""
+    """Normalize a URL to its published form (no fragment or tracking params, trailing slash kept)."""
     if not url or any(c.isspace() for c in url):
         return None
     try:
@@ -98,9 +98,9 @@ def canonicalize_crawl_url(url: str) -> Optional[str]:
     default_port = 443 if scheme == "https" else 80
     netloc = f"{host}:{port}" if port and port != default_port else host
 
+    # The trailing slash is part of the published address. A site that serves
+    # /about/ answers /about with a redirect, so it must not be stripped here.
     path = re.sub(r"/{2,}", "/", parsed.path or "/")
-    if path != "/" and path.endswith("/"):
-        path = path.rstrip("/")
 
     # Strip noisy marketing query params while preserving meaningful query keys if non-tracking
     clean_query = ""
@@ -116,6 +116,22 @@ def canonicalize_crawl_url(url: str) -> Optional[str]:
         clean_query = "&".join(kept)
 
     return urlunparse((scheme, netloc, path, parsed.params, clean_query, ""))
+
+
+def url_match_key(url: str) -> Optional[str]:
+    """Slash-insensitive key for deciding that two URL forms name the same page.
+
+    Use it to match or deduplicate. Never fetch or store it: the published form
+    from canonicalize_crawl_url is the address a site actually serves.
+    """
+    canonical = canonicalize_crawl_url(url)
+    if canonical is None:
+        return None
+    parsed = urlparse(canonical)
+    path = parsed.path
+    if path != "/" and path.endswith("/"):
+        path = path.rstrip("/") or "/"
+    return urlunparse((parsed.scheme, parsed.netloc, path, parsed.params, parsed.query, ""))
 
 
 def _origin_from_target(target_url: str) -> str:
@@ -430,9 +446,16 @@ def discover_and_expand_sitemaps(
                 warn(f"Uncompressed sitemap exceeded byte limit: {sm_url}")
             continue
 
+        final_sitemap_url = fetched["final_url"]
+        if final_sitemap_url in {row["url"] for row in result.sitemaps_found}:
+            # Several paths can redirect to one sitemap (Rank Math sends /sitemap.xml
+            # to /sitemap_index.xml). Count the file once and do not re-read its URLs.
+            visited_sitemaps.add(final_sitemap_url)
+            continue
+        visited_sitemaps.add(final_sitemap_url)
         result.sitemaps_found.append(
             {
-                "url": fetched["final_url"],
+                "url": final_sitemap_url,
                 "source": source,
                 "kind": kind,
                 "url_count": len(entries),

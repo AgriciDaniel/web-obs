@@ -88,7 +88,7 @@ def build_pages_base_yaml(domain_folder: str, clean_domain: str,
         "filters": {"and": common},
         "properties": {
             "note.authority_score": {"displayName": "Relative internal-link score"},
-            "note.response_time_ms": {"displayName": "Response duration (ms)"},
+            "note.response_time_ms": {"displayName": "Final request duration (ms)"},
             "note.path": {"displayName": "URL path"},
             "note.health": {"displayName": "Recorded state"},
         },

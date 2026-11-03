@@ -20,6 +20,7 @@ export function parseSiteManifest(value: unknown): SiteGraphManifest {
   if (value.captureStatus !== undefined && !['complete', 'partial'].includes(String(value.captureStatus))) return fail('invalid capture status');
   if (value.preservationStatus !== undefined && value.preservationStatus !== 'conflicts') return fail('invalid preservation status');
   if (value.captureWarnings !== undefined && !strings(value.captureWarnings)) return fail('invalid coverage warnings');
+  if (value.captureFindings !== undefined && !strings(value.captureFindings)) return fail('invalid capture findings');
   if (value.captureProvenance !== undefined) {
     const provenance = value.captureProvenance;
     if (!object(provenance) || typeof provenance.engineSha256 !== 'string' || !object(provenance.configuration) || !object(provenance.runtime) || typeof provenance.runtime.pythonVersion !== 'string' || typeof provenance.runtime.platform !== 'string') return fail('invalid capture provenance');
@@ -31,7 +32,7 @@ export function parseSiteManifest(value: unknown): SiteGraphManifest {
   const stats = value.stats;
   const statNames = ['pagesCrawled', 'sitemapsFound', 'sitemapUrlsTotal', 'internalEdges', 'externalDomains', 'externalEdges', 'localImagesDownloaded', 'orphanPages', 'unlistedPages', 'brokenOrRedirectPages'];
   if (!object(stats) || statNames.some((key) => !count(stats[key]))) return fail('invalid capture totals');
-  for (const key of ['pagesWithSeoIssues', 'avgResponseTimeMs']) if (stats[key] !== undefined && !count(stats[key])) return fail(`invalid ${key}`);
+  for (const key of ['pagesWithSeoIssues', 'avgResponseTimeMs', 'medianResponseTimeMs', 'avgFetchDurationMs']) if (stats[key] !== undefined && !count(stats[key])) return fail(`invalid ${key}`);
   if (!Array.isArray(value.nodes) || value.nodes.length > 20000 || !Array.isArray(value.edges) || value.edges.length > 200000) return fail('invalid graph inventory');
   const nodeIds = new Set<string>();
   for (const node of value.nodes) {

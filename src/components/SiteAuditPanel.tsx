@@ -117,6 +117,7 @@ export function SiteAuditPanel({ manifest, onClose, onInspectPage, onOpenNote, o
           <article className="wo-audit-card wo-audit-scope"><span className="wo-audit-kicker">Know the scope</span><h3>Not assessed</h3><ul>{audit.notAssessed.map(area => <li key={area}><span>{area}</span><span>Not assessed</span></li>)}</ul><p className="wo-audit-note">These require separate evidence and review. There is no overall health grade.</p></article>
         </aside>
       </div>
+      {(manifest.captureFindings?.length ?? 0) > 0 && <details className="wo-audit-warnings"><summary>{manifest.captureFindings!.length} broken resources found while capturing</summary><ul>{manifest.captureFindings!.map((finding, index) => <li key={index}>{finding}</li>)}</ul></details>}
       {(manifest.captureWarnings?.length ?? 0) > 0 && <details className="wo-audit-warnings"><summary>{manifest.captureWarnings!.length} capture warnings</summary><ul>{manifest.captureWarnings!.map((warning, index) => <li key={index}>{warning}</li>)}</ul></details>}
       <footer className="wo-audit-footer"><span>Saved observations · No new scan is running</span><button type="button" className="wo-audit-text-button" onClick={() => onOpenNote(`sites/${manifest.siteId}/_dashboard.md`)}>Open capture dashboard <ArrowUpRight size={12} aria-hidden="true" /></button></footer>
     </div>

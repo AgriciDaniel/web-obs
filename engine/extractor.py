@@ -21,7 +21,7 @@ from bs4 import BeautifulSoup, Tag
 from markdown_converter import convert_html_to_markdown
 from resources import classify_resource, extract_resource_references, fetch_asset, srcset_urls
 from site_intel import canonicalize_external_domain
-from sitemap import canonicalize_crawl_url, is_same_site_host
+from sitemap import canonicalize_crawl_url, is_same_site_host, url_match_key
 from page_fetch import fetch_page_html
 
 
@@ -336,6 +336,18 @@ def _distill_schema_entities(schema_blocks: list[dict], page_url: str) -> dict:
     }
 
 
+def _is_decorative_image(img) -> bool:
+    """True when the image or an ancestor is hidden from assistive technology or marked presentational."""
+    node = img
+    while node is not None and getattr(node, "attrs", None) is not None:
+        if str(node.get("aria-hidden") or "").lower() == "true":
+            return True
+        if str(node.get("role") or "").lower() in ("presentation", "none"):
+            return True
+        node = node.parent
+    return False
+
+
 def extract_page_data(
     html: str,
     page_url: str,
@@ -442,10 +454,15 @@ def extract_page_data(
             if ltype == "text/markdown" and full_l not in markdown_alternates:
                 markdown_alternates.append(full_l)
 
-    # Heading hierarchy + level-skip check in DOM order
+    # Heading hierarchy + level-skip check in DOM order. Skips are judged inside the main
+    # content when the page has one. Headings in site-wide template regions (header, nav,
+    # footer, aside) are counted separately so a footer widget cannot flag every page.
     headings: dict[str, list[str]] = {"h1": [], "h2": [], "h3": [], "h4": []}
     heading_level_skips = 0
+    template_heading_skips = 0
+    main_root = soup.find("main") or soup.find(attrs={"role": "main"}) or soup.find("article")
     prev_h_level: Optional[int] = None
+    prev_template_level: Optional[int] = None
     for h in soup.find_all(["h1", "h2", "h3", "h4", "h5", "h6"]):
         if h.get("aria-hidden") == "true":
             continue
@@ -453,9 +470,20 @@ def extract_page_data(
         if not txt:
             continue
         lvl = int(h.name[1])
-        if prev_h_level is not None and lvl > prev_h_level + 1:
-            heading_level_skips += 1
-        prev_h_level = lvl
+        in_template = h.find_parent(["header", "nav", "footer", "aside"]) is not None
+        in_main = main_root is not None and (h is main_root or main_root in h.parents)
+        if main_root is not None and not in_main:
+            # Outside the main content: template regions are tallied apart from the content flow.
+            if prev_template_level is not None and lvl > prev_template_level + 1:
+                template_heading_skips += 1
+            prev_template_level = lvl
+        else:
+            if prev_h_level is not None and lvl > prev_h_level + 1:
+                if in_template:
+                    template_heading_skips += 1
+                else:
+                    heading_level_skips += 1
+            prev_h_level = lvl
         if h.name in headings:
             headings[h.name].append(txt)
 
@@ -500,6 +528,7 @@ def extract_page_data(
     images: list[dict] = []
     seen_imgs: set[str] = set()
     images_missing_alt = 0
+    images_empty_alt = 0
     images_missing_dimensions = 0
 
     if og_image and og_image.startswith(("http://", "https://")):
@@ -513,9 +542,14 @@ def extract_page_data(
         if not best_src:
             continue
         img["src"] = best_src
-        alt_val = (img.get("alt") or "").strip()
-        if not alt_val:
-            images_missing_alt += 1
+        alt_attr = img.get("alt")
+        alt_val = (alt_attr or "").strip()
+        if alt_attr is None:
+            if not _is_decorative_image(img):
+                images_missing_alt += 1
+        elif not alt_attr.strip() and not _is_decorative_image(img):
+            # An empty alt is valid for decorative images, but it is worth a look on content images.
+            images_empty_alt += 1
         if not img.get("width") or not img.get("height"):
             images_missing_dimensions += 1
         if best_src in seen_imgs:
@@ -767,8 +801,9 @@ def extract_page_data(
         title = headings["h1"][0] if headings["h1"] else urlparse(page_url).path.strip("/") or "Home"
 
     # Canonical alignment check
-    norm_self = canonicalize_crawl_url(page_url) or page_url
-    norm_canon = canonicalize_crawl_url(canonical) if canonical else ""
+    # A canonical that differs from the page only by its trailing slash still names this page.
+    norm_self = url_match_key(page_url) or page_url
+    norm_canon = url_match_key(canonical) if canonical else ""
     if not canonical:
         canonical_status = "missing"
     elif norm_canon == norm_self:
@@ -808,7 +843,7 @@ def extract_page_data(
         seo_issues.append("missing-viewport")
     if jsonld_invalid:
         seo_issues.append(f"invalid-jsonld ({jsonld_invalid})")
-    if hreflang_links and not any((canonicalize_crawl_url(h["url"]) or h["url"]) == norm_self for h in hreflang_links):
+    if hreflang_links and not any((url_match_key(h["url"]) or h["url"]) == norm_self for h in hreflang_links):
         seo_issues.append("hreflang-missing-self")
     if images_missing_alt > 0:
         seo_issues.append(f"images-missing-alt ({images_missing_alt})")
@@ -869,6 +904,8 @@ def extract_page_data(
         "images": images,
         "inline_svgs": inline_svgs,
         "images_missing_alt": images_missing_alt,
+        "images_empty_alt": images_empty_alt,
+        "template_heading_skips": template_heading_skips,
         "images_missing_dimensions": images_missing_dimensions,
         "seo_issues": seo_issues,
         "internal_links": internal_links,

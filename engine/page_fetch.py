@@ -69,7 +69,7 @@ def _looks_like_spa_shell(html):
 def _empty(url):
     return {'requested_url': url, 'final_url': url, 'status_code': None,
             'content_type': '', 'content_disposition': '', 'headers': {},
-            'response_time_ms': 0, 'html_bytes': 0, 'raw_sha256': '',
+            'response_time_ms': 0, 'ttfb_ms': 0, 'fetch_duration_ms': 0, 'redirect_hops': 0, 'html_bytes': 0, 'raw_sha256': '',
             'raw_bytes': b'', 'raw_kind': 'http-response-decoded', 'html': '',
             'redirect_chain': [], 'blocked_requests': [], 'render_used': False,
             'is_spa': False, 'resource_type': 'page', 'state': 'pending',
@@ -120,6 +120,7 @@ class PageFetcher:
             result.update({key: copy.deepcopy(value) for key, value in prior_http.items() if key in result})
             result.update(requested_url=url, error=None, error_kind=None, state='pending')
         started = time.monotonic()
+        hop_started = None
         inherited = request_deadline()
         deadline = min(inherited, started + timeout_sec) if inherited is not None else started + timeout_sec
         def remaining():
@@ -142,10 +143,12 @@ class PageFetcher:
                     visited.add(current)
                     if not allowed(current):
                         return _failed(result, 'policy', 'Page redirect refused by crawl policy.')
+                    hop_started = time.monotonic()
                     with safe_requests_session(current) as session:
                         response = session.get(current, headers=dict(DEFAULT_REQUEST_HEADERS),
                                                timeout=max(.001, remaining() / 2),
                                                allow_redirects=False, stream=True)
+                        result['ttfb_ms'] = int(round((time.monotonic() - hop_started) * 1000))
                         try:
                             remaining()
                             result.update(final_url=current, status_code=response.status_code,
@@ -254,7 +257,15 @@ class PageFetcher:
             kind = 'policy' if policy_refusal else 'timeout' if 'timeout' in type(exc).__name__.lower() else 'fetch'
             return _failed(result, kind, str(exc))
         finally:
-            result['response_time_ms'] = int(round((time.monotonic() - started) * 1000))
+            now = time.monotonic()
+            # fetch_duration_ms covers every redirect hop. response_time_ms is the final request
+            # alone, from connection to the last body byte, so a redirect no longer inflates it.
+            result['fetch_duration_ms'] = int(round((now - started) * 1000))
+            result['redirect_hops'] = len(result['redirect_chain'])
+            if result.get('render_used') or hop_started is None:
+                result['response_time_ms'] = result['fetch_duration_ms']
+            else:
+                result['response_time_ms'] = int(round((now - hop_started) * 1000))
 
 
 def fetch_page_html(url, render_mode='auto', timeout_sec=25, allow_url=None,

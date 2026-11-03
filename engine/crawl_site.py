@@ -414,7 +414,9 @@ def _capture_to_staging(
         delay_sec, robots_policies, policy_for, allow_resource, emit_event,
         check_external=check_external, parallel=parallel, image_mode=image_mode, extract_fn=extract_page_data)
     crawled_pages = collected["pages"]
-    url_aliases = collected["aliases"]
+    fetch_redirects = collected["aliases"]
+    link_form_mismatches = collected.get("link_form_mismatches") or {}
+    url_aliases = {**collected.get("form_aliases", {}), **fetch_redirects}
     image_file_by_url = collected["images"]
     html_samples = collected["html_samples"]
     home_headers = collected["home_headers"]
@@ -426,6 +428,8 @@ def _capture_to_staging(
     with open(os.path.join(site_root, "_robots-receipts.json"), "w", encoding="utf-8") as f:
         json.dump(collected["robots_receipts"], f, indent=2, ensure_ascii=False)
     capture_warnings = list(sm_result.warnings) + collected["warnings"]
+    capture_findings = list(collected.get("findings") or [])
+    # "partial" means pages or resources were not collected. A 404 the capture found is a finding.
     capture_status = "partial" if capture_warnings else "complete"
 
     if home_url in url_aliases and url_aliases[home_url] in crawled_pages:
@@ -468,6 +472,11 @@ def _capture_to_staging(
             hygiene["redirect"].append(page_url)
         elif "noindex" in meta_robots:
             hygiene["noindex"].append(page_url)
+    # A sitemap URL that redirects elsewhere is reported even when its destination was also
+    # crawled directly (the crawl keeps one record per destination).
+    for source_url, destination_url in fetch_redirects.items():
+        if source_url != destination_url and source_url != home_url and source_url in sm_result.entries and source_url not in hygiene["redirect"]:
+            hygiene["redirect"].append(source_url)
     from datetime import date as _date
     def _day(value):
         try:
@@ -707,6 +716,8 @@ def _capture_to_staging(
                 "id": ext_id,
                 "kind": "external-domain",
                 "health": "external",
+                "flags": [],
+                "linkFormMismatches": [],
                 "title": edom,
                 "url": f"https://{edom}",
                 "path": edom,
@@ -759,6 +770,9 @@ def _capture_to_staging(
         ext = pdata["extracted"]
         status = pdata["status_code"]
         resp_ms = pdata.get("response_time_ms", 0)
+        ttfb_ms = pdata.get("ttfb_ms", 0)
+        fetch_ms = pdata.get("fetch_duration_ms", 0)
+        redirect_hops = pdata.get("redirect_hops", 0)
         html_bytes = pdata.get("html_bytes", 0)
         in_sm = bool(pdata["in_sitemap"])
         c_depth = click_depth.get(u)
@@ -811,6 +825,8 @@ def _capture_to_staging(
         content_hash = ext.get("content_hash", "") if ext else ""
         images_count = len(ext["images"]) + len(ext.get("inline_svgs") or []) if ext else 0
         images_missing_alt = ext.get("images_missing_alt", 0) if ext else 0
+        images_empty_alt = ext.get("images_empty_alt", 0) if ext else 0
+        template_heading_skips = ext.get("template_heading_skips", 0) if ext else 0
         tables_count = ext.get("tables_count", 0) if ext else 0
         code_blocks_count = ext.get("code_blocks_count", 0) if ext else 0
         forms_count = len(ext.get("forms") or []) if ext else 0
@@ -820,12 +836,28 @@ def _capture_to_staging(
         page_issues = list(ext.get("seo_issues") or []) if ext else []
         if health in ("broken", "unavailable"):
             page_issues.append("page-" + health)
-        if health == "orphan":
+        # Independent flags: a page can be a redirect and also missing from the sitemap, so the
+        # single health value (kept for colours and the map) never decides these counts.
+        fetched_ok = health not in ("broken", "unavailable")
+        noindex_page = "noindex" in ((ext or {}).get("meta_robots") or "").lower()
+        page_flags: list[str] = []
+        if pdata["redirect_chain"] and u != home_url:
+            page_flags.append("redirect")
+        if fetched_ok and u != home_url and (c_depth is None or inlinks_total_count.get(u, 0) == 0):
+            page_flags.append("orphan")
+        if fetched_ok and u != home_url and has_any_sitemap and not in_sm and not noindex_page:
+            page_flags.append("unlisted")
+        if noindex_page:
+            page_flags.append("noindex")
+        if "orphan" in page_flags:
             page_issues.append("orphan-page")
-        elif health == "unlisted":
+        if "unlisted" in page_flags:
             page_issues.append("unlisted-in-sitemap")
         if pdata["redirect_chain"]:
             page_issues.append("redirected-source-url")
+        form_mismatches = link_form_mismatches.get(u) or {}
+        if form_mismatches:
+            page_issues.append(f"internal-link-form-mismatch ({len(form_mismatches)})")
         local_imgs = pdata["local_images"]
 
         page_ext_domains: dict[str, list[dict]] = {}
@@ -849,6 +881,8 @@ def _capture_to_staging(
             f"health: {yaml_quote(health)}",
             f"status_code: {status}",
             f"response_time_ms: {resp_ms}",
+            f"ttfb_ms: {ttfb_ms}",
+            f"redirect_hops: {redirect_hops}",
             f"html_kb: {round(html_bytes / 1024, 1)}",
             f"in_sitemap: {'true' if in_sm else 'false'}",
             f"url_depth: {u_depth}",
@@ -1008,6 +1042,8 @@ def _capture_to_staging(
                 "id": nid,
                 "kind": kind,
                 "health": health,
+                "flags": page_flags,
+                "linkFormMismatches": [{"linked": linked, "published": published} for linked, published in sorted(form_mismatches.items())[:10]],
                 "title": title,
                 "url": u,
                 "path": path_display,
@@ -1024,6 +1060,9 @@ def _capture_to_staging(
                 "contentHash": content_hash,
                 "rawPath": next((r.get("rawPath") for r in fetch_rows if r["url"] == u), None),
                 "responseTimeMs": resp_ms,
+                "ttfbMs": ttfb_ms,
+                "fetchDurationMs": fetch_ms,
+                "redirectHops": redirect_hops,
                 "htmlBytes": html_bytes,
                 "inSitemap": in_sm,
                 "urlDepth": u_depth,
@@ -1043,6 +1082,8 @@ def _capture_to_staging(
                 "imagesCount": images_count,
                 "localImagesCount": len(local_imgs),
                 "imagesMissingAlt": images_missing_alt,
+                "imagesEmptyAlt": images_empty_alt,
+                "templateHeadingSkips": template_heading_skips,
                 "tablesCount": tables_count,
                 "codeBlocksCount": code_blocks_count,
                 "formsCount": forms_count,
@@ -1145,8 +1186,8 @@ def _capture_to_staging(
     ]
 
     internal_only = [n for n in graph_nodes if n["kind"] != "external-domain"]
-    orphans = [n for n in internal_only if n["health"] == "orphan"]
-    unlisted = [n for n in internal_only if n["health"] == "unlisted"]
+    orphans = [n for n in internal_only if "orphan" in n["flags"]]
+    unlisted = [n for n in internal_only if "unlisted" in n["flags"]]
     broken = [n for n in internal_only if n["health"] in ("broken", "redirect")]
 
     # Aggregate contacts, clean social profiles, videos, forms, downloads, RSS, hreflang
@@ -1199,6 +1240,10 @@ def _capture_to_staging(
     funnel_platforms = detect_funnel_platforms(sorted(all_external_urls_raw))
     resp_times = [n["responseTimeMs"] for n in internal_only if n.get("responseTimeMs", 0) > 0]
     avg_ttfb_ms = int(round(sum(resp_times) / len(resp_times))) if resp_times else 0
+    sorted_times = sorted(resp_times)
+    median_response_ms = int(round(sorted_times[len(sorted_times) // 2])) if sorted_times else 0
+    fetch_times = [n["fetchDurationMs"] for n in internal_only if n.get("fetchDurationMs", 0) > 0]
+    avg_fetch_ms = int(round(sum(fetch_times) / len(fetch_times))) if fetch_times else 0
     pages_with_seo_issues = sum(1 for n in internal_only if n.get("seoIssues"))
     all_schema_types = sorted({st for n in internal_only for st in n.get("schemaTypes", []) if st})
 
@@ -1259,6 +1304,7 @@ def _capture_to_staging(
         "reclassifiedPagePaths": [n["obsidianPath"].removeprefix(f"sites/{domain_folder}/") for n in (previous_manifest or {}).get("nodes", []) if n.get("url") in {r['url'] for r in resources} and n.get("kind") != 'external-domain'],
         "captureStatus": capture_status,
         "captureWarnings": capture_warnings,
+        "captureFindings": capture_findings[:200],
         "siteId": domain_folder,
         "domain": clean_domain,
         "brandName": brand_name,
@@ -1278,6 +1324,8 @@ def _capture_to_staging(
             "brokenOrRedirectPages": len(broken),
             "pagesWithSeoIssues": pages_with_seo_issues,
             "avgResponseTimeMs": avg_ttfb_ms,
+            "medianResponseTimeMs": median_response_ms,
+            "avgFetchDurationMs": avg_fetch_ms,
         },
         "siteIntel": site_intel_bundle,
         "linkHealth": link_health,
@@ -1301,6 +1349,7 @@ def _capture_to_staging(
     site_summary = {
         "captureStatus": capture_status,
         "captureWarnings": capture_warnings,
+        "captureFindings": capture_findings[:200],
         "domain": clean_domain,
         "brandName": brand_name,
         "origin": origin,
@@ -1405,7 +1454,7 @@ def _capture_to_staging(
         f"- **Origin:** {origin}",
         f"- **Capture engine:** `{provenance['engineSha256']}`. Settings and runtime versions are in `_site-graph.json` and `_site-summary.json`.",
         f"- **Technology sample:** {len(html_samples)} of {stack_intel['coverage']['capturedHtmlPages']} HTML pages. {stack_intel['coverage']['selection']}. Security headers are read from the homepage and compared across the sampled pages.",
-        f"- **Captured:** `{captured_iso}` (`{manifest['elapsedSec']}s`, avg response duration `{avg_ttfb_ms} ms`)",
+        f"- **Captured:** `{captured_iso}` (`{manifest['elapsedSec']}s`, avg final-request duration `{avg_ttfb_ms} ms` (median `{median_response_ms} ms`; redirect hops excluded))",
         f"- **Pages Crawled:** `{manifest['stats']['pagesCrawled']}` (from `{manifest['stats']['sitemapUrlsTotal']}` sitemap URLs across `{manifest['stats']['sitemapsFound']}` sitemap file(s))",
         f"- **Local Assets Saved:** `{manifest['stats']['localImagesDownloaded']}` (`{site_intel_bundle['totalAssetsMb']} MB`)",
         f"- **External Domains Linked:** `{manifest['stats']['externalDomains']}`",

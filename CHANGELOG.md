@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.1.1 - 2026-11-03
+
+Accuracy fixes from a full capture of a live trailing-slash WordPress site. Behaviour changes are listed so you can tell why numbers differ from a 0.1.0 capture.
+
+### Fixed
+- **False redirects on trailing-slash sites.** Pages are now fetched and stored at the address the site publishes, with its trailing slash. Before, `/about/` was requested as `/about`, the site redirected back, and nearly every page was marked as a redirect (68 of 69 on the test site, 61 redirects in sitemap hygiene). A URL is reported as a redirect only when the published URL itself redirects, including a sitemap URL whose destination was also crawled.
+- **Pages missing from the sitemap are counted again.** A page used to carry one status, so a redirect hid "unlisted" and `unlistedPages` read 0. Each page now also carries independent `flags` (`redirect`, `orphan`, `unlisted`, `noindex`), and the orphan and unlisted counts come from them. The existing `health` value is unchanged and still drives colours.
+- **Sitemaps are counted once.** Several paths that redirect to one sitemap (for example `/sitemap.xml` to `/sitemap_index.xml`) no longer inflate `sitemapsFound` or `undeclaredSitemaps`.
+
+### Changed
+- **Response time is the final request only.** `responseTimeMs` now measures the final request, from connection to the last body byte, and no longer includes redirect hops. New fields: `ttfbMs`, `fetchDurationMs` (all hops) and `redirectHops`. New stats: `medianResponseTimeMs` and `avgFetchDurationMs`. The Site Intel label is "Avg page request time". Pages rendered in a browser still report the whole render time.
+- **Alt text.** Only a missing `alt` attribute counts as `images-missing-alt`. An empty `alt` is valid for decorative images and is counted separately as `imagesEmptyAlt`. An image counts as decorative when it or an ancestor has `aria-hidden="true"`, `role="presentation"` or `role="none"`.
+- **Heading levels.** `heading-level-skip` is judged inside the main content when the page has one. Skips in the header, navigation, footer and sidebar are counted separately as `templateHeadingSkips`.
+- **Capture status.** `captureStatus` is `partial` only when something was not collected (limits, budgets, blocked or failed fetches). A page or resource that answers 404 or 410 is a finding, listed in the new `captureFindings` and shown in Site Audit, and no longer makes the capture partial.
+- **Canonical checks** treat a canonical that differs from the page only by its trailing slash as the same page.
+
+### Added
+- `internal-link-form-mismatch` check: an internal link written in a different form than the published address (for example `/contact` on a site that publishes `/contact/`) is listed on the page that contains it, with the address it should use. These links usually redirect.
+- Regression test `scripts/verify-trailing-slash.py`, part of `npm run verify`.
+
+### Upgrade note
+Notes and map nodes from 0.1.1 use the published address, so a site first captured with 0.1.0 may show its URLs as changed on the first recapture.
+
 ## 0.1.0 - 2026-11-03
 
 First release.

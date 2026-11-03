@@ -124,7 +124,7 @@ export const SiteIntelDrawer: React.FC<SiteIntelDrawerProps> = ({
           <span className="wo-metric-val">{manifest.stats.pagesCrawled}</span>
         </div>
         <div className="wo-metric-card">
-          <span className="wo-metric-label">Avg response duration</span>
+          <span className="wo-metric-label" title="Average duration of each final page request. Redirect hops are not counted.">Avg page request time</span>
           <span className="wo-metric-val">
             {responseMs !== undefined && responseMs > 0 ? `${responseMs} ms` : 'No data'}
           </span>

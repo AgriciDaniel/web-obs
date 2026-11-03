@@ -8,7 +8,7 @@ from urllib.parse import urldefrag, urlparse
 
 from extractor import LocalAssetDownloader, extract_page_data
 from resources import classify_resource
-from sitemap import canonicalize_crawl_url, is_same_site_host
+from sitemap import canonicalize_crawl_url, is_same_site_host, url_match_key
 from site_intel import robots_url_decision
 
 MAX_ASSET_FILES = 500
@@ -39,8 +39,14 @@ def collect_site(origin, target_url, target_host, sitemap_urls, site_root,
     downloader = LocalAssetDownloader(str(root / 'assets'), max_images_total=MAX_ASSET_FILES,
         max_total_bytes=MAX_ASSET_BYTES, allow_url=allow_resource) if download_images else None
     pages, aliases, images, samples, headers = {}, {}, {}, {}, {}
+    # One published URL per page. Forms differing only by a trailing slash resolve to the
+    # first one registered (the sitemap form wins), and links written in another form are recorded.
+    published_forms, form_aliases, link_form_mismatches = {}, {}, {}
     sample_headers = {}
     receipts, records, sources, warnings = [], [], {}, []
+    # Warnings mean the capture is incomplete. Findings are broken things the capture found
+    # (a page or resource that answers 404 or 410). They do not make the capture partial.
+    findings = []
     robots_receipts = {}
     inventory, resource_aliases = {}, {}
     page_queue, asset_queue, link_queue = deque(), deque(), deque()
@@ -90,10 +96,22 @@ def collect_site(origin, target_url, target_host, sitemap_urls, site_root,
                 entry['references'].append(reference)
         return entry
 
+    def resolve_published(url):
+        literal = canonicalize_crawl_url(url)
+        if not literal:
+            return None, None
+        key = url_match_key(literal) or literal
+        return published_forms.setdefault(key, literal), literal
+
     def enqueue_page(url, source_page=None, label=''):
-        normalized = canonicalize_crawl_url(url)
+        normalized, literal = resolve_published(url)
         if not normalized or not is_same_site_host(urlparse(normalized).hostname or '', target_host):
             return
+        if literal != normalized:
+            form_aliases[literal] = normalized
+            if source_page:
+                mismatches = link_form_mismatches.setdefault(source_page, {})
+                mismatches[literal] = normalized
         existing = inventory.get(normalized)
         kind = existing['type'] if existing else classify_resource(normalized)['type']
         if kind != 'page':
@@ -284,11 +302,11 @@ def collect_site(origin, target_url, target_host, sitemap_urls, site_root,
             counts['pages']['completed'] += 1
         else:
             counts['pages']['failed'] += 1
-            warnings.append(f"{url}: {result.get('error') or 'HTTP ' + str(status)}")
+            (findings if status in (404, 410) else warnings).append(f"{url}: {result.get('error') or 'HTTP ' + str(status)}")
         if result.get('blocked_requests'):
             warnings.append(f'{url}: browser rendering excluded background or out-of-scope resources; content may be incomplete.')
         pages[effective] = {'url': effective, 'requested_url': url, 'final_url': final, 'status_code': status,
-            'response_time_ms': result.get('response_time_ms', 0), 'html_bytes': result.get('html_bytes', 0),
+            'response_time_ms': result.get('response_time_ms', 0), 'ttfb_ms': result.get('ttfb_ms', 0), 'fetch_duration_ms': result.get('fetch_duration_ms', 0), 'redirect_hops': result.get('redirect_hops', 0), 'html_bytes': result.get('html_bytes', 0),
             'error': result.get('error') or (None if extracted else f'HTTP {status}'),
             'error_kind': result.get('error_kind'), 'redirect_chain': result.get('redirect_chain', []),
             'render_used': result.get('render_used', False), 'is_spa': result.get('is_spa', False),
@@ -297,6 +315,8 @@ def collect_site(origin, target_url, target_host, sitemap_urls, site_root,
             'extracted': extracted, 'local_images': []}
 
     home = canonicalize_crawl_url(origin + '/') or origin + '/'
+    for url in sitemap_urls:
+        resolve_published(url)
     enqueue_page(home)
     enqueue_page(target_url)
     for url in sitemap_urls:
@@ -442,7 +462,8 @@ def collect_site(origin, target_url, target_host, sitemap_urls, site_root,
                                 continue
                             entry['downloadState'] = 'unavailable'
                             counts['media']['failed'] += 1
-                            warnings.append(f"{url}: resource was not saved ({entry.get('error') or (downloader.errors.get(url) if downloader else None) or 'unsupported response or byte budget'}).")
+                            missing = (result.get('status_code') or entry.get('statusCode')) in (404, 410)
+                            (findings if missing else warnings).append(f"{url}: resource was not saved ({entry.get('error') or (downloader.errors.get(url) if downloader else None) or 'unsupported response or byte budget'}).")
                     else:
                         if 'status' not in result:
                             result = {'url': url, 'finalUrl': url, 'status': 'unknown', 'statusCode': result.get('status_code'), 'attempted': True, 'reason': result.get('error') or 'Worker failed.', 'redirectChain': [], 'method': None}
@@ -476,8 +497,9 @@ def collect_site(origin, target_url, target_host, sitemap_urls, site_root,
         'html_samples': [samples[url] for url in sample_urls], 'sample_urls': sample_urls,
         'sample_headers': {url: sample_headers.get(url, {}) for url in sample_urls},
         'home_headers': headers, 'fetch_rows': sorted(receipts, key=lambda row: row['url']),
-        'page_records': sorted(records, key=lambda record: (record['url'] != home, record['url'], record.get('rawSha256') or '')), 'source_artifacts': sources, 'warnings': warnings,
+        'page_records': sorted(records, key=lambda record: (record['url'] != home, record['url'], record.get('rawSha256') or '')), 'source_artifacts': sources, 'warnings': warnings, 'findings': findings,
         'resources': ordered_resources, 'link_results': ordered_checks, 'downloader': downloader, 'robots_receipts': robots_receipts,
+        'form_aliases': form_aliases, 'link_form_mismatches': link_form_mismatches,
         'metrics': {'elapsedSec': round(time.monotonic() - started, 3), 'pages': len(ordered_pages),
                     'resources': len(ordered_resources), 'imagesBytes': (downloader.total_bytes if downloader else 0),
                     'transcriptBytes': saved_resource_bytes, 'transcriptsSaved': saved_resource_count,

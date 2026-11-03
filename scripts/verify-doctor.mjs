@@ -8,7 +8,7 @@ const out = await build({ entryPoints: ['src/plugin/doctorReport.ts'], bundle: t
 const mod = await import('data:text/javascript;base64,' + Buffer.from(out.outputFiles[0].text).toString('base64'));
 
 const good = {
-  desktopVault: true, pluginVersion: '0.1.0', engineFound: true, engineVersion: '0.1.0', engineMismatches: [],
+  desktopVault: true, pluginVersion: '0.1.1', engineFound: true, engineVersion: '0.1.1', engineMismatches: [],
   pythonBin: '/x/python3', pythonVersion: '3.14.2', missingCore: [], renderMode: 'auto',
   playwrightAvailable: true, chromiumAvailable: true, browserError: null, vaultWritable: true,
   network: { ok: true, detail: 'Outbound HTTPS works.' },

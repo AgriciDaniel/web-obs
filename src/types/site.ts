@@ -55,7 +55,16 @@ export interface SiteNode {
   section: string;
   obsidianPath: string;
   statusCode: number;
+  /** Duration of the final request only (connect to last body byte). Redirect hops are excluded. */
   responseTimeMs?: number;
+  /** Time to the first response byte of the final request. */
+  ttfbMs?: number;
+  /** Total fetch time including every redirect hop. */
+  fetchDurationMs?: number;
+  redirectHops?: number;
+  /** Independent page statuses, for example unlisted, orphan, redirect, noindex. */
+  flags?: string[];
+  linkFormMismatches?: { linked: string; published: string }[];
   htmlBytes?: number;
   inSitemap: boolean;
   urlDepth: number;
@@ -75,6 +84,8 @@ export interface SiteNode {
   imagesCount: number;
   localImagesCount: number;
   imagesMissingAlt?: number;
+  imagesEmptyAlt?: number;
+  templateHeadingSkips?: number;
   tablesCount?: number;
   codeBlocksCount?: number;
   formsCount?: number;
@@ -126,6 +137,8 @@ export interface SiteStats {
   brokenOrRedirectPages: number;
   pagesWithSeoIssues?: number;
   avgResponseTimeMs?: number;
+  medianResponseTimeMs?: number;
+  avgFetchDurationMs?: number;
 }
 
 export interface SiteTechStackIntel {
@@ -275,6 +288,8 @@ export interface SiteGraphManifest {
   captureStatus?: 'complete' | 'partial';
   preservationStatus?: 'conflicts';
   captureWarnings?: string[];
+  /** Broken things the capture found, such as a 404 image. They do not make the capture partial. */
+  captureFindings?: string[];
   siteId: string;
   domain: string;
   brandName?: string;
