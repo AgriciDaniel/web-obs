@@ -80,17 +80,34 @@ def promotion_signals():
 
 
 
-def replace_directory(source, destination):
-    """os.replace for folders. Windows can briefly deny renaming a folder that was just written."""
+def replace_directory(source, destination, copy_fallback=False):
+    """os.replace for folders. Windows can deny renaming a folder that was just written.
+
+    The staged capture is retried briefly. When it is still refused and copy_fallback
+    is set, the folder is copied next to its destination and that fresh copy is renamed.
+    """
     delay = 0.05
     for attempt in range(8):
         try:
             return os.replace(source, destination)
         except PermissionError:
-            if os.name != 'nt' or attempt == 7:
+            if os.name != 'nt':
                 raise
+            if attempt == 7:
+                if not copy_fallback:
+                    raise
+                break
             time.sleep(delay)
             delay = min(delay * 2, 0.5)
+    incoming = Path(destination).parent / ('.incoming-' + Path(destination).name)
+    shutil.rmtree(incoming, ignore_errors=True)
+    try:
+        shutil.copytree(source, incoming)
+        os.replace(incoming, destination)
+    except BaseException:
+        shutil.rmtree(incoming, ignore_errors=True)
+        raise
+    shutil.rmtree(source, ignore_errors=True)
 
 
 class CaptureTransaction:
@@ -284,7 +301,7 @@ class CaptureTransaction:
             try:
                 if previous and {name: file_hash(file) for name, file in files_under(history).items()} != previous_hashes:
                     raise RuntimeError('Vault files changed during publication. The previous capture was preserved; retry the capture.')
-                replace_directory(staged, active)
+                replace_directory(staged, active, copy_fallback=True)
             except BaseException:
                 if history.exists() and not active.exists():
                     replace_directory(history, active)
@@ -295,7 +312,7 @@ class CaptureTransaction:
     def __exit__(self, *_args):
         try:
             if self.stage and self.stage.exists():
-                shutil.rmtree(self.stage)
+                shutil.rmtree(self.stage, ignore_errors=os.name == 'nt')
         finally:
             if self.lock:
                 self.lock.close()
