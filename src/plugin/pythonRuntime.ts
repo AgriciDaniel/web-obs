@@ -34,7 +34,7 @@ export function resolvePythonCandidate(
     }
   }
 
-  return trimmed && trimmed !== 'python3' && trimmed !== 'python' ? trimmed : DEFAULT_PYTHON;
+  return DEFAULT_PYTHON;
 }
 
 function execFileAsync(
