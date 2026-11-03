@@ -77,6 +77,7 @@ class BrowserDiscoveryTests(unittest.TestCase):
             self.assertEqual(resolve_chromium_executable(self.driver)['executablePath'], str(self.host))
             self.assertEqual(os.environ['PLAYWRIGHT_BROWSERS_PATH'], '')
 
+    @unittest.skipIf(os.name == 'nt', 'Windows has no executable permission bit')
     def test_nonexecutable_file_is_not_ready(self):
         self.binary(self.host)
         self.host.chmod(0o644)
