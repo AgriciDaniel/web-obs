@@ -213,7 +213,7 @@ try {
   const events = (await response.text()).trim().split('\n').map((line) => JSON.parse(line));
   const laneEvent = events.findLast((event) => event.event === 'pipeline_progress');
   assert.ok(laneEvent, 'Actual crawler must emit pipeline progress');
-  assert.equal(events.filter((event) => event.event === 'complete').length, 1, 'Completion must be emitted once');
+  assert.equal(events.filter((event) => event.event === 'complete').length, 1, 'Completion must be emitted once: ' + JSON.stringify(events).slice(0, 1500));
   assert.ok(events.findLastIndex((event) => event.event === 'pipeline_progress') < events.length - 1, 'Pipeline progress must precede completion');
   assert.equal(laneEvent.pages.completed, 1);
   assert.equal(laneEvent.media.completed, 0);

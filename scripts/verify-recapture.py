@@ -249,13 +249,14 @@ class RecaptureTests(unittest.TestCase):
 
     def test_failed_promotion_rolls_back_previous_capture(self):
         import capture_store
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory_raw:
+            directory = os.path.realpath(directory_raw)
             manifest = self.capture(directory)
             active = Path(directory) / 'sites' / manifest['siteId']
             before = (active / '_site-graph.json').read_bytes()
             original = os.replace
             def fail_promotion(source, destination):
-                if '/staging/' in str(source) and Path(destination) == active:
+                if '/staging/' in Path(source).as_posix() and Path(destination) == active:
                     raise RuntimeError('Promotion failed fixture')
                 return original(source, destination)
             with patch.object(capture_store.os, 'replace', fail_promotion):
@@ -279,13 +280,14 @@ class RecaptureTests(unittest.TestCase):
 
     def test_edit_after_history_rename_is_rolled_back_and_preserved(self):
         import capture_store
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory_raw:
+            directory = os.path.realpath(directory_raw)
             manifest = self.capture(directory)
             active = Path(directory) / 'sites' / manifest['siteId']
             original = os.replace
             def edit_after_rename(source, destination):
                 result = original(source, destination)
-                if Path(source) == active and '/history/' in str(destination):
+                if Path(source) == active and '/history/' in Path(destination).as_posix():
                     note = Path(destination) / 'pages/index.md'
                     note.write_text(note.read_text() + '\nEdit during promotion.\n')
                 return result
