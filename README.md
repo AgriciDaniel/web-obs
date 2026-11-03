@@ -31,7 +31,7 @@ python3.14 -m venv ~/web-obs-python
 
 Pages that need JavaScript to show anything are handled by an optional browser step. To turn it on, also run `~/web-obs-python/bin/pip install playwright` and then `~/web-obs-python/bin/playwright install chromium`. You can skip this and still capture most sites.
 
-Web-Obs is built for Obsidian on desktop and does not work on mobile. It is tested on Linux, and an automated check also runs on macOS and Windows. If something misbehaves on your system, please [open an issue](https://github.com/AgriciDaniel/web-obs/issues/new/choose).
+Web-Obs is built for Obsidian on desktop and does not work on mobile. It is tested on Linux, and its automated checks also pass on macOS. Windows is not fully tested yet: captures run, but image discovery has a known problem there. If something misbehaves on your system, please [open an issue](https://github.com/AgriciDaniel/web-obs/issues/new/choose).
 
 ## Install
 
