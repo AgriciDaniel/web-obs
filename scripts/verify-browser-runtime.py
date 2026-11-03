@@ -24,7 +24,13 @@ class BrowserDiscoveryTests(unittest.TestCase):
         self.home = Path(self.temp.name)
         self.relative = Path('chromium-1234/chrome-linux64/chrome')
         self.expected = self.home / '.var/app/test/cache/ms-playwright' / self.relative
-        self.host = self.home / '.cache/ms-playwright' / self.relative
+        if sys.platform == 'darwin':
+            self.cache = self.home / 'Library/Caches/ms-playwright'
+        elif os.name == 'nt':
+            self.cache = self.home / 'AppData/Local/ms-playwright'
+        else:
+            self.cache = self.home / '.cache/ms-playwright'
+        self.host = self.cache / self.relative
         self.driver = SimpleNamespace(chromium=SimpleNamespace(executable_path=str(self.expected)))
         self.environment = patch.dict(os.environ, {}, clear=True)
         self.environment.start()
@@ -54,7 +60,7 @@ class BrowserDiscoveryTests(unittest.TestCase):
         self.assertEqual(result['expectedPath'], str(self.expected))
 
     def test_old_browser_revision_is_not_selected(self):
-        self.binary(self.home / '.cache/ms-playwright/chromium-1233/chrome-linux64/chrome')
+        self.binary(self.cache / 'chromium-1233/chrome-linux64/chrome')
         self.assertIsNone(resolve_chromium_executable(self.driver)['executablePath'])
 
     def test_explicit_browser_override_is_not_bypassed(self):

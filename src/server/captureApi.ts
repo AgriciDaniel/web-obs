@@ -88,7 +88,7 @@ export function webObsDevApiPlugin(): PluginOption {
             ? [script, options.continueLinksSiteId!, '--vault', vaultRoot, '--continue-links']
             : [script, options.url, '--vault', vaultRoot, '--max-pages', String(options.maxPages), '--render', options.renderMode, '--image-mode', options.imageMode];
           if (!options.downloadImages) args.push('--no-images');
-          const child = spawn(fs.existsSync(venv) ? venv : 'python3', args, { cwd: vaultRoot });
+          const child = spawn(fs.existsSync(venv) ? venv : (process.env.WEB_OBS_PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3')), args, { cwd: vaultRoot });
           children.add(child);
           let terminal = false;
           let completed: Record<string, unknown> | undefined;

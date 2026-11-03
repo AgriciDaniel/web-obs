@@ -3,6 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
+/** Windows installs usually provide `python`, not `python3.14`. */
+export const DEFAULT_PYTHON = process.platform === 'win32' ? 'python' : 'python3.14';
+
 function venvPythonPath(venvDir: string): string {
   return process.platform === 'win32'
     ? path.join(venvDir, 'Scripts', 'python.exe')
@@ -31,7 +34,7 @@ export function resolvePythonCandidate(
     }
   }
 
-  return trimmed && trimmed !== 'python3' && trimmed !== 'python' ? trimmed : 'python3.14';
+  return trimmed && trimmed !== 'python3' && trimmed !== 'python' ? trimmed : DEFAULT_PYTHON;
 }
 
 function execFileAsync(

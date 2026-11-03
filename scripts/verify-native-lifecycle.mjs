@@ -400,6 +400,7 @@ function runtimeHarness(capabilities, { deferred = false, existingPaths = [], ex
   });
   return { runtime, calls };
 }
+const defaultPy = process.platform === 'win32' ? 'python' : 'python3.14';
 const core = { missingCore: [], pythonSupported: true, playwrightAvailable: false, chromiumExecutableAvailable: false };
 
 await test('Python below 3.14 is refused and a supported runtime passes the same bounded probe', async () => {
@@ -408,9 +409,9 @@ await test('Python below 3.14 is refused and a supported runtime passes the same
     const { runtime, calls } = runtimeHarness(capabilities);
     const result = await runtime.ensurePythonEngineReady('/synthetic', '/synthetic/engine/crawl_site.py', 'python3.14', undefined, { renderMode: 'never' });
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].command, 'python3.14');
+    assert.equal(calls[0].command, defaultPy);
     assert.match(calls[0].args[2], /sys\.version_info\s*>=\s*\(3,\s*14\)/);
-    assert.equal(result.pythonBin, 'python3.14');
+    assert.equal(result.pythonBin, defaultPy);
     if (pythonSupported) assert.equal(result.error, undefined);
     else {
       assert.match(result.error, /Python 3\.14\+/);
@@ -437,9 +438,9 @@ await test('default Python aliases prefer an existing local environment and pres
     }
     const { runtime, calls } = runtimeHarness(core);
     const result = await runtime.ensurePythonEngineReady('/synthetic', script, alias, undefined, { renderMode: 'never' });
-    assert.equal(result.pythonBin, 'python3.14');
+    assert.equal(result.pythonBin, defaultPy);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].command, 'python3.14');
+    assert.equal(calls[0].command, defaultPy);
   }
 });
 
@@ -456,10 +457,11 @@ await test('an unusable selected runtime fails without installation or an interp
   for (const configured of ['python3.14', '/chosen/python3.14']) {
     const { runtime, calls } = runtimeHarness(core, { execError: true });
     const result = await runtime.ensurePythonEngineReady('/synthetic', '/synthetic/engine/crawl_site.py', configured, undefined, { renderMode: 'never' });
-    assert.equal(result.pythonBin, configured);
+    const expectedBin = configured === 'python3.14' ? defaultPy : configured;
+    assert.equal(result.pythonBin, expectedBin);
     assert.match(result.error, /Python 3\.14\+/);
     assert.match(result.error, /Nothing was installed automatically/);
-    assert.deepEqual(calls.map(call => call.command), [configured]);
+    assert.deepEqual(calls.map(call => call.command), [expectedBin]);
   }
   const { runtime, calls } = runtimeHarness(core, { existingPaths: [local] });
   const result = await runtime.ensurePythonEngineReady('/synthetic', '/synthetic/engine/crawl_site.py', '/chosen/python3.14', undefined, { renderMode: 'never' });
