@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import time
 import signal
 import tempfile
 import uuid
@@ -78,6 +79,20 @@ def promotion_signals():
             signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
 
+
+def replace_directory(source, destination):
+    """os.replace for folders. Windows can briefly deny renaming a folder that was just written."""
+    delay = 0.05
+    for attempt in range(8):
+        try:
+            return os.replace(source, destination)
+        except PermissionError:
+            if os.name != 'nt' or attempt == 7:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.5)
+
+
 class CaptureTransaction:
     def __init__(self, vault_dir):
         self.vault = Path(vault_dir).resolve()
@@ -143,7 +158,7 @@ class CaptureTransaction:
             raise ValueError('Capture recovery path is a symlink.')
         if not active.exists() and history.exists():
             active.parent.mkdir(exist_ok=True)
-            os.replace(history, active)
+            replace_directory(history, active)
         journal.unlink()
 
     def commit(self, manifest, generated_paths=None):
@@ -265,14 +280,14 @@ class CaptureTransaction:
                 journal.unlink()
                 raise RuntimeError('Vault files changed during publication. The previous capture was preserved; retry the capture.')
             if active.exists():
-                os.replace(active, history)
+                replace_directory(active, history)
             try:
                 if previous and {name: file_hash(file) for name, file in files_under(history).items()} != previous_hashes:
                     raise RuntimeError('Vault files changed during publication. The previous capture was preserved; retry the capture.')
-                os.replace(staged, active)
+                replace_directory(staged, active)
             except BaseException:
                 if history.exists() and not active.exists():
-                    os.replace(history, active)
+                    replace_directory(history, active)
                 raise
             journal.unlink()
         return manifest
