@@ -17,6 +17,15 @@ Pipeline:
 
 from __future__ import annotations
 
+import sys as _sys
+
+# Windows pipes default to the system code page. Events and notes are UTF-8.
+for _stream in (_sys.stdout, _sys.stderr):
+    try:
+        _stream.reconfigure(encoding='utf-8')
+    except (AttributeError, ValueError):
+        pass
+
 import argparse
 from collections import deque
 from datetime import datetime, timezone

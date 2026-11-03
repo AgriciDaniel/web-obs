@@ -44,7 +44,7 @@ class BrowserDiscoveryTests(unittest.TestCase):
 
     def binary(self, path):
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text('local executable fixture')
+        path.write_text('local executable fixture', encoding='utf-8')
         path.chmod(0o755)
 
     def test_default_installation_wins(self):

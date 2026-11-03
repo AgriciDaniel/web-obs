@@ -139,14 +139,14 @@ class IntegratedTests(unittest.TestCase):
             site = Path(directory) / 'sites' / manifest['siteId']
             for name in ('_fetch-log.json', '_fetch-log.md', '_evidence-pack.md', '_link-health.json', '_pages.base', '_generated-files.json'):
                 self.assertTrue((site / name).is_file(), name)
-            receipts = json.loads((site / '_fetch-log.json').read_text())
+            receipts = json.loads((site / '_fetch-log.json').read_text(encoding='utf-8'))
             row = next(row for row in receipts['entries'] if row.get('rawPath'))
             self.assertEqual(hashlib.sha256((site / row['rawPath']).read_bytes()).hexdigest(), row['rawSha256'])
-            note = (site / 'pages/index.md').read_text()
+            note = (site / 'pages/index.md').read_text(encoding='utf-8')
             for token in ('Important hero', 'Hidden FAQ answer.', 'authority_score:', 'kind:', 'path:'):
                 self.assertIn(token, note)
-            self.assertEqual(len(json.loads((site / '_pages.base').read_text())['views']), 5)
-            self.assertIn('FETCH', (site / '_evidence-pack.md').read_text())
+            self.assertEqual(len(json.loads((site / '_pages.base').read_text(encoding='utf-8'))['views']), 5)
+            self.assertIn('FETCH', (site / '_evidence-pack.md').read_text(encoding='utf-8'))
 
     def test_unknown_robots_does_not_request_pages(self):
         Website.mode = 'unavailable'

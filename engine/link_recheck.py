@@ -40,7 +40,7 @@ def continue_link_checks(site_id, vault_dir, emit, *, max_checks=1000, max_secon
         previous = files_under(active)
         if '_site-graph.json' not in previous:
             raise ValueError('Saved capture not found.')
-        manifest = json.loads(previous['_site-graph.json'].read_text())
+        manifest = json.loads(previous['_site-graph.json'].read_text(encoding='utf-8'))
         if manifest.get('siteId') != site_id:
             raise ValueError('Saved capture identity does not match its folder.')
         rows = manifest.get('linkHealth', {}).get('results', [])
@@ -112,15 +112,15 @@ def continue_link_checks(site_id, vault_dir, emit, *, max_checks=1000, max_secon
             if resource['url'] in updates:
                 row = updates[resource['url']]
                 resource.update(checkStatus=row['status'], statusCode=row['statusCode'], checkUpdatedAt=row['checkedAt'])
-        summary = json.loads((staged / '_site-summary.json').read_text())
+        summary = json.loads((staged / '_site-summary.json').read_text(encoding='utf-8'))
         summary.update(linkHealth=health, linkCheckSessions=sessions, resources=manifest.get('resources', []))
         write_json(staged / '_site-summary.json', summary)
         write_json(staged / '_link-health.json', health)
-        (staged / '_link-health.md').write_text(_report(health))
+        (staged / '_link-health.md').write_text(_report(health), encoding='utf-8')
         resource_file = staged / '_resources.json'
         changed = {'_site-graph.json', '_site-summary.json', '_link-health.json', '_link-health.md'}
         if resource_file.exists():
-            data = json.loads(resource_file.read_text())
+            data = json.loads(resource_file.read_text(encoding='utf-8'))
             data['resources'] = manifest.get('resources', [])
             write_json(resource_file, data)
             changed.add('_resources.json')
@@ -133,16 +133,16 @@ def continue_link_checks(site_id, vault_dir, emit, *, max_checks=1000, max_secon
                       resource.get('localPath') or 'Reference only',
                       ', '.join(sorted({r['pageUrl'] for r in resource['references']}))]
             resource_lines.append('| ' + ' | '.join(str(v).replace('|', '\\|').replace('\n', ' ') for v in values) + ' |')
-        (staged / '_resources.md').write_text('\n'.join(resource_lines) + '\n')
+        (staged / '_resources.md').write_text('\n'.join(resource_lines) + '\n', encoding='utf-8')
         changed.add('_resources.md')
         dashboard = staged / '_dashboard.md'
         if dashboard.exists():
             updated_dashboard = re.sub(
                 r'^- \[\[sites/' + re.escape(site_id) + r'/_link-health\|[^\n]*$',
                 f"- [[sites/{site_id}/_link-health|Link and resource checks]]: {health['checkedCount']}/{health['totalCount']} attempted; {health['uncheckedCount']} unchecked; {len(health['brokenLinks'])} confirmed 404/410 targets. Link checks updated {health['updatedAt']}.",
-                dashboard.read_text(), flags=re.MULTILINE)
-            if updated_dashboard != dashboard.read_text():
-                dashboard.write_text(updated_dashboard)
+                dashboard.read_text(encoding='utf-8'), flags=re.MULTILINE)
+            if updated_dashboard != dashboard.read_text(encoding='utf-8'):
+                dashboard.write_text(updated_dashboard, encoding='utf-8')
                 changed.add('_dashboard.md')
         # Page content and its original collection time remain unchanged.
         changed.update(r['rawPath'] for r in receipts.values())

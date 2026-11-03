@@ -110,7 +110,7 @@ def main():
             page.get_by_role('combobox', name='Captured websites').locator(f'option[value="{site_id}"]').wait_for(state='attached', timeout=30000)
             page.get_by_role('complementary', name='Page explorer').wait_for()
             manifest_file = args.vault / 'sites' / site_id / '_site-graph.json'
-            manifest = json.loads(manifest_file.read_text())
+            manifest = json.loads(manifest_file.read_text(encoding='utf-8'))
             assert manifest['stats']['pagesCrawled'] == 1
             if args.spa_fixture:
                 assert next(n for n in manifest['nodes'] if n['kind'] == 'home')['renderUsed']
@@ -162,7 +162,7 @@ def main():
             page.wait_for_function("() => app.workspace.getLeavesOfType('markdown').some(l=>l.view.file?.path?.endsWith('/pages/index.md'))")
             passed('Native inspector opens its captured Markdown note')
             note = args.vault / 'sites' / site_id / 'pages/index.md'
-            assert 'Important hero' in note.read_text() and 'Hidden FAQ answer.' in note.read_text()
+            assert 'Important hero' in note.read_text(encoding='utf-8') and 'Hidden FAQ answer.' in note.read_text(encoding='utf-8')
             page.evaluate("async () => { await app.internalPlugins.plugins.bases.enable(); }")
             page.evaluate("async path => { await app.workspace.openLinkText(path, '', true); }", f'sites/{site_id}/_pages.base')
             page.wait_for_function("() => app.workspace.getLeavesOfType('bases').some(l=>l.view.file?.path?.endsWith('/_pages.base'))", timeout=15000)
@@ -179,7 +179,7 @@ def main():
             server.server_close()
         for thread in threads:
             thread.join(2)
-        (args.evidence / 'native-ui-results.json').write_text(json.dumps(results, indent=2) + '\n')
+        (args.evidence / 'native-ui-results.json').write_text(json.dumps(results, indent=2) + '\n', encoding='utf-8')
 
 
 if __name__ == '__main__':

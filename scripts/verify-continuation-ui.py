@@ -17,7 +17,7 @@ def main():
     parser.add_argument('--evidence', type=Path, required=True)
     args = parser.parse_args()
     args.evidence.mkdir(parents=True, exist_ok=True)
-    manifest = json.loads((ROOT / 'sites/agricidaniel.com/_site-graph.json').read_text())
+    manifest = json.loads((ROOT / 'sites/agricidaniel.com/_site-graph.json').read_text(encoding='utf-8'))
     # Seed an explicit mocked remaining-work case even when the saved live test is exhausted.
     for row in [r for r in manifest['linkHealth']['results'] if r['status'] == 'ok'][:2]:
         row.update(status='unchecked', statusCode=None, attempted=False, method=None, reason='Mocked UI continuation target')
@@ -102,7 +102,7 @@ def main():
         assert not errors, errors
         passed('No uncaught browser errors during success, cancellation and failure flows')
         browser.close()
-    (args.evidence / 'results.json').write_text(json.dumps(dict(results=results, errors=errors), indent=2) + '\n')
+    (args.evidence / 'results.json').write_text(json.dumps(dict(results=results, errors=errors), indent=2) + '\n', encoding='utf-8')
 
 
 if __name__ == '__main__':

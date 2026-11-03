@@ -53,7 +53,7 @@ class EvidenceTests(unittest.TestCase):
                         {"rawPath": "../private.txt"}, {"rawSha256": None}):
             with self.subTest(updates=updates):
                 self.assertEqual(self.receipt(**updates)["dataState"], "no data")
-        self.assertNotIn("TTFB", (self.root / "_fetch-log.md").read_text())
+        self.assertNotIn("TTFB", (self.root / "_fetch-log.md").read_text(encoding="utf-8"))
 
     def test_symlink_escape_does_not_become_evidence(self):
         outside = self.root.parent / (self.root.name + "-outside")
@@ -81,19 +81,19 @@ class EvidenceTests(unittest.TestCase):
         self.assertTrue(self.receipt()["dataEligible"])
         result = self.pack()
         self.assertGreater(result["observationsCount"], 0)
-        output = (self.root / "_evidence-pack.md").read_text()
+        output = (self.root / "_evidence-pack.md").read_text(encoding="utf-8")
         self.assertIn("Café Business", output)
         self.assertNotIn(chr(0xfffd), output)
         self.assertIn("locator `_raw/home.utf8.html:", output)
         self.assertIn("original body `_raw/home.html`", output)
         self.assertIn("class `decoded-text`", output)
-        sidecar.write_text("tampered text")
+        sidecar.write_text("tampered text", encoding='utf-8')
         self.assertFalse(self.receipt()["dataEligible"])
         self.assertEqual(self.pack()["observationsCount"], 0)
 
     def test_decoded_brand_tokens_require_original_body_anchor(self):
         sidecar = self.root / "_raw" / "home.utf8.html"
-        sidecar.write_text(self.html)
+        sidecar.write_text(self.html, encoding='utf-8')
         brand = brand_and_dns.extract_observed_brand_kit(self.html, self.row["url"], source_artifacts={self.row["url"]: {
             "rawPath": "_raw/home.utf8.html", "rawSha256": hashlib.sha256(sidecar.read_bytes()).hexdigest(),
             "rawKind": "decoded-text", "parentRawPath": self.row["rawPath"], "parentRawSha256": self.row["rawSha256"]}})
@@ -183,7 +183,7 @@ class EvidenceTests(unittest.TestCase):
 
     def test_pack_contains_only_source_spans_and_no_invented_defaults(self):
         result = self.pack()
-        output = (self.root / "_evidence-pack.md").read_text()
+        output = (self.root / "_evidence-pack.md").read_text(encoding="utf-8")
         self.assertGreater(result["observationsCount"], 0)
         self.assertIn("Observed Business", output)
         self.assertNotIn("Invented Title", output)
@@ -270,7 +270,7 @@ class EvidenceTests(unittest.TestCase):
             source = result["sources"][0]
             self.assertEqual((self.root / source["rawPath"]).read_bytes(), css)
             self.assertEqual(source["rawSha256"], hashlib.sha256(css).hexdigest())
-            self.assertIn("café", (self.root / source["textPath"]).read_text())
+            self.assertIn("café", (self.root / source["textPath"]).read_text(encoding="utf-8"))
             self.assertEqual(source["textSha256"], hashlib.sha256((self.root / source["textPath"]).read_bytes()).hexdigest())
             self.assertTrue(all(item["rawKind"] == "decoded-text" for item in result["palette"]))
             self.assertTrue(all(item.get("rawPath") for item in result["palette"]))

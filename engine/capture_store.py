@@ -147,7 +147,7 @@ class CaptureTransaction:
             raise ValueError('Capture journal is a symlink.')
         if not journal.exists():
             return
-        data = json.loads(journal.read_text())
+        data = json.loads(journal.read_text(encoding='utf-8'))
         site_id, history_id = data['siteId'], data['historyId']
         if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._-]{0,179}', site_id) or not re.fullmatch(r'[a-zA-Z0-9-]+', history_id):
             raise ValueError('Invalid capture recovery journal.')
@@ -186,7 +186,7 @@ class CaptureTransaction:
         previous_hashes = {name: file_hash(file) for name, file in previous.items()}
         inventory = {}
         if '_generated-files.json' in previous:
-            inventory = json.loads(previous['_generated-files.json'].read_text()).get('files', {})
+            inventory = json.loads(previous['_generated-files.json'].read_text(encoding='utf-8')).get('files', {})
         generated = {name: file_hash(file) for name, file in fresh.items()}
         preserved = []
         retained = []
@@ -236,12 +236,12 @@ class CaptureTransaction:
                                 localFileStatus='preserved-local-edits',
                                 proposedLocalPath=by_path[relative])
                 reconciled_resources = True
-            summary = json.loads((staged / '_site-summary.json').read_text())
+            summary = json.loads((staged / '_site-summary.json').read_text(encoding='utf-8'))
             summary.update(preservationStatus='conflicts', captureWarnings=manifest['captureWarnings'])
             if reconciled_resources:
                 summary['resources'] = manifest['resources']
                 if '_resources.json' in fresh and '_resources.json' not in by_path:
-                    resource_report = json.loads(fresh['_resources.json'].read_text())
+                    resource_report = json.loads(fresh['_resources.json'].read_text(encoding='utf-8'))
                     resource_report['resources'] = manifest['resources']
                     write_json(fresh['_resources.json'], resource_report)
                     # This automatic metadata repair belongs to the generated

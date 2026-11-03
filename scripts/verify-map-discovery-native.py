@@ -82,7 +82,7 @@ def main():
         passed('Native Escape closes the card and restores launcher focus')
         assert not errors, errors
         passed('No uncaught native page errors during the checks')
-    (args.evidence / 'native-results.json').write_text(json.dumps({'checks': results, 'errors': errors}, indent=2) + '\n')
+    (args.evidence / 'native-results.json').write_text(json.dumps({'checks': results, 'errors': errors}, indent=2) + '\n', encoding='utf-8')
     print(str(len(results)) + ' native discovery checks passed.')
 
 

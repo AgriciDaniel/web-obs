@@ -49,7 +49,7 @@ def main():
             fixture.Requests.clear()
             drawer.get_by_role('button', name='Check remaining', exact=False).click()
             page.wait_for_function('() => !document.querySelector(".wo-progress-card") && document.querySelector(".wo-intel-drawer")?.textContent.includes("Page capture time is unchanged")', timeout=45000)
-            after = json.loads((site / '_site-graph.json').read_text())
+            after = json.loads((site / '_site-graph.json').read_text(encoding='utf-8'))
             assert after['capturedAt'] == capture['capturedAt']
             assert after['linkHealth']['uncheckedCount'] == 0
             assert tuple(map(int, after['linkCheckSessions'][-1]['provenance']['runtime']['pythonVersion'].split('.')[:2])) >= (3, 14)
@@ -64,7 +64,7 @@ def main():
             expect(drawer).to_contain_text('inconclusive')
             page.screenshot(path=str(args.evidence / 'native-continuation.png'))
             passed('Inconclusive destinations remain distinct from confirmed broken links')
-            (args.evidence / 'results.json').write_text(json.dumps(dict(results=results, requests=requests), indent=2) + '\n')
+            (args.evidence / 'results.json').write_text(json.dumps(dict(results=results, requests=requests), indent=2) + '\n', encoding='utf-8')
     finally:
         fixture.LinkContinuationTests.tearDownClass()
 

@@ -152,7 +152,7 @@ def main():
         assert not errors, errors
         passed('No uncaught browser errors during the interaction checks')
         browser.close()
-    (args.evidence / 'ui-results.json').write_text(json.dumps({'checks': results, 'errors': errors}, indent=2) + '\n')
+    (args.evidence / 'ui-results.json').write_text(json.dumps({'checks': results, 'errors': errors}, indent=2) + '\n', encoding='utf-8')
     print(str(len(results)) + ' map discovery UI checks passed.')
 
 

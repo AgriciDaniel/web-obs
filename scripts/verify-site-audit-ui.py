@@ -21,7 +21,7 @@ def main():
     parser.add_argument('--vault', type=Path)
     args = parser.parse_args()
     args.evidence.mkdir(parents=True, exist_ok=True)
-    manifest = json.loads(args.manifest.read_text())
+    manifest = json.loads(args.manifest.read_text(encoding='utf-8'))
     errors, results = [], []
     evidence_class = 'Actual isolated Obsidian and installed bundle' if args.cdp else 'Actual Chromium with local mocked transport and retained public capture'
 
@@ -105,7 +105,7 @@ def main():
         passed('No uncaught renderer errors during audit navigation')
         if not args.cdp:
             browser.close()
-    (args.evidence / 'results.json').write_text(json.dumps(dict(results=results, errors=errors), indent=2) + '\n')
+    (args.evidence / 'results.json').write_text(json.dumps(dict(results=results, errors=errors), indent=2) + '\n', encoding='utf-8')
 
 
 if __name__ == '__main__':

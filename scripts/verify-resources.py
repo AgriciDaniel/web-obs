@@ -178,7 +178,7 @@ class ResourceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             writer = extractor.LocalAssetDownloader(folder, max_images_total=1)
             self.assertEqual(writer.save_inline_svg('inline:one', 'chart.svg', svg), 'chart.svg')
-            saved = (Path(folder) / 'chart.svg').read_text()
+            saved = (Path(folder) / 'chart.svg').read_text(encoding='utf-8')
             self.assertNotIn('<script', saved)
             self.assertNotIn('onload', saved)
             self.assertIsNone(writer.save_inline_svg('inline:two', 'second.svg', svg))

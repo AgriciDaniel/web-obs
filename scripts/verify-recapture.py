@@ -74,17 +74,17 @@ class RecaptureTests(unittest.TestCase):
             first = self.capture(directory)
             home = next(node for node in first['nodes'] if node['kind'] == 'home')
             note = Path(directory) / home['obsidianPath']
-            note.write_text(note.read_text() + '\n## My notes\nKeep this annotation.\n')
+            note.write_text(note.read_text(encoding='utf-8') + '\n## My notes\nKeep this annotation.\n', encoding='utf-8')
             manual = note.parent / 'my-research.md'
-            manual.write_text('A manually created note.\n')
+            manual.write_text('A manually created note.\n', encoding='utf-8')
             Website.version = 2
             second = self.capture(directory)
-            self.assertIn('Keep this annotation.', note.read_text())
-            self.assertEqual(manual.read_text(), 'A manually created note.\n')
+            self.assertIn('Keep this annotation.', note.read_text(encoding='utf-8'))
+            self.assertEqual(manual.read_text(encoding='utf-8'), 'A manually created note.\n')
             current_home = next(node for node in second['nodes'] if node['kind'] == 'home')
             self.assertEqual(current_home['noteStatus'], 'preserved-local-edits')
             proposal = Path(directory) / current_home['proposedNotePath']
-            self.assertIn('Version 2', proposal.read_text())
+            self.assertIn('Version 2', proposal.read_text(encoding='utf-8'))
             self.assertEqual(second['preservationStatus'], 'conflicts')
             self.assertTrue(list((Path(directory) / '.web-obs/history').rglob('_site-graph.json')))
 
@@ -106,7 +106,7 @@ class RecaptureTests(unittest.TestCase):
             Website.version = 2
             second = self.capture(directory)
             home = next(node for node in second['nodes'] if node['kind'] == 'home')
-            self.assertIn('Version 2', (Path(directory) / home['obsidianPath']).read_text())
+            self.assertIn('Version 2', (Path(directory) / home['obsidianPath']).read_text(encoding='utf-8'))
             self.assertNotIn('noteStatus', home)
             self.assertEqual(first['siteId'], second['siteId'])
 
@@ -124,7 +124,7 @@ class RecaptureTests(unittest.TestCase):
                 (staged / 'assets').mkdir(parents=True)
                 (staged / 'pages').mkdir()
                 (staged / relative_asset).write_bytes(raw)
-                (staged / 'pages/index.md').write_text('# Fixture\n')
+                (staged / 'pages/index.md').write_text('# Fixture\n', encoding='utf-8')
                 digest = hashlib.sha256(raw).hexdigest()
                 resource = {'id': 'resource-chart', 'url': 'https://asset-fixture.example/chart.svg',
                             'type': 'image', 'localPath': f'sites/{site_id}/{relative_asset}',
@@ -146,7 +146,7 @@ class RecaptureTests(unittest.TestCase):
                     (site / relative_asset).write_bytes(member)
                 member_report = None
                 if edited_report:
-                    data = json.loads((site / '_resources.json').read_text())
+                    data = json.loads((site / '_resources.json').read_text(encoding='utf-8'))
                     data['memberNote'] = 'Keep the edited resource report byte for byte.'
                     member_report = (json.dumps(data) + '\n').encode()
                     (site / '_resources.json').write_bytes(member_report)
@@ -156,11 +156,11 @@ class RecaptureTests(unittest.TestCase):
                 self.assertEqual(actual, member if edited_asset else fresh)
                 self.assertEqual((row['sha256'], row['bytes']), (hashlib.sha256(actual).hexdigest(), len(actual)))
                 self.assertEqual((row['sourceSha256'], row['sourceBytes']), (hashlib.sha256(fresh).hexdigest(), len(fresh)))
-                graph = json.loads((site / '_site-graph.json').read_text())
-                summary = json.loads((site / '_site-summary.json').read_text())
+                graph = json.loads((site / '_site-graph.json').read_text(encoding='utf-8'))
+                summary = json.loads((site / '_site-summary.json').read_text(encoding='utf-8'))
                 self.assertEqual(graph['resources'], manifest['resources'])
                 self.assertEqual(summary['resources'], manifest['resources'])
-                baseline = json.loads((site / '_generated-files.json').read_text())['files']
+                baseline = json.loads((site / '_generated-files.json').read_text(encoding='utf-8'))['files']
                 self.assertEqual(baseline[relative_asset]['generatedSha256'], hashlib.sha256(fresh).hexdigest())
                 self.assertEqual(baseline[relative_asset]['installedSha256'], hashlib.sha256(actual).hexdigest())
                 if edited_asset:
@@ -173,7 +173,7 @@ class RecaptureTests(unittest.TestCase):
                     self.assertEqual((site / '_resources.json').read_bytes(), member_report)
                     self.assertTrue(any(item['path'] == '_resources.json' for item in manifest['recapture']['preservedFiles']))
                 else:
-                    self.assertEqual(json.loads((site / '_resources.json').read_text())['resources'], manifest['resources'])
+                    self.assertEqual(json.loads((site / '_resources.json').read_text(encoding='utf-8'))['resources'], manifest['resources'])
                     self.assertEqual(baseline['_resources.json']['generatedSha256'],
                                      hashlib.sha256((site / '_resources.json').read_bytes()).hexdigest())
 
@@ -183,17 +183,17 @@ class RecaptureTests(unittest.TestCase):
                 first = self.capture(directory)
                 site = Path(directory) / 'sites' / first['siteId']
                 legacy = site / 'pages/legacy-audio.md'
-                legacy.write_text('Legacy generated transcript page.\n')
+                legacy.write_text('Legacy generated transcript page.\n', encoding='utf-8')
                 inventory_path = site / '_generated-files.json'
-                inventory = json.loads(inventory_path.read_text())
+                inventory = json.loads(inventory_path.read_text(encoding='utf-8'))
                 inventory['files']['pages/legacy-audio.md'] = {'generatedSha256': hashlib.sha256(legacy.read_bytes()).hexdigest()}
-                inventory_path.write_text(json.dumps(inventory))
+                inventory_path.write_text(json.dumps(inventory), encoding='utf-8')
                 graph_path = site / '_site-graph.json'
-                graph = json.loads(graph_path.read_text())
+                graph = json.loads(graph_path.read_text(encoding='utf-8'))
                 graph['nodes'].append({**graph['nodes'][0], 'id': 'legacy-resource', 'kind': 'page', 'url': self.origin + '/legacy.vtt', 'obsidianPath': f"sites/{first['siteId']}/pages/legacy-audio.md"})
-                graph_path.write_text(json.dumps(graph))
+                graph_path.write_text(json.dumps(graph), encoding='utf-8')
                 if edited:
-                    legacy.write_text(legacy.read_text() + 'Keep this member annotation.\n')
+                    legacy.write_text(legacy.read_text(encoding='utf-8') + 'Keep this member annotation.\n', encoding='utf-8')
                 Website.extra_resource = True
                 try:
                     second = self.capture(directory, max_pages=1, check_external=False)
@@ -204,7 +204,7 @@ class RecaptureTests(unittest.TestCase):
                 self.assertTrue(any(r['type'] == 'transcript' for r in second['resources']))
                 self.assertEqual(legacy.exists(), edited)
                 if edited:
-                    self.assertIn('Keep this member annotation.', legacy.read_text())
+                    self.assertIn('Keep this member annotation.', legacy.read_text(encoding='utf-8'))
                 history = Path(directory) / '.web-obs/history'
                 self.assertTrue(list(history.rglob('legacy-audio.md')))
 
@@ -229,10 +229,10 @@ class RecaptureTests(unittest.TestCase):
             control = Path(directory) / '.web-obs'
             control.mkdir()
             member = Path(outside) / 'member.md'
-            member.write_text('Private member text.')
+            member.write_text('Private member text.', encoding='utf-8')
             (control / 'promotion.json.tmp').symlink_to(member)
             self.capture(directory)
-            self.assertEqual(member.read_text(), 'Private member text.')
+            self.assertEqual(member.read_text(encoding='utf-8'), 'Private member text.')
 
     def test_recovery_restores_interrupted_previous_capture(self):
         from capture_store import CaptureTransaction, write_json
@@ -271,12 +271,12 @@ class RecaptureTests(unittest.TestCase):
             note = Path(directory) / 'sites' / manifest['siteId'] / 'pages/index.md'
             @contextmanager
             def edit_before_swap():
-                note.write_text(note.read_text() + '\nLate member edit.\n')
+                note.write_text(note.read_text(encoding='utf-8') + '\nLate member edit.\n', encoding='utf-8')
                 yield
             with patch.object(capture_store, 'promotion_signals', edit_before_swap):
                 with self.assertRaisesRegex(RuntimeError, 'changed during publication'):
                     self.capture(directory)
-            self.assertIn('Late member edit.', note.read_text())
+            self.assertIn('Late member edit.', note.read_text(encoding='utf-8'))
 
     def test_edit_after_history_rename_is_rolled_back_and_preserved(self):
         import capture_store
@@ -289,12 +289,12 @@ class RecaptureTests(unittest.TestCase):
                 result = original(source, destination)
                 if Path(source) == active and '/history/' in Path(destination).as_posix():
                     note = Path(destination) / 'pages/index.md'
-                    note.write_text(note.read_text() + '\nEdit during promotion.\n')
+                    note.write_text(note.read_text(encoding='utf-8') + '\nEdit during promotion.\n', encoding='utf-8')
                 return result
             with patch.object(capture_store.os, 'replace', edit_after_rename):
                 with self.assertRaisesRegex(RuntimeError, 'changed during publication'):
                     self.capture(directory)
-            self.assertIn('Edit during promotion.', (active / 'pages/index.md').read_text())
+            self.assertIn('Edit during promotion.', (active / 'pages/index.md').read_text(encoding='utf-8'))
 
     def test_oversized_graph_is_refused_before_promotion(self):
         with tempfile.TemporaryDirectory() as directory:

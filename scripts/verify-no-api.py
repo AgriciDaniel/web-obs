@@ -128,7 +128,7 @@ class NoApiTests(unittest.TestCase):
         self.assertFalse(hasattr(brand_and_dns, "lookup_passive_dns_and_tls"))
         self.assertFalse(hasattr(brand_and_dns, "probe_pagespeed_insights"))
         for source in (ROOT / "engine").glob("*.py"):
-            text = source.read_text()
+            text = source.read_text(encoding='utf-8')
             for endpoint in ("https://rdap.org", "https://dns.google/resolve", "https://crt.sh", "https://www.googleapis.com/pagespeedonline"):
                 self.assertNotIn(endpoint, text, str(source))
 
@@ -138,13 +138,13 @@ class NoApiTests(unittest.TestCase):
             vault = Path(directory)
             (vault / ".obsidian").mkdir()
             preferences = '{"colorGroups":[{"query":"tag:personal","color":{"a":1,"rgb":123}}],"lineSizeMultiplier":1.7}'
-            (vault / ".obsidian" / "graph.json").write_text(preferences)
+            (vault / ".obsidian" / "graph.json").write_text(preferences, encoding='utf-8')
             manifest = crawl_site.crawl_website_to_vault(self.origin, directory, max_pages=1, download_images=False, render_mode="never", delay_sec=0, check_external=False)
             self.assertEqual(manifest["stats"]["pagesCrawled"], 1)
             self.assertNotIn("domainRegistration", manifest["siteIntel"])
-            self.assertEqual((vault / ".obsidian" / "graph.json").read_text(), preferences)
+            self.assertEqual((vault / ".obsidian" / "graph.json").read_text(encoding='utf-8'), preferences)
             summary_file = next((vault / "sites").glob("*/_site-summary.json"))
-            self.assertNotIn("domainRegistration", json.loads(summary_file.read_text()))
+            self.assertNotIn("domainRegistration", json.loads(summary_file.read_text(encoding='utf-8')))
             self.assertTrue(manifest["siteIntel"]["aiReadiness"]["markdownLinkAlternate"])
             self.assertTrue(any(url.endswith("/sitemap.xml") for url in seen))
             self.assertGreater(len(seen), 2)
@@ -196,9 +196,9 @@ class NoApiTests(unittest.TestCase):
             self.assertEqual(manifest["captureStatus"], "partial")
             self.assertIn("rendering excluded", manifest["captureWarnings"][0])
             site = next((Path(directory) / "sites").iterdir())
-            summary = json.loads((site / "_site-summary.json").read_text())
+            summary = json.loads((site / "_site-summary.json").read_text(encoding='utf-8'))
             self.assertEqual(summary["captureStatus"], "partial")
-            self.assertIn("rendering excluded", (site / "_dashboard.md").read_text())
+            self.assertIn("rendering excluded", (site / "_dashboard.md").read_text(encoding='utf-8'))
 
     @NEEDS_BROWSER
     def test_browser_redirect_cannot_bypass_route_validation(self):

@@ -96,7 +96,7 @@ class FailurePaths(unittest.TestCase):
             )
             events = [json.loads(line) for line in proc.stdout.splitlines() if line.strip().startswith('{')]
             graphs = list(Path(vault).glob('sites/*/_site-graph.json'))
-            manifest = json.loads(graphs[0].read_text()) if graphs else None
+            manifest = json.loads(graphs[0].read_text(encoding='utf-8')) if graphs else None
             return proc, events, manifest
 
     def assertFinishedCleanly(self, proc, events):

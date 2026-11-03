@@ -252,7 +252,7 @@ class LinkContinuationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             before = self.capture(directory)
             site = Path(directory) / "sites" / before["siteId"]
-            inventory_before = json.loads((site / "_generated-files.json").read_text())["files"]
+            inventory_before = json.loads((site / "_generated-files.json").read_text(encoding='utf-8'))["files"]
             note = site / "pages/index.md"
             edited = note.read_bytes() + b"\nMember annotation that must survive.\n"
             note.write_bytes(edited)
@@ -260,7 +260,7 @@ class LinkContinuationTests(unittest.TestCase):
             (site / "pages/member.md").write_bytes(b"# Member-created note\n")
             self.run_checks(before, directory, max_seconds=30)
             self.assertEqual(note.read_bytes(), edited)
-            inventory_after = json.loads((site / "_generated-files.json").read_text())["files"]
+            inventory_after = json.loads((site / "_generated-files.json").read_text(encoding='utf-8'))["files"]
             self.assertEqual(inventory_after["pages/index.md"]["generatedSha256"],
                              inventory_before["pages/index.md"]["generatedSha256"])
             self.assertNotIn("member.txt", inventory_after)
