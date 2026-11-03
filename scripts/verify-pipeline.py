@@ -254,6 +254,7 @@ class PipelineTests(unittest.TestCase):
     def test_saved_svg_hash_describes_sanitized_file_and_keeps_source_hash(self):
         result, events, _hits, _peak, _extracted, _retained, artifacts = self.collect(True, mode='svg')
         inventory = {row['url']: row for row in result['resources']}
+        self.assertIn(self.origin + '/chart.svg', inventory, 'inventory=' + repr(sorted(inventory))[:600] + ' hits=' + repr([(m, p) for m, p, _w in _hits])[:600] + ' warnings=' + repr(result.get('warnings'))[:600] + ' events=' + repr([e for e in events if e.get('event') in ('error', 'warning')])[:600])
         svg = inventory[self.origin + '/chart.svg']
         stored = artifacts[svg['localPath'].removeprefix('sites/fixture.test/')]
         self.assertNotEqual(stored, SVG)
