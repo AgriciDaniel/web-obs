@@ -1,0 +1,23 @@
+node_modules/
+dist/
+dist-plugin/
+*.tsbuildinfo
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.obsidian/*.bak
+
+# Private or local-only material, never commit
+sites/
+.web-obs/
+.obsidian/
+SESSION-HANDOFF*
+WEB-OBS-BRAIN-HANDOFF.md
+Web-Obs-Brain/dist/
+
+# Local release output
+release/
+
+# Separate local-review package, not part of this repository
+Web-Obs-Brain/

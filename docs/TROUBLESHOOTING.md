@@ -1,0 +1,41 @@
+# Troubleshooting
+
+Start with **Web-Obs: Run diagnostics** in the command palette. It runs the checks below and shows a fix for each problem. Web-Obs never installs packages for you.
+
+## Capture will not start
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| "Python was not found at ..." | The configured executable does not exist | Set the correct path in Web-Obs settings. A virtual environment's `bin/python3` works best. |
+| "Python 3.14+ with requests, beautifulsoup4 and lxml is required" | Old Python or missing packages | Create a 3.14+ environment and run `pip install requests beautifulsoup4 lxml` in it. |
+| "The Python environment is missing ..." | A package is missing at run time | Run `pip install requests beautifulsoup4 lxml` in the selected environment. |
+| "Web-Obs requires a local desktop vault" | The vault is not a local folder | Open the vault with Obsidian desktop. |
+| "engine/crawl_site.py not found" | The engine could not be unpacked on start | Restart Obsidian. If a notice says it could not unpack, check that the plugin folder is writable. |
+
+## Single page apps capture as empty shells
+
+Rendering needs Playwright and Chromium. In **Auto** mode Web-Obs falls back to plain HTTP when they are missing. Run `playwright install chromium` in the same environment, then check settings for **JavaScript / SPA rendering**.
+
+## The capture finished but crawled zero pages
+
+This is usually correct behavior. If robots.txt answers with a server error (5xx) or disallows everything, Web-Obs follows RFC 9309 and does not crawl. The Site health card shows the reason under Crawlability.
+
+## "Could not write to the vault"
+
+Check folder permissions. In a Flatpak or other sandbox, grant Obsidian access to the vault location. Diagnostics tests this with a small temporary file that it removes.
+
+## Flatpak Obsidian cannot find your Python
+
+Flatpak gives Obsidian its own filesystem view. Point the setting at a Python inside the vault or another location the sandbox can read, or grant access with Flatseal. The browser cache is also separate: Web-Obs checks the standard user cache as well as the sandbox one.
+
+## Network checks fail
+
+Captures need outbound HTTPS. Check VPN or proxy settings. Private and loopback addresses are blocked on purpose; for local testing only, set `WEB_OBS_LOCAL_TARGETS=127.0.0.1:PORT` when running the engine directly.
+
+## A user-triggered AI fetcher ignores my robots.txt
+
+ChatGPT-User, Claude-User and Perplexity-User fetch pages on a person's request and may not follow robots.txt. Site Intel marks these separately from crawlers.
+
+## Reporting a bug
+
+Run diagnostics, press **Copy report**, and include it with the steps you took.
