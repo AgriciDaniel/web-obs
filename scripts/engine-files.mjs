@@ -20,5 +20,5 @@ export function engineFileHashes(root) {
 export function pythonCommand(root) {
   if (process.env.WEB_OBS_PYTHON_BIN) return process.env.WEB_OBS_PYTHON_BIN;
   const local = path.join(root, 'engine', '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python3');
-  return fs.existsSync(local) ? local : 'python3';
+  return fs.existsSync(local) ? local : (process.platform === 'win32' ? 'python' : 'python3');
 }

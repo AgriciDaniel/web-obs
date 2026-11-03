@@ -32,5 +32,8 @@
     "vite": "^6.2.5"
   },
   "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/AgriciDaniel/web-obs.git" },
+  "bugs": { "url": "https://github.com/AgriciDaniel/web-obs/issues" },
+  "homepage": "https://github.com/AgriciDaniel/web-obs#readme",
   "author": "Daniel Agrici"
 }
