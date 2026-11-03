@@ -479,6 +479,7 @@ class LocalTests(unittest.TestCase):
 
 
 class MockBrowserTests(unittest.TestCase):
+    @unittest.skipIf(os.name == 'nt', 'Exercises the POSIX process-group path; Windows uses taskkill')
     def test_unconfirmed_process_exit_is_an_error_not_cleanup_success(self):
         import workers
         process = SimpleNamespace(pid=987654, is_alive=lambda: True, kill=lambda: None, join=lambda **kwargs: None)
