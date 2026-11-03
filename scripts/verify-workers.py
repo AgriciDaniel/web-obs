@@ -371,25 +371,37 @@ class LocalTests(unittest.TestCase):
         self.assertNotIn('/private-link', [path for path, _ in Fixture.hits])
 
     def test_real_browser_deadline_stops_owned_descendants(self):
+        if not sys.platform.startswith('linux'):
+            self.skipTest('Process-tree inspection reads /proc and runs on Linux only')
         from browser_runtime import resolve_chromium_executable
         from playwright.sync_api import sync_playwright
         from workers import _process_tree, _same_process
         with sync_playwright() as playwright:
             if not resolve_chromium_executable(playwright)['executablePath']:
                 self.skipTest('Matching Chromium is absent from this interpreter environment')
-        with WorkerDispatcher(min_interval_sec=0) as dispatcher:
-            warm = dispatcher.submit('render', self.payload(), 8).result(11)
-            self.assertIsNone(warm['error'], warm['error'])
-            owned = _process_tree(dispatcher.stats()['workerPids'][0])
-            self.assertGreater(len(owned), 1)
-            future = dispatcher.submit('render', self.payload('/spinner'), .25)
-            with self.assertRaises(TaskDeadlineExceeded):
-                future.result(4)
-            for pid, started in owned.items():
-                if _same_process(pid, started):
-                    state = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[0]
-                    self.assertEqual(state, 'Z', f'Owned browser process {pid} remains running')
-            self.assertEqual(dispatcher.stats()['active'], 0)
+        # A shared CI runner can finish the page before a very short deadline fires,
+        # so give the deadline a few chances before deciding it never triggers.
+        for attempt in range(3):
+            with WorkerDispatcher(min_interval_sec=0) as dispatcher:
+                warm = dispatcher.submit('render', self.payload(), 8).result(11)
+                self.assertIsNone(warm['error'], warm['error'])
+                owned = _process_tree(dispatcher.stats()['workerPids'][0])
+                self.assertGreater(len(owned), 1)
+                future = dispatcher.submit('render', self.payload('/spinner'), .25)
+                try:
+                    future.result(4)
+                except TaskDeadlineExceeded:
+                    pass
+                else:
+                    if attempt < 2:
+                        continue
+                    self.fail('TaskDeadlineExceeded not raised')
+                for pid, started in owned.items():
+                    if _same_process(pid, started):
+                        state = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[0]
+                        self.assertEqual(state, 'Z', f'Owned browser process {pid} remains running')
+                self.assertEqual(dispatcher.stats()['active'], 0)
+                return
 
     def test_real_browser_blocks_unrouted_transports_without_udp_while_spa_renders(self):
         from browser_runtime import resolve_chromium_executable
