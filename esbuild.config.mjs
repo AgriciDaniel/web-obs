@@ -50,7 +50,9 @@ const syncPluginAssets = {
     build.onEnd((result) => {
       if (result.errors.length > 0) return;
       fs.copyFileSync('manifest.json', path.join(outDir, 'manifest.json'));
-      fs.writeFileSync(path.join(outDir, 'styles.css'), fs.readFileSync('src/styles/theme.css', 'utf8') + '\n' + fs.readFileSync('src/styles/audit.css', 'utf8'));
+      fs.writeFileSync(path.join(outDir, 'styles.css'), ['theme', 'ui', 'map', 'drawers', 'audit']
+        .map((name) => `src/styles/${name}.css`).filter((file) => fs.existsSync(file))
+        .map((file) => fs.readFileSync(file, 'utf8')).join('\n'));
       // Start clean so a renamed or deleted engine file cannot linger in the output.
       fs.rmSync(path.join(outDir, 'engine'), { recursive: true, force: true });
       copyDirFiltered('engine', path.join(outDir, 'engine'));

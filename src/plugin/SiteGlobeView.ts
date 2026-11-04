@@ -294,6 +294,14 @@ export class SiteGlobeView extends ItemView {
       ? [scriptPath, continuing, '--vault', vaultBase, '--continue-links']
       : [scriptPath, target, '--vault', vaultBase, '--max-pages', String(maxPages), '--render', renderMode, '--image-mode', (options.imageMode ?? this.plugin.settings.imageMode) === 'all' ? 'all' : 'preferred'];
     if (!downloadImages) args.push('--no-images');
+    if (!continuing) {
+      if (!(options.browserAudit ?? this.plugin.settings.browserAudit ?? true)) args.push('--no-browser-audit');
+      if (options.spellCheck ?? this.plugin.settings.spellCheck ?? false) args.push('--spell-check');
+      if (!(options.dnsChecks ?? this.plugin.settings.dnsChecks ?? true)) args.push('--no-dns-checks');
+      if (!(options.pageSnapshots ?? this.plugin.settings.pageSnapshots ?? true)) args.push('--no-snapshots');
+      else args.push('--snapshot-limit', String(Math.max(1, Math.min(500, Math.trunc(options.snapshotLimit ?? this.plugin.settings.snapshotLimit ?? 25)))));
+      if (options.snapshotHtml ?? this.plugin.settings.snapshotHtml ?? false) args.push('--snapshot-html');
+    }
 
     return new Promise((resolve) => {
       let child: ChildProcessWithoutNullStreams;
@@ -437,6 +445,12 @@ export class SiteGlobeView extends ItemView {
       onOpenNote: (vaultRelativePath: string, splitPane?: boolean) => {
         void this.openVaultNote(vaultRelativePath, splitPane);
       },
+      resolveAssetUrl: (vaultRelativePath: string) => {
+        const safe = sanitizeVaultRelativePath(vaultRelativePath);
+        if (!safe) return null;
+        const file = this.app.vault.getAbstractFileByPath(normalizePath(safe));
+        return file instanceof TFile ? this.app.vault.getResourcePath(file) : null;
+      },
       onOpenExternalUrl: (url: string) => {
         const safe = sanitizeExternalHttpUrl(url);
         if (safe) window.open(safe, '_blank', 'noopener,noreferrer');
@@ -513,6 +527,16 @@ export class SiteGlobeView extends ItemView {
     const abstractFile = this.app.vault.getAbstractFileByPath(norm);
     if (!(abstractFile instanceof TFile)) {
       new Notice(`Note not found in vault: ${norm}`);
+      return;
+    }
+    // Obsidian has no view for files such as CSV. Hand them to the system's default app.
+    if (!['md', 'canvas', 'base', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'avif', 'pdf'].includes(abstractFile.extension.toLowerCase())) {
+      const app = this.app as unknown as { openWithDefaultApp?: (path: string) => unknown };
+      if (typeof app.openWithDefaultApp === 'function') {
+        void app.openWithDefaultApp(norm);
+      } else {
+        new Notice(`Open ${norm} from your file manager.`);
+      }
       return;
     }
 

@@ -145,7 +145,7 @@ class IntegratedTests(unittest.TestCase):
             note = (site / 'pages/index.md').read_text(encoding='utf-8')
             for token in ('Important hero', 'Hidden FAQ answer.', 'authority_score:', 'kind:', 'path:'):
                 self.assertIn(token, note)
-            self.assertEqual(len(json.loads((site / '_pages.base').read_text(encoding='utf-8'))['views']), 5)
+            self.assertEqual(len(json.loads((site / '_pages.base').read_text(encoding='utf-8'))['views']), 9)
             self.assertIn('FETCH', (site / '_evidence-pack.md').read_text(encoding='utf-8'))
 
     def test_unknown_robots_does_not_request_pages(self):

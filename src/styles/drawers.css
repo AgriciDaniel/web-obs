@@ -1,0 +1,95 @@
+/* Site Intel and page inspector drawers. Built on the shared primitives in ui.css. */
+.wo-shell .wo-dr { gap: 12px; padding: 16px; font-size: var(--ui-text-md); }
+/* The drawer scrolls as a whole; children must keep their height or the tab panel overlaps what follows. */
+.wo-shell .wo-dr > * { flex-shrink: 0; }
+
+.wo-shell .wo-dr-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.wo-shell .wo-dr-head-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.wo-shell .wo-dr-kicker { font-size: var(--ui-text-sm); font-weight: 600; color: var(--accent-bright); }
+.wo-shell .wo-dr-title { margin: 0; font-size: var(--ui-text-lg); font-weight: 650; line-height: 1.3; letter-spacing: 0; color: var(--ink-primary); overflow-wrap: anywhere; }
+.wo-shell .wo-dr-sub { font-size: var(--ui-text-sm); color: var(--ink-muted); overflow-wrap: anywhere; }
+.wo-shell .wo-dr-mono { font-family: 'JetBrains Mono', var(--font-monospace, monospace); font-size: 11.5px; }
+.wo-shell .wo-dr-badges { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.wo-shell .wo-dr-meta { font-size: var(--ui-text-sm); color: var(--ink-muted); font-variant-numeric: tabular-nums; }
+
+.wo-shell .wo-dr-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.wo-shell .wo-dr-actions .wo-btn-xs { height: 28px; font-size: var(--ui-text-sm); }
+.wo-shell .wo-dr-line { margin: 0; font-size: var(--ui-text-md); line-height: 1.45; color: var(--ink-secondary); }
+.wo-shell .wo-dr-alert { margin: 0; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border-hairline); border-left: 3px solid var(--status-warning); font-size: var(--ui-text-sm); color: var(--ink-secondary); }
+.wo-shell .wo-dr-warning { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border-hairline); }
+.wo-shell .wo-dr-warning .wo-ui-pill { align-self: flex-start; }
+
+.wo-shell .wo-dr-list { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 6px; font-size: var(--ui-text-sm); line-height: 1.5; color: var(--ink-secondary); }
+.wo-shell .wo-dr-list code { font-size: 11px; color: var(--ink-primary); }
+.wo-shell .wo-dr-about { margin-top: auto; padding-top: 4px; border-top: 1px solid var(--border-hairline); }
+.wo-shell .wo-dr-stack { display: flex; flex-direction: column; gap: 2px; }
+.wo-shell .wo-dr-subhead { font-size: var(--ui-text-sm); font-weight: 600; color: var(--ink-secondary); }
+
+/* Status list: name left, pill right, reason underneath in one muted line. */
+.wo-shell .wo-dr-status-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.wo-shell .wo-dr-status-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 10px; padding: 7px 0; border-bottom: 1px solid var(--border-hairline); }
+.wo-shell .wo-dr-status-row:last-child { border-bottom: 0; }
+.wo-shell .wo-dr-status-name { min-width: 0; color: var(--ink-primary); font-size: var(--ui-text-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wo-shell .wo-dr-status-name.wo-dr-mono { font-size: 12px; }
+.wo-shell .wo-dr-status-reason { grid-column: 1 / -1; font-size: var(--ui-text-sm); line-height: 1.4; color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wo-shell .wo-dr-status-extra { grid-column: 1 / -1; }
+.wo-shell .wo-dr-status-extra .wo-ui-disclosure > summary { padding: 2px 0; font-size: var(--ui-text-sm); color: var(--accent-bright); }
+.wo-shell .wo-dr-pre { margin: 0; padding: 8px; border-radius: 6px; background: var(--bg-subtle); border: 1px solid var(--border-hairline); font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.wo-shell .wo-dr-status-extra .wo-btn-xs { align-self: flex-start; }
+
+/* Link rows: one line, label truncates, tags at the end. */
+.wo-shell .wo-dr-links,
+.wo-shell .wo-dr-linklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.wo-shell .wo-dr-link { width: 100%; display: flex; align-items: center; gap: 8px; min-height: 28px; padding: 4px 8px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-secondary); font: inherit; font-size: var(--ui-text-sm); text-align: left; cursor: pointer; }
+.wo-shell .wo-dr-link:hover { background: var(--bg-subtle); color: var(--ink-primary); }
+.wo-shell .wo-dr-link:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 1px; }
+.wo-shell .wo-dr-link > svg { flex: none; color: var(--ink-muted); }
+.wo-shell .wo-dr-link > span:not(.wo-dr-tag):not(.wo-dr-link-aside),
+.wo-shell .wo-dr-link-main { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'JetBrains Mono', var(--font-monospace, monospace); font-size: 11.5px; }
+.wo-shell .wo-dr-link-aside { flex: none; font-size: 11px; color: var(--ink-muted); }
+.wo-shell .wo-dr-tag { flex: none; padding: 0 5px; border-radius: 4px; border: 1px solid var(--border-hairline); font-size: 10.5px; line-height: 16px; color: var(--ink-muted); }
+.wo-shell .wo-dr-more { align-self: flex-start; margin-top: 2px; padding: 2px 8px; border: 0; background: transparent; color: var(--accent-bright); font: inherit; font-size: var(--ui-text-sm); cursor: pointer; }
+.wo-shell .wo-dr-more:hover { text-decoration: underline; }
+.wo-shell .wo-dr-more:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 1px; border-radius: 4px; }
+
+.wo-shell .wo-dr-contacts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: var(--ui-text-md); color: var(--ink-primary); }
+.wo-shell .wo-dr-contacts li { display: flex; align-items: center; gap: 8px; overflow-wrap: anywhere; }
+.wo-shell .wo-dr-contacts svg { flex: none; color: var(--ink-muted); }
+
+.wo-shell .wo-dr-swatches { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; }
+.wo-shell .wo-dr-swatches li { display: flex; align-items: center; gap: 8px; color: var(--ink-secondary); }
+.wo-shell .wo-dr-swatches i { width: 16px; height: 16px; border-radius: 4px; border: 1px solid var(--border-strong); flex: none; }
+
+/* Raw tag table (Open Graph, Twitter) inside a disclosure. */
+.wo-shell .wo-dr-tags { display: grid; grid-template-columns: minmax(80px, 35%) 1fr; gap: 4px 10px; margin: 0; font-size: var(--ui-text-sm); }
+.wo-shell .wo-dr-tags dt { color: var(--ink-muted); font-family: 'JetBrains Mono', var(--font-monospace, monospace); font-size: 11px; overflow-wrap: anywhere; }
+.wo-shell .wo-dr-tags dd { margin: 0; color: var(--ink-primary); overflow-wrap: anywhere; }
+
+/* Issues: one row per issue, explanation behind the row. */
+.wo-shell .wo-dr-issues { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.wo-shell .wo-dr-issues > li { border-bottom: 1px solid var(--border-hairline); }
+.wo-shell .wo-dr-issues > li:last-child { border-bottom: 0; }
+.wo-shell .wo-dr-issues .wo-ui-disclosure > summary { color: var(--ink-primary); align-items: flex-start; }
+.wo-shell .wo-dr-issues .wo-ui-disclosure-chevron { margin-top: 2px; }
+.wo-shell .wo-dr-issue-title { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 6px; line-height: 1.4; }
+.wo-shell .wo-dr-issue-plain { display: block; padding: 6px 0 6px 19px; color: var(--ink-primary); }
+
+.wo-shell .wo-dr-shot { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.wo-shell .wo-dr-shot .wo-check-screenshot-img { margin: 0; max-height: 220px; object-fit: cover; object-position: top; }
+.wo-shell .wo-dr-shot .wo-btn-xs { align-self: flex-start; }
+.wo-shell .wo-dr-rules { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.wo-shell .wo-dr-rules li { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; border-bottom: 1px solid var(--border-hairline); }
+.wo-shell .wo-dr-rules li:last-child { border-bottom: 0; }
+.wo-shell .wo-dr-rule-help { color: var(--ink-primary); line-height: 1.4; }
+.wo-shell .wo-dr-rule-meta { display: flex; align-items: center; gap: 6px; font-size: var(--ui-text-sm); color: var(--ink-muted); }
+
+/* Narrow drawer: the tab strip must fit four labels with counts. */
+.wo-shell .wo-dr .wo-ui-tab { padding: 6px 4px; gap: 4px; }
+.wo-shell .wo-dr .wo-ui-stat-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.wo-shell .wo-dr .wo-ui-section-aside { white-space: nowrap; }
+.wo-shell .wo-dr .wo-dr-stat3 .wo-ui-stat-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.wo-shell .wo-dr-meta-list { display: flex; flex-direction: column; margin: 0; }
+.wo-shell .wo-dr-meta-list > div { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; border-bottom: 1px solid var(--border-hairline); }
+.wo-shell .wo-dr-meta-list > div:last-child { border-bottom: 0; }
+.wo-shell .wo-dr-meta-list dt { font-size: var(--ui-text-sm); color: var(--ink-muted); }
+.wo-shell .wo-dr-meta-list dd { margin: 0; color: var(--ink-primary); line-height: 1.45; overflow-wrap: anywhere; }

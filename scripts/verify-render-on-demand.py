@@ -74,9 +74,13 @@ def main():
 
             pulses_on = counters(3000)
             assert pulses_on['dim'] == 0, f'label sizes must not be re-read every frame: {pulses_on}'
-            toggle = page.get_by_role('button', name='Light Flow')
-            assert toggle.count(), 'Light Flow toggle not found'
+            page.get_by_role('button', name='Map layers').click()
+            toggle = page.get_by_role('menuitemcheckbox', name='Light flow')
+            assert toggle.count(), 'Light flow toggle not found'
+            assert toggle.first.get_attribute('aria-checked') == 'true'
             toggle.first.click()
+            assert toggle.first.get_attribute('aria-checked') == 'false'
+            page.keyboard.press('Escape')
             page.wait_for_timeout(1500)
             settled = counters(3000)
             assert settled['draws'] == 0, f'a settled map with Light Flow off must not draw: {settled}'

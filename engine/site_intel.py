@@ -412,6 +412,42 @@ def _parse_robots_groups(robots_text: str) -> tuple[dict[str, list[tuple[str, st
     return groups, content_signal_val
 
 
+MAX_CRAWL_DELAY_SEC = 60.0
+
+
+def _parse_crawl_delays(robots_text: str) -> dict[str, float]:
+    """Crawl-delay per user-agent group. Not part of RFC 9309, but widely used to ask bots to slow down."""
+    delays: dict[str, float] = {}
+    current_agents: list[str] = []
+    seen_rule_in_group = False
+    for raw_line in (robots_text or "").lstrip("\ufeff").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        field, val = line.split(":", 1)
+        f_low, v_clean = field.strip().lower(), val.strip()
+        if f_low == "user-agent":
+            if not v_clean:
+                continue
+            if seen_rule_in_group:
+                current_agents, seen_rule_in_group = [v_clean.lower()], False
+            else:
+                current_agents.append(v_clean.lower())
+        elif f_low in ("allow", "disallow"):
+            seen_rule_in_group = True
+        elif f_low == "crawl-delay" and current_agents:
+            seen_rule_in_group = True
+            try:
+                value = float(v_clean)
+            except ValueError:
+                continue
+            if value != value or value < 0:  # NaN or negative
+                continue
+            for agent in current_agents:
+                delays.setdefault(agent, value)
+    return delays
+
+
 def _match_robots_path(path_and_query: str, pattern: str) -> bool:
     if not pattern:
         return False
@@ -488,12 +524,17 @@ def build_robots_policy(
     """
     state, can_crawl, reason = "unknown", False, "Robots policy could not be established."
     rules, matched_agents = [], []
+    crawl_delay: Optional[float] = None
     if error or too_large:
         reason = str(error) if error else "Robots response exceeded the byte limit."
     elif isinstance(status_code, int) and 200 <= status_code < 300:
         state, can_crawl, reason = "parsed", True, "Fetched robots rules apply to WebObs."
         groups, _ = _parse_robots_groups(robots_text)
         rules, matched_agents = _robots_rules_for_agent(groups, user_agent)
+        delays = _parse_crawl_delays(robots_text)
+        product = ROBOTS_PRODUCT_TOKEN.lower() if re.search(r"\bWebObs\b", user_agent, re.I) else user_agent.split("/", 1)[0].strip().lower()
+        # The most specific group wins, as for allow and disallow rules.
+        crawl_delay = delays.get(product, delays.get("*") if product not in groups else None)
     elif status_code in (404, 410):
         state, can_crawl, reason = "absent", True, "Robots file is absent."
     elif isinstance(status_code, int) and 400 <= status_code < 500 and status_code != 429:
@@ -506,6 +547,7 @@ def build_robots_policy(
         "state": state, "statusCode": status_code, "userAgent": user_agent,
         "productToken": ROBOTS_PRODUCT_TOKEN if re.search(r"\bWebObs\b", user_agent, re.I) else user_agent.split("/", 1)[0],
         "canCrawl": can_crawl, "reason": reason, "matchedAgents": matched_agents,
+        "crawlDelaySec": crawl_delay,
         "rules": [[directive, pattern] for directive, pattern in rules],
     }
 

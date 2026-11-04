@@ -7,10 +7,13 @@ import {
   FolderGit2,
   GitFork,
   Globe,
+  Layers,
   Loader2,
   Moon,
+  MoreHorizontal,
   PanelLeft,
   Orbit,
+  Plus,
   RotateCcw,
   Route,
   Search,
@@ -24,7 +27,8 @@ import { SiteIntelDrawer } from './components/SiteIntelDrawer';
 import { SiteAuditPanel } from './components/SiteAuditPanel';
 import { PageExplorer } from './components/PageExplorer';
 import { SiteOverview } from './components/SiteOverview';
-import { hasNodeIssue } from './data/sitePresentation';
+import { attentionNodeIds } from './data/mapAttention';
+import { MenuButton } from './components/MapMenus';
 import { ViewGizmo3D, type ViewGizmoHandle } from './components/ViewGizmo3D';
 import { createStandaloneHost } from './obsidian/hostAdapter';
 import type {
@@ -43,6 +47,16 @@ interface AppProps {
   host?: SiteHostAdapter;
   initialTheme?: ThemeMode;
 }
+
+const EXPLORER_KEY = 'web-obs:explorer-open';
+
+/** Per-viewer convenience only. Storage can be missing or blocked, so every access is guarded. */
+const readExplorerOpen = (): boolean => {
+  try { return typeof window !== 'undefined' && window.localStorage?.getItem(EXPLORER_KEY) === '1'; } catch { return false; }
+};
+const writeExplorerOpen = (open: boolean) => {
+  try { window.localStorage?.setItem(EXPLORER_KEY, open ? '1' : '0'); } catch { /* storage unavailable */ }
+};
 
 const IDLE_PROGRESS: CrawlProgressState = {
   running: false,
@@ -88,7 +102,9 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchOpen, setSearchOpen] = useState<boolean>(false);
   const [showExternal, setShowExternal] = useState<boolean>(false);
-  const [explorerOpen, setExplorerOpen] = useState(true);
+  const [explorerOpen, setExplorerOpen] = useState(readExplorerOpen);
+  const [captureOpen, setCaptureOpen] = useState(false);
+  useEffect(() => { writeExplorerOpen(explorerOpen); }, [explorerOpen]);
   const [showAllLinks, setShowAllLinks] = useState(false);
   const [showChromeLinks, setShowChromeLinks] = useState<boolean>(false);
   const [showPulses, setShowPulses] = useState<boolean>(() =>
@@ -151,9 +167,12 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
           setViewMode(cmd.viewMode);
           setAuditOpen(false);
         } else if (cmd.type === 'focus-capture-input') {
-          const el = centerInputRef.current ?? urlInputRef.current;
-          el?.focus();
-          el?.select();
+          setCaptureOpen(true);
+          requestAnimationFrame(() => {
+            const el = centerInputRef.current ?? urlInputRef.current;
+            el?.focus();
+            el?.select();
+          });
         } else if (cmd.type === 'select-node') {
           setAuditOpen(false);
           setIntelOpen(false);
@@ -190,6 +209,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
     if (result) {
       setManifest(result);
       setUrlInput('');
+      setCaptureOpen(false);
       const updatedList = await activeHost.listSites();
       setSites(updatedList);
       setProgress(IDLE_PROGRESS);
@@ -232,6 +252,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
     return manifest.nodes.find((n) => n.id === selectedId) ?? null;
   }, [manifest, selectedId]);
 
+  const attention = useMemo(() => attentionNodeIds(manifest), [manifest]);
   const counts = useMemo(() => {
     if (!manifest) {
       return { all: 0, hubs: 0, pages: 0, orphans: 0, issues: 0, external: 0 };
@@ -249,9 +270,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
       pages++;
       if (n.kind === 'home' || n.kind === 'hub') hubs++;
       if (n.health === 'orphan' || n.health === 'unlisted') orphans++;
-      if (hasNodeIssue(n)) {
-        issues++;
-      }
+      if (attention.has(n.id)) issues++;
     }
     return {
       all: showExternal ? pages + external : pages,
@@ -261,7 +280,20 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
       issues,
       external,
     };
-  }, [manifest, showExternal]);
+  }, [manifest, showExternal, attention]);
+  const legend = useMemo(() => {
+    if (!manifest) return [];
+    const has = (test: (n: SiteNode) => boolean) => manifest.nodes.some(test);
+    return ([
+      ['home', 'Home', 'wo-dot-home', has((n) => n.kind === 'home')],
+      ['hub', 'Section', 'wo-dot-hub', has((n) => n.kind === 'hub')],
+      ['page', 'Page', 'wo-dot-page', has((n) => n.kind === 'page')],
+      ['orphan', 'Orphan or unlisted', 'wo-dot-orphan', has((n) => n.health === 'orphan' || n.health === 'unlisted')],
+      ['broken', 'Broken', 'wo-dot-broken', has((n) => n.health === 'broken')],
+      ['external', 'External', 'wo-dot-ext', showExternal && counts.external > 0],
+    ] as const).filter(([, , , shown]) => shown);
+  }, [manifest, showExternal, counts.external]);
+  const layersOn = Number(showAllLinks) + Number(showExternal) + Number(showChromeLinks) + Number(showPulses);
 
   const showOnboardingCard = initialLoaded && !manifest && !progress.running;
   const selectPage = (id: string) => {
@@ -277,6 +309,11 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
     setExplorerOpen(true);
     setSearchQuery('');
     if (next === 'external') setShowExternal(true);
+  };
+  const openAudit = (event?: React.MouseEvent<HTMLElement>) => {
+    drawerReturnFocusRef.current = event?.currentTarget ?? auditButtonRef.current;
+    setSelectedId(null); setIntelOpen(false); setAuditOpen(true);
+    requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.wo-audit-close')?.focus());
   };
 
   return (
@@ -312,13 +349,15 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
         onWebGLContextLost={activeHost.onWebGLContextLost}
       />
 
-      {/* Minimal Top Bar */}
+      {/* Toolbar: site and capture on the left, layout in the middle, panels and view tools on the right. */}
       <header className="wo-topbar">
         <div className="wo-topbar-left">
-          <div className="wo-brand-pill">
-            <Orbit size={15} className="wo-brand-icon" />
+          <span className="wo-brand-pill" title="web-obs">
+            <Orbit size={15} className="wo-brand-icon" aria-hidden="true" />
             <span className="wo-brand-name">web-obs</span>
-          </div>
+          </span>
+
+          {manifest && <button type="button" className={`wo-icon-btn wo-explorer-toggle ${explorerOpen ? 'is-active' : ''}`} aria-label="Pages: show or hide explorer" title="Pages" aria-expanded={explorerOpen} aria-controls="wo-page-explorer" onClick={() => setExplorerOpen((value) => !value)}><PanelLeft size={15} /></button>}
 
           {sites.length > 0 && (
             <select
@@ -340,116 +379,67 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
             </select>
           )}
 
-          {manifest && <button type="button" className={`wo-explorer-toggle ${explorerOpen ? 'is-active' : ''}`} aria-label="Pages: show or hide explorer" aria-expanded={explorerOpen} aria-controls="wo-page-explorer" onClick={() => setExplorerOpen((value) => !value)}><PanelLeft size={15} /><span>Pages</span></button>}
-
-          {manifest && !progress.running && !auditOpen && (
-            <form className="wo-inline-capture" onSubmit={handleCaptureSubmit}>
+          {manifest && !progress.running && !auditOpen && (captureOpen ? (
+            <form className="wo-inline-capture" onSubmit={handleCaptureSubmit} onKeyDown={(event) => {
+              if (event.key === 'Escape') { event.stopPropagation(); setCaptureOpen(false); }
+            }}>
               <Globe size={13} className="wo-capture-icon" />
               <input
                 ref={urlInputRef}
                 type="text"
+                autoFocus
                 className="wo-capture-input"
                 placeholder="websiteexample.com"
                 value={urlInput}
                 onChange={(e) => setUrlInput(e.target.value)}
                 aria-label="Website domain or URL to capture"
               />
-              <button
-                type="submit"
-                className="wo-capture-submit"
-                disabled={!urlInput.trim()}
-              >
+              <button type="submit" className="wo-capture-submit" disabled={!urlInput.trim()}>
                 <span>Capture</span>
                 <ArrowRight size={13} />
               </button>
+              <button type="button" className="wo-search-clear" aria-label="Close capture" onClick={() => setCaptureOpen(false)}><X size={13} /></button>
             </form>
+          ) : (
+            <button type="button" className="wo-icon-btn" aria-label="Capture a website" title="Capture a website" onClick={() => setCaptureOpen(true)}><Plus size={15} /></button>
+          ))}
+
+          {manifest && !progress.running && !auditOpen && !captureOpen && (
+            <SiteOverview manifest={manifest} onPages={() => openPageFilter('pages')}
+              onAttention={() => (counts.issues > 0 ? openPageFilter('issues') : openAudit())}
+              onBrokenLinks={(event?: React.MouseEvent<HTMLElement>) => openAudit(event)}
+              onDomains={() => openPageFilter('external')} />
           )}
         </div>
 
         {manifest && (
+          <div className="wo-mode-seg" role="tablist" aria-label="Layout mode" onKeyDown={(event) => {
+            const modes: GlobeViewMode[] = ['globe', 'road', 'clusters'];
+            const index = modes.indexOf(viewMode);
+            const next = event.key === 'ArrowRight' ? (index + 1) % 3 : event.key === 'ArrowLeft' ? (index + 2) % 3 : event.key === 'Home' ? 0 : event.key === 'End' ? 2 : -1;
+            if (next >= 0) {
+              event.preventDefault();
+              setViewMode(modes[next]);
+              setAuditOpen(false);
+              event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus();
+            }
+          }}>
+            {([
+              ['globe', 'Globe', Globe], ['road', 'Road', Route], ['clusters', 'Clusters', GitFork],
+            ] as const).map(([mode, label, Icon]) => (
+              <button key={mode} type="button" role="tab" aria-selected={viewMode === mode} tabIndex={viewMode === mode ? 0 : -1}
+                className={`wo-mode-btn ${viewMode === mode ? 'is-active' : ''}`}
+                onClick={() => { setViewMode(mode); setAuditOpen(false); }}>
+                <Icon size={13} />
+                <span>{label}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {manifest && (
           <div className="wo-topbar-right">
-            <div className="wo-mode-seg" role="tablist" aria-label="Layout mode" onKeyDown={(event) => {
-              const modes: GlobeViewMode[] = ['globe', 'road', 'clusters'];
-              const index = modes.indexOf(viewMode);
-              const next = event.key === 'ArrowRight' ? (index + 1) % 3 : event.key === 'ArrowLeft' ? (index + 2) % 3 : event.key === 'Home' ? 0 : event.key === 'End' ? 2 : -1;
-              if (next >= 0) {
-                event.preventDefault();
-                setViewMode(modes[next]);
-                setAuditOpen(false);
-                event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')[next]?.focus();
-              }
-            }}>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={viewMode === 'globe'}
-                tabIndex={viewMode === 'globe' ? 0 : -1}
-                className={`wo-mode-btn ${viewMode === 'globe' ? 'is-active' : ''}`}
-                onClick={() => { setViewMode('globe'); setAuditOpen(false); }}
-              >
-                <Globe size={13} />
-                <span>Globe</span>
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={viewMode === 'road'}
-                tabIndex={viewMode === 'road' ? 0 : -1}
-                className={`wo-mode-btn ${viewMode === 'road' ? 'is-active' : ''}`}
-                onClick={() => { setViewMode('road'); setAuditOpen(false); }}
-              >
-                <Route size={13} />
-                <span>Road</span>
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={viewMode === 'clusters'}
-                tabIndex={viewMode === 'clusters' ? 0 : -1}
-                className={`wo-mode-btn ${viewMode === 'clusters' ? 'is-active' : ''}`}
-                onClick={() => { setViewMode('clusters'); setAuditOpen(false); }}
-              >
-                <GitFork size={13} />
-                <span>Clusters</span>
-              </button>
-            </div>
-
-            {searchOpen ? (
-              <div className="wo-search-pill">
-                <Search size={13} />
-                <input
-                  type="text"
-                  autoFocus
-                  className="wo-search-field"
-                  placeholder="Filter URL or title..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-                <button
-                  type="button"
-                  className="wo-search-clear"
-                  onClick={() => {
-                    setSearchQuery('');
-                    setSearchOpen(false);
-                  }}
-                  aria-label="Clear search"
-                >
-                  <X size={13} />
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                className="wo-icon-btn"
-                onClick={() => setSearchOpen(true)}
-                title="Search pages"
-                aria-label="Search pages"
-              >
-                <Search size={15} />
-              </button>
-            )}
-
-            <button type="button" ref={auditButtonRef} className={`wo-intel-btn ${auditOpen ? 'is-active' : ''}`} aria-pressed={auditOpen}
+            <button type="button" ref={auditButtonRef} className={`wo-intel-btn ${auditOpen ? 'is-active' : ''}`} aria-pressed={auditOpen} aria-label="Site audit"
               onClick={(event) => {
                 drawerReturnFocusRef.current = event.currentTarget;
                 setSelectedId(null); setIntelOpen(false); setAuditOpen((value) => !value);
@@ -462,6 +452,8 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
               <button
                 type="button"
                 className={`wo-intel-btn ${intelOpen ? 'is-active' : ''}`}
+                aria-label="Site Intel"
+                aria-pressed={intelOpen}
                 onClick={(event) => {
                   drawerReturnFocusRef.current = event.currentTarget;
                   setAuditOpen(false);
@@ -471,65 +463,56 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
                     return next;
                   });
                 }}
-                title="Site Intelligence: Analytics, Tech Stack, AI Readiness & Funnel"
+                title="Site Intelligence: health, files, tech stack and brand"
               >
                 <Activity size={13} />
                 <span>Site Intel</span>
               </button>
             )}
 
-            {manifest.siteId !== PREVIEW_SITE_MANIFEST.siteId && (
-              <button
-                type="button"
-                className="wo-icon-btn"
-                onClick={() =>
-                  activeHost.onOpenNote(`sites/${manifest.siteId}/_dashboard.md`, true)
-                }
-                title="Open Site Dashboard Note"
-                aria-label="Open Site Dashboard Note"
-              >
-                <FolderGit2 size={15} />
+            <div className="wo-tool-group" role="group" aria-label="View tools">
+              {searchOpen ? (
+                <div className="wo-search-pill">
+                  <Search size={13} />
+                  <input
+                    type="text"
+                    autoFocus
+                    className="wo-search-field"
+                    placeholder="Filter URL or title"
+                    aria-label="Filter map by URL or title"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                  <button type="button" className="wo-search-clear" onClick={() => { setSearchQuery(''); setSearchOpen(false); }} aria-label="Clear search">
+                    <X size={13} />
+                  </button>
+                </div>
+              ) : (
+                <button type="button" className="wo-icon-btn" onClick={() => setSearchOpen(true)} title="Search pages" aria-label="Search pages">
+                  <Search size={15} />
+                </button>
+              )}
+              <button type="button" className="wo-icon-btn" onClick={() => setResetSignal((n) => n + 1)} title="Reset camera" aria-label="Reset camera">
+                <RotateCcw size={15} />
               </button>
-            )}
-
-            <button
-              type="button"
-              className={`wo-icon-btn ${autoRotate ? 'is-active' : ''}`}
-              onClick={() => setAutoRotate((v) => !v)}
-              title="Toggle gentle globe rotation"
-              aria-label="Toggle gentle globe rotation"
-            >
-              <Orbit size={15} />
-            </button>
-
-            <button
-              type="button"
-              className="wo-icon-btn"
-              onClick={() => setResetSignal((n) => n + 1)}
-              title="Reset camera"
-              aria-label="Reset camera"
-            >
-              <RotateCcw size={15} />
-            </button>
-
-            <button
-              type="button"
-              className="wo-icon-btn"
-              onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
-              title="Toggle light/dark theme"
-              aria-label="Toggle light/dark theme"
-            >
-              {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-            </button>
+              <button type="button" className="wo-icon-btn" onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))} title="Toggle light/dark theme" aria-label="Toggle light/dark theme">
+                {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+              </button>
+              <MenuButton label="More actions" icon={<MoreHorizontal size={15} />} items={[
+                ...(manifest.siteId !== PREVIEW_SITE_MANIFEST.siteId ? [{
+                  id: 'dashboard', label: 'Open Site Dashboard Note', icon: <FolderGit2 size={14} />,
+                  onSelect: () => activeHost.onOpenNote(`sites/${manifest.siteId}/_dashboard.md`, true),
+                }] : []),
+                { id: 'rotate', label: 'Gentle globe rotation', checked: autoRotate, title: 'Toggle gentle globe rotation', onSelect: () => setAutoRotate((v) => !v) },
+              ]} />
+            </div>
           </div>
         )}
       </header>
 
       {manifest && !progress.running && !auditOpen && <>
-        <SiteOverview manifest={manifest} onPages={() => openPageFilter('pages')} onIssues={() => openPageFilter('issues')} onDomains={() => openPageFilter('external')} />
-        {explorerOpen && <PageExplorer manifest={manifest} selectedId={selectedId} filter={filter} query={searchQuery} onQuery={setSearchQuery} onFilter={openPageFilter} onSelect={selectPage} onClose={() => setExplorerOpen(false)} />}
-        <div className="wo-map-caption"><span className="wo-eyebrow">{viewMode === 'road' ? 'CLICK DEPTH' : viewMode === 'clusters' ? 'SITE SECTIONS' : 'SITE ARCHITECTURE'}</span><span>{showAllLinks ? 'All captured connections' : 'Structure view'}<span className="wo-caption-separator">/</span>Select a page to trace its connections</span></div>
-        <div className="wo-map-legend" aria-label="Map legend"><span><i className="wo-dot-home" />Home</span><span><i className="wo-dot-hub" />Section</span><span><i className="wo-dot-page" />Page</span>{showExternal && <span><i className="wo-dot-ext" />External</span>}</div>
+        {explorerOpen && <PageExplorer manifest={manifest} attention={attention} selectedId={selectedId} filter={filter} query={searchQuery} onQuery={setSearchQuery} onFilter={openPageFilter} onSelect={selectPage} onClose={() => setExplorerOpen(false)} />}
+        {legend.length > 0 && <div className="wo-map-legend" aria-label="Map legend">{legend.map(([id, label, dot]) => <span key={id}><i className={dot} aria-hidden="true" />{label}</span>)}</div>}
       </>}
 
       {/* Center Minimal Onboarding Card (when 0 sites captured yet) */}
@@ -654,67 +637,40 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
         </div>
       )}
 
-      {/* Minimal Bottom Filter & Layer Bar */}
+      {/* Bottom bar: one segmented node filter plus a layers menu. Empty filters are left out. */}
       {manifest && !progress.running && !auditOpen && (
         <div className="wo-bottom-dock">
-          <div className="wo-filter-group">
+          <div className="wo-filter-group" role="group" aria-label="Show nodes">
             {(
               [
-                ['all', `All (${counts.all})`, ''],
-                ['hubs', `Hubs (${counts.hubs})`, 'wo-dot-hub'],
-                ['pages', `Pages (${counts.pages})`, 'wo-dot-page'],
-                ['orphans', `Orphans / unlisted (${counts.orphans})`, 'wo-dot-orphan'],
-                ['issues', `Audit (${counts.issues})`, 'wo-dot-broken'],
-                ['external', `External (${counts.external})`, 'wo-dot-ext'],
+                ['all', 'All', counts.all, ''],
+                ['hubs', 'Sections', counts.hubs, 'wo-dot-hub'],
+                ['pages', 'Pages', counts.pages, 'wo-dot-page'],
+                ['issues', 'Needs attention', counts.issues, 'wo-dot-broken'],
+                ['orphans', 'Orphans', counts.orphans, 'wo-dot-orphan'],
+                ['external', 'External', counts.external, 'wo-dot-ext'],
               ] as const
-            ).map(([id, label, dotClass]) => (
+            ).filter(([id, , count]) => id === 'all' || count > 0 || filter === id).map(([id, label, count, dotClass]) => (
               <button
                 key={id}
                 type="button"
                 className={`wo-dock-chip ${filter === id ? 'is-active' : ''}`}
-                onClick={() => {
-                  openPageFilter(id);
-                }}
+                onClick={() => openPageFilter(id)}
                 aria-pressed={filter === id}
               >
-                {dotClass && <span className={`wo-dot ${dotClass}`} />}
+                {dotClass && <span className={`wo-dot ${dotClass}`} aria-hidden="true" />}
                 <span>{label}</span>
+                <span className="wo-dock-count">{count}</span>
               </button>
             ))}
           </div>
 
-          <div className="wo-dock-divider" />
-
-          <div className="wo-filter-group">
-            <button type="button" className={`wo-dock-toggle ${showAllLinks ? 'is-on' : ''}`} aria-pressed={showAllLinks} onClick={() => setShowAllLinks((value) => !value)} title="Show all captured cross-links, or keep the map focused on site structure">All connections</button>
-            <button
-              type="button"
-              className={`wo-dock-toggle ${showExternal ? 'is-on' : ''}`}
-              onClick={() => setShowExternal((v) => !v)}
-              aria-pressed={showExternal}
-              title="Show or hide external domain orbit"
-            >
-              External Orbit
-            </button>
-            <button
-              type="button"
-              className={`wo-dock-toggle ${showChromeLinks ? 'is-on' : ''}`}
-              onClick={() => setShowChromeLinks((v) => !v)}
-              aria-pressed={showChromeLinks}
-              title="Include global header/footer menu links alongside contextual body links"
-            >
-              Nav Links
-            </button>
-            <button
-              type="button"
-              className={`wo-dock-toggle ${showPulses ? 'is-on' : ''}`}
-              onClick={() => setShowPulses((v) => !v)}
-              aria-pressed={showPulses}
-              title="Toggle subtle directional light flow along links"
-            >
-              Light Flow
-            </button>
-          </div>
+          <MenuButton label="Map layers" text="Layers" icon={<Layers size={14} />} placement="above" badge={layersOn} className="wo-layers-menu" items={[
+            { id: 'links', label: 'All connections', checked: showAllLinks, title: 'Show all captured cross-links, or keep the map focused on site structure', onSelect: () => setShowAllLinks((value) => !value) },
+            { id: 'external', label: 'External orbit', checked: showExternal, title: 'Show or hide external domains', onSelect: () => setShowExternal((v) => !v) },
+            { id: 'nav', label: 'Navigation links', checked: showChromeLinks, title: 'Include header and footer menu links alongside links in the page body', onSelect: () => setShowChromeLinks((v) => !v) },
+            { id: 'flow', label: 'Light flow', checked: showPulses, title: 'Subtle directional light moving along links', onSelect: () => setShowPulses((v) => !v) },
+          ]} />
         </div>
       )}
 
@@ -759,6 +715,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
             setFlyRequest((prev) => ({ nodeId: nid, seq: (prev?.seq ?? 0) + 1 }));
           }}
           onOpenNote={(obsPath) => activeHost.onOpenNote(obsPath, true)}
+          resolveAssetUrl={activeHost.resolveAssetUrl}
           onOpenExternalUrl={(u) => activeHost.onOpenExternalUrl(u)}
         />
       )}

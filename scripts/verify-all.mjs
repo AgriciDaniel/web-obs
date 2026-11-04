@@ -587,6 +587,7 @@ async function main() {
   checkPythonSyntax();
   execFileSync(process.execPath, ['scripts/verify-resource-validation.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-site-audit.mjs'], { stdio: 'inherit', timeout: 60_000 });
+  execFileSync(process.execPath, ['scripts/verify-compare-sites.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-discovery-checklist.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-doctor.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-engine-bundle.mjs'], { stdio: 'inherit', timeout: 60_000 });
@@ -594,7 +595,7 @@ async function main() {
   execFileSync(process.execPath, ['scripts/verify-capture-host.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-native-lifecycle.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(pythonCommand(ROOT), ['scripts/verify-no-api.py'], { stdio: 'inherit', timeout: 60_000 });
-  for (const script of ['scripts/verify-browser-runtime.py', 'scripts/verify-link-policy.py', 'scripts/verify-evidence.py', 'scripts/verify-recapture.py', 'scripts/verify-system.py', 'scripts/verify-resources.py', 'scripts/verify-workers.py', 'scripts/verify-pipeline.py', 'scripts/verify-canvas-export.py', 'scripts/verify-link-continuation.py', 'scripts/verify-failure-paths.py', 'scripts/verify-trailing-slash.py', 'scripts/verify-render-on-demand.py']) {
+  for (const script of ['scripts/verify-browser-runtime.py', 'scripts/verify-link-policy.py', 'scripts/verify-evidence.py', 'scripts/verify-recapture.py', 'scripts/verify-system.py', 'scripts/verify-resources.py', 'scripts/verify-workers.py', 'scripts/verify-pipeline.py', 'scripts/verify-canvas-export.py', 'scripts/verify-link-continuation.py', 'scripts/verify-failure-paths.py', 'scripts/verify-trailing-slash.py', 'scripts/verify-render-on-demand.py', 'scripts/verify-transport-checks.py', 'scripts/verify-audit-expansion.py', 'scripts/verify-browser-audit.py', 'scripts/verify-crawler-identity.py', 'scripts/verify-note-structure.py']) {
     execFileSync(pythonCommand(ROOT), [script, ...(script.endsWith('verify-pipeline.py') ? ['--benchmark'] : [])], { stdio: 'inherit', timeout: 90_000 });
   }
   await runEndToEndMockCrawlTest();

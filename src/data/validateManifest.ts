@@ -32,7 +32,7 @@ export function parseSiteManifest(value: unknown): SiteGraphManifest {
   const stats = value.stats;
   const statNames = ['pagesCrawled', 'sitemapsFound', 'sitemapUrlsTotal', 'internalEdges', 'externalDomains', 'externalEdges', 'localImagesDownloaded', 'orphanPages', 'unlistedPages', 'brokenOrRedirectPages'];
   if (!object(stats) || statNames.some((key) => !count(stats[key]))) return fail('invalid capture totals');
-  for (const key of ['pagesWithSeoIssues', 'avgResponseTimeMs', 'medianResponseTimeMs', 'avgFetchDurationMs']) if (stats[key] !== undefined && !count(stats[key])) return fail(`invalid ${key}`);
+  for (const key of ['pagesWithSeoIssues', 'avgResponseTimeMs', 'medianResponseTimeMs', 'avgFetchDurationMs', 'auditFindings', 'auditFindingItems']) if (stats[key] !== undefined && !count(stats[key])) return fail(`invalid ${key}`);
   if (!Array.isArray(value.nodes) || value.nodes.length > 20000 || !Array.isArray(value.edges) || value.edges.length > 200000) return fail('invalid graph inventory');
   const nodeIds = new Set<string>();
   for (const node of value.nodes) {
@@ -45,6 +45,9 @@ export function parseSiteManifest(value: unknown): SiteGraphManifest {
     if (node.authorityScore !== undefined && (!count(node.authorityScore) || node.authorityScore > 100)) return fail('invalid relative link score');
     if (node.noteStatus !== undefined && node.noteStatus !== 'preserved-local-edits') return fail('invalid note status');
     for (const key of ['seoIssues', 'externalUrlsSample']) if (node[key] !== undefined && !strings(node[key])) return fail(`invalid ${key}`);
+    if (node.pageChecks !== undefined && node.pageChecks !== null && !object(node.pageChecks)) return fail('invalid page checks');
+    if (node.simhash !== undefined && typeof node.simhash !== 'string') return fail('invalid content fingerprint');
+    if (node.keywords !== undefined && !object(node.keywords)) return fail('invalid page keywords');
   }
   const edgeIds = new Set<string>();
   for (const edge of value.edges) {
@@ -74,6 +77,15 @@ export function parseSiteManifest(value: unknown): SiteGraphManifest {
       if (!Array.isArray(entry.references) || entry.references.some((reference) => !object(reference) || typeof reference.pageUrl !== 'string' || typeof reference.role !== 'string' || !optionalText(reference.label) || !optionalText(reference.language))) return fail('invalid resource references');
     }
   }
+  if (value.audit !== undefined) {
+    const audit = value.audit;
+    if (!object(audit) || !Array.isArray(audit.findings)) return fail('invalid site audit');
+    if (audit.findings.some((finding) => !object(finding) || typeof finding.id !== 'string' || typeof finding.category !== 'string' || typeof finding.title !== 'string' || typeof finding.explanation !== 'string' || !['attention', 'review', 'coverage'].includes(String(finding.tone)) || !Array.isArray(finding.targets) || finding.targets.some((target) => !object(target) || typeof target.url !== 'string' || !optionalText(target.detail) || !optionalText(target.sourceUrl)))) return fail('invalid audit findings');
+    for (const key of ['linkFixes', 'linkOpportunities', 'conflicts', 'cannibalization', 'anchorConflicts', 'crawlTraps']) if (audit[key] !== undefined && !Array.isArray(audit[key])) return fail(`invalid audit ${key}`);
+    for (const key of ['duplicates', 'weakPages', 'keywords', 'freshness', 'trust', 'schema', 'images', 'sitemapLimits', 'robotsSyntax', 'tasks']) if (audit[key] !== undefined && !object(audit[key])) return fail(`invalid audit ${key}`);
+    if (object(audit.tasks) && ['open', 'resolved'].some((key) => (audit.tasks as ObjectValue)[key] !== undefined && !count((audit.tasks as ObjectValue)[key]))) return fail('invalid task counts');
+  }
+  if (value.issueCatalog !== undefined && (!object(value.issueCatalog) || Object.values(value.issueCatalog).some((entry) => !object(entry) || typeof entry.title !== 'string' || typeof entry.explanation !== 'string'))) return fail('invalid issue catalog');
   const intel = value.siteIntel;
   if (intel !== undefined) {
     if (!object(intel)) return fail('invalid site intelligence');
@@ -93,6 +105,11 @@ export function parseSiteManifest(value: unknown): SiteGraphManifest {
     if (ai !== undefined && (!object(ai) || !object(ai.endpoints) || ['llmsTxt', 'llmsFullTxt', 'aiCatalogJson', 'securityTxt', 'adsTxt'].some((key) => typeof (ai.endpoints as ObjectValue)[key] !== 'boolean') || !object(ai.aiBotsPolicy) || !Object.values(ai.aiBotsPolicy).every((entry) => typeof entry === 'string') || !strings(ai.blockedAiBots) || !strings(ai.savedFiles) || !count(ai.allowedAiBotsCount))) return fail('invalid discovery observations');
     const funnel = intel.funnel;
     if (funnel !== undefined && (!object(funnel) || ['formsCount', 'videosCount', 'downloadsCount'].some((key) => !count(funnel[key])) || !Array.isArray(funnel.platforms) || funnel.platforms.some((entry) => !object(entry) || typeof entry.platform !== 'string' || typeof entry.category !== 'string' || !strings(entry.urls)))) return fail('invalid funnel observations');
+    const browser = intel.browserAudit;
+    if (browser !== undefined && (!object(browser) || typeof browser.state !== 'string' || (browser.pages !== undefined && (!Array.isArray(browser.pages) || browser.pages.some((entry) => !object(entry) || typeof entry.url !== 'string'))) || (browser.findings !== undefined && !Array.isArray(browser.findings)))) return fail('invalid browser sample');
+    const transport = intel.transport;
+    if (transport !== undefined && (!object(transport) || ['tls', 'headerQuality', 'emailDns'].some((key) => transport[key] !== undefined && transport[key] !== null && !object(transport[key])))) return fail('invalid transport checks');
+    if (intel.pageCheckFeatures !== undefined && !object(intel.pageCheckFeatures)) return fail('invalid optional check states');
     const registration = intel.domainRegistration;
     if (registration !== undefined && (!object(registration) || ['registeredDate', 'expirationDate', 'updatedDate', 'registrar'].some((key) => registration[key] !== null && typeof registration[key] !== 'string') || (registration.domainAgeYears !== null && !count(registration.domainAgeYears)))) return fail('invalid domain registration');
   }

@@ -77,6 +77,8 @@ export interface PythonCapabilities {
   chromiumExecutablePath?: string;
   chromiumExpectedPath?: string;
   browserError?: string;
+  /** Optional packages by pip name. Missing ones switch off only their own check. */
+  optionalPackages?: Record<string, boolean>;
 }
 
 // Presence checks only. Do not install packages or launch Chromium from the plugin.
@@ -89,6 +91,13 @@ for name in ("requests", "bs4", "lxml"):
         importlib.import_module(name)
     except Exception:
         result["missingCore"].append(name)
+result["optionalPackages"] = {}
+for pip_name, module in (("dnspython", "dns.resolver"), ("pyspellchecker", "spellchecker"), ("html5lib", "html5lib")):
+    try:
+        importlib.import_module(module)
+        result["optionalPackages"][pip_name] = True
+    except Exception:
+        result["optionalPackages"][pip_name] = False
 if sys.argv[1] != "never":
     try:
         from playwright.sync_api import sync_playwright

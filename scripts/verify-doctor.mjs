@@ -57,6 +57,16 @@ assert.equal(mod.summarizeDoctor(mod.buildDoctorReport({ ...good, network: null 
 assert.deepEqual(mod.parsePythonVersion('Python 3.14.1'), { major: 3, minor: 14 });
 assert.equal(mod.parsePythonVersion('nope'), null);
 
+// Optional packages are informational: missing ones never warn or fail.
+const someOptional = mod.buildDoctorReport({ ...good, optionalPackages: { dnspython: false, pyspellchecker: true, html5lib: false } });
+const optionalRow = someOptional.find((r) => r.id === 'optional');
+assert.equal(optionalRow.state, 'pass');
+assert.match(optionalRow.detail, /Optional, not installed: dnspython \(email DNS checks\), html5lib/);
+assert.equal(mod.summarizeDoctor(someOptional).state, 'pass');
+assert.match(mod.buildDoctorReport({ ...good, optionalPackages: { dnspython: true, pyspellchecker: true, html5lib: true } }).find((r) => r.id === 'optional').detail, /are available/);
+assert.equal(mod.buildDoctorReport({ ...good, optionalPackages: {} }).find((r) => r.id === 'optional').state, 'pass');
+assert.ok(!mod.buildDoctorReport(good).some((r) => r.id === 'optional'), 'older probes without optional data add no row');
+
 // Every row with a problem tells the user what to do next.
 for (const facts of [{ ...good, pythonVersion: null }, { ...good, missingCore: ['lxml'] }, { ...good, vaultWritable: false }, { ...good, engineFound: false }]) {
   for (const r of mod.buildDoctorReport(facts).filter((r) => r.state === 'fail')) assert.ok(r.fix, `fail row ${r.id} has a fix`);

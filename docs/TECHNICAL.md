@@ -4,7 +4,7 @@ This is the full reference for how Web-Obs captures, stores and verifies a site.
 
 Website Intelligence and 3D Site Globe plugin for Obsidian. Pure local scripts, no AI, no external API integrations or API keys.
 
-The crawler requests public website pages, robots.txt, sitemaps, discovery files and assets directly over HTTP. External links are extracted into the graph; the direct link-check helper does not use a reputation or SEO service. Analytics tags and AI crawler policies are inspected locally, without using analytics reporting APIs or an AI provider. Domain registration, hosted DNS lookup, certificate transparency, PageSpeed and CrUX services are outside the product scope.
+The crawler requests public website pages, robots.txt, sitemaps, discovery files and assets directly over HTTP. Since 0.2.0 it also opens one TLS connection to the site to read its certificate, and, when the optional `dnspython` package is installed and the setting is on, asks the system DNS resolver for the domain's MX, SPF, DMARC, common DKIM selectors and CAA records. That DNS lookup is the only request that does not go to the captured site or a link found on it. External links are extracted into the graph; the direct link-check helper does not use a reputation or SEO service. Analytics tags and AI crawler policies are inspected locally, without using analytics reporting APIs or an AI provider. Domain registration, hosted DNS services, certificate transparency, PageSpeed and CrUX services are outside the product scope.
 
 Optional browser rendering allows public documents and static resources, blocks background workers, WebRTC, WebTransport, WebSockets, background fetch/XHR, event streams and form submissions, and routes HTTP traffic through the validated Python client. Pages that depend on data APIs can therefore remain incomplete. Captured content is an observation of the accessible page, not a guarantee that every section was collected. These are tested browser controls, not an operating-system network sandbox.
 
@@ -71,18 +71,21 @@ sites/<domain>/
 ├── _site-graph.json       # Full 3D Site Globe topology + Site Intelligence bundle
 ├── _site-summary.json     # Structured brand, stack, funnel & page dataset for other tools
 ├── _sitemap.canvas        # Native Obsidian JSON Canvas visual sitemap
-├── _pages.base            # Five Bases views with current-capture filters
+├── _pages.base            # Nine Bases views with current-capture filters
 ├── _fetch-log.json        # Requests, skipped URLs, retained paths, hashes and evidence exclusions
 ├── _fetch-log.md          # Readable fetch receipts
 ├── _link-health.json      # Every observed external target, including unknown and unchecked
 ├── _link-health.md        # Direct link-check report
 ├── _drift-report.md       # Changes from previous capture, when available
+├── _audit.md              # Site audit report: findings, link opportunities, fix list, duplicates
+├── _findings.csv          # Every finding row, with a stable task ID
+├── _tasks.md              # Checklist of findings; ticks survive recaptures
 ├── _evidence-pack.md        # Quoted website observations with exact local source references
 ├── _recapture-report.md   # Preserved member files and proposed generated replacements
 ├── _generated-files.json  # Generated and installed hashes used to detect edits
 ├── _raw/                  # Retained response bodies, decoded text and linked CSS evidence
 ├── llms.txt               # Saved locally when published by the target website
-├── assets/                # Locally downloaded images and inline SVG diagrams
+├── assets/                # Locally downloaded images, inline SVG diagrams and browser-sample screenshots
 ├── pages/                 # Clean Markdown notes mirroring URL paths + rich YAML frontmatter
 └── _external/             # Satellite hub notes for canonicalized external domains
 ```
@@ -113,6 +116,10 @@ Options:
 - `--continue-links`: Interpret the positional argument as a saved site ID and check its unchecked targets and confirm legacy HEAD-only missing responses. HTML and local media are reused.
 - `--render auto|always|never`: Headless Chromium fallback mode for JS-heavy sites (default `auto`).
 - `--delay <seconds>`: Polite delay between requests (default `0.15`).
+- `--no-browser-audit`: Skip the sampled browser audit (lab timings, axe-core, screenshots, JavaScript gap, third parties).
+- `--no-snapshots`: Skip full-page snapshots. `--snapshot-limit N` (default 25) caps how many pages are rendered, home and the strongest pages first; `--snapshot-html` also saves the rendered HTML under `assets/snapshots/`. Snapshots are rendered at 1280 px wide, cut at 12,000 px tall, saved as JPEG under `assets/screenshots/full-*.jpg`, and recorded on each node as `snapshot`. The viewport is set to the page height before the picture, and elements caught part way through a scroll effect are shown at rest; menus and dialogs hidden on purpose stay hidden. Skipped with Fast HTTP only.
+- `--no-dns-checks`: Skip the email DNS checks.
+- `--spell-check`: List possible English misspellings per page (needs `pyspellchecker`).
 
 ### Run standalone browser preview (with a local capture endpoint)
 
@@ -141,6 +148,10 @@ Changes detected during publication abort the promotion and preserve the active 
 
 ## Evidence and coverage
 
+Every request sends one honest user agent, `Mozilla/5.0 (compatible; WebObs/<version>; +https://github.com/AgriciDaniel/web-obs/blob/main/docs/CRAWLER.md)`, built in `engine/url_safety.py` from the version in `engine/__init__.py`. Playwright contexts use the same string, so it never contradicts the real Chromium client hints. [CRAWLER.md](CRAWLER.md) is the page for site owners.
+
+Politeness: a `Crawl-delay` in the matching robots group (capped at 60 seconds) makes the capture send one request at a time to that origin with at least that gap, across every phase. Worker processes are paced by their shared lease broker, and the main process by a per-origin pacer in `url_safety.py`; the pipeline bridges the hand-off in both directions. An HTTP 429, or a 503 with `Retry-After`, on a captured page pauses new requests to the site for that time (30 seconds when a 429 has none, at most 300), retries that page once, and stops requesting new pages after three such answers or a longer `Retry-After`. A bare 503 is retried once at the end of the queue without pausing, since it is often one broken page. Skipped pages are recorded with the reason.
+
 The actual WebObs user agent is evaluated against the target origin's robots rules before pages and sitemap requests. Scheme, host or port variants obtain separate policies. Robots network/server failures and rate limiting defer crawling; skipped URLs are recorded. Third-party static assets remain direct website resource requests; their robots policies are not comprehensively audited.
 
 Direct link checks have a default budget of 1,000 observed targets. They overlap collection, then have a 30-second drain budget after the page frontier settles. Asset GET results are reused rather than checked again. Every observed target receives a result row, including targets left unchecked. Use **Site Intel > Check remaining targets** to continue unchecked results and confirm legacy HEAD-only 404/410 responses without recrawling pages or downloading media bodies. Each continuation has a 1,000-target and 60-second budget, retains previous results and page capture time, and records a separate update time and engine/configuration receipt. Repeating it can cover additional targets; access restrictions can remain inconclusive. Edited reports are preserved with fresh proposals. A request attempt is not proof of health. HTTP 403/429 and network failures stay inconclusive. These checks do not verify a complete cross-domain backlink profile.
@@ -162,11 +173,21 @@ Browser rendering currently requires the full Playwright Chromium installation. 
 
 Technology and analytics observations record a sample of at most eight captured HTML pages, with selected source URLs and the full HTML page denominator. Security header observations cover the homepage response only. Missing detections are limited to that sample. New captures retain requested options, limit values, local Python/package versions and engine source hashes in `captureProvenance`; legacy captures remain readable without invented provenance. Canvas exports include every captured internal page, including groups larger than 32 pages.
 
+## Page checks and site audit
+
+Each captured HTML page gets deterministic checks in `engine/page_checks.py`: text to HTML ratio, readability (English only, 100 words or more), title and description relevance, doctype and charset, duplicate meta tags, meta refresh, deprecated tags, mixed content, render-blocking resources (scripts in the head without `async`, `defer` or `type=module`, and stylesheets without a non-screen `media`), DOM size, depth and widest element (Lighthouse thresholds of 1,500 nodes, 32 levels and 60 children), URL quality, Open Graph and Twitter tags, cache and compression headers, microdata and RDFa types, static accessibility counts, citability signals and keyword density. Results are stored per page as `pageChecks`, and issue slugs join `seoIssues`. `issueCatalog` in the manifest gives each slug a title, category, tone and explanation.
+
+`engine/site_audit.py` works across the capture: duplicates (exact by content hash, near by 64-bit SimHash over word 3-shingles with a Hamming distance of 4 or less), the internal link fix list, internal link opportunities (a target's H1 or title phrase of two to six words appearing in another page's visible text without a link; phrases found on more than 30% of pages are skipped as boilerplate), conflicting signals, weak pages, cannibalization, anchor conflicts, crawl traps, freshness (older than 365 days), trust pages, structured data rules summarized from Google Search Central, image weight (300 KB and up) and legacy formats, sitemap limits and robots.txt syntax. All findings share one shape (`id`, `category`, `tone`, `title`, `explanation`, `targets`) and are stored in `audit.findings`.
+
+`engine/transport_checks.py` reads the TLS certificate, judges HSTS, Content Security Policy and cookie flags from the homepage response, and runs the optional email DNS checks. `engine/browser_audit.py` opens up to five healthy pages (the homepage, then the highest relative link scores) in the same guarded browser used for rendering, with a 90-second budget. It records lab timings, the difference between raw and rendered HTML, axe-core violations, a screenshot and third-party hosts and script cookies on first load. The capture proxy strips `Set-Cookie`, so only cookies set by scripts are visible there. axe-core is vendored in `engine/vendor/` under MPL-2.0.
+
+`_tasks.md` gives each finding target a stable ID (`^wo-` plus a hash of the finding and URL). On recapture the previous file is read first: ticks are kept, tasks no longer observed move to Resolved, and tasks for pages a partial capture did not revisit stay as they were. This file is always regenerated rather than preserved as a member edit, because it already carries the member's ticks forward.
+
 ## Site audit and visual evidence
 
 Use **Site audit** in the Web-Obs toolbar for destination-status charts, captured pages by section, media download states and a searchable category inbox. Expand a finding to inspect its captured page, source, note or URL. The view reads the saved capture without making another scan. Escape or a layout tab returns to the map.
 
-The panel adapts useful audit presentation ideas from Safi Site Audit. It is an independent Web-Obs view, not the Safi scanner or its full 94-rule set. It does not call PageSpeed Insights. Core Web Vitals, full accessibility, E-E-A-T, cookie consent and legal compliance remain explicitly unassessed. Header observations cover the homepage response only.
+The panel adapts useful audit presentation ideas from Safi Site Audit. It is an independent Web-Obs view, not the Safi scanner or its full 94-rule set. It does not call PageSpeed Insights. Core Web Vitals field data, a full accessibility audit (axe-core on a sample covers automated rules only), E-E-A-T judgement, cookie consent and legal compliance remain explicitly unassessed. Header observations cover the homepage response only.
 
 HEAD 404/410 responses are confirmed through a streamed GET before being reported missing. The fallback does not consume the response body. Legacy HEAD-only missing results can be confirmed with the same remaining-target action. Inconclusive access and transport responses stay visible.
 

@@ -190,7 +190,8 @@ class CaptureTransaction:
         generated = {name: file_hash(file) for name, file in fresh.items()}
         preserved = []
         retained = []
-        metadata = {'_site-graph.json', '_site-summary.json', '_generated-files.json', '_recapture-report.md'}
+        # _tasks.md is regenerated from the active file, keeping the member's ticks, so it always replaces.
+        metadata = {'_site-graph.json', '_site-summary.json', '_generated-files.json', '_recapture-report.md', '_tasks.md'}
         for name, old_file in previous.items():
             if name in metadata:
                 continue

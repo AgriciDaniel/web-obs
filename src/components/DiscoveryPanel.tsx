@@ -1,56 +1,65 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { SiteGraphManifest } from '../types/site';
-import { buildDiscoveryChecklist } from '../data/discoveryChecklist';
+import { buildDiscoveryChecklist, type DiscoveryRow, type ScoreItem } from '../data/discoveryChecklist';
+import { Disclosure, StatusPill, type Status } from './ui';
 
-const STATE_LABEL: Record<string, string> = { ok: 'Found', warn: 'Check', missing: 'Missing', unknown: 'Not found', pass: 'Pass', fail: 'Fail' };
-const STATE_CLASS: Record<string, string> = { ok: 'wo-chip-hub', pass: 'wo-chip-hub', warn: 'wo-chip-warn', missing: 'wo-chip-warn', fail: 'wo-chip-fail', unknown: '' };
+const SCORE: Record<ScoreItem['state'], { status: Status; label: string }> = {
+  pass: { status: 'good', label: 'Pass' },
+  warn: { status: 'warning', label: 'Check' },
+  fail: { status: 'critical', label: 'Fail' },
+  unknown: { status: 'neutral', label: 'Not assessed' },
+};
+const FILE: Record<DiscoveryRow['state'], { status: Status; label: string }> = {
+  ok: { status: 'good', label: 'Found' },
+  warn: { status: 'warning', label: 'Check' },
+  missing: { status: 'warning', label: 'Missing' },
+  unknown: { status: 'neutral', label: 'Not found' },
+};
 
-function copyText(text: string): void {
+function copyText(text: string): boolean {
   try {
     void navigator.clipboard?.writeText(text);
+    return true;
   } catch {
-    /* clipboard unavailable */
+    return false;
   }
 }
 
-export const DiscoveryPanel: React.FC<{ manifest: SiteGraphManifest }> = ({ manifest }) => {
-  const { rows, score } = buildDiscoveryChecklist(manifest);
-  return (
-    <>
-      <div className="wo-inspector-section">
-        <div className="wo-section-title">Site health</div>
-        <div className="wo-scorecard" role="list">
-          {score.map((item) => (
-            <div key={item.id} className="wo-score-item" role="listitem" title={item.detail}>
-              <span className="wo-score-label">{item.label}</span>
-              <span className={`wo-schema-chip ${STATE_CLASS[item.state]}`}>{item.state === 'unknown' ? 'Not assessed' : STATE_LABEL[item.state]}</span>
-              <span className="wo-score-detail">{item.detail}</span>
-            </div>
-          ))}
-        </div>
-        <p className="wo-evidence-note">Each area is a status, not a combined score. Header checks cover the homepage only.</p>
-      </div>
-      <div className="wo-inspector-section">
-        <div className="wo-section-title">Discovery files</div>
-        <div className="wo-scorecard" role="list">
-          {rows.map((row) => (
-            <div key={row.id} className="wo-score-item" role="listitem">
-              <span className="wo-score-label">{row.label}</span>
-              <span className={`wo-schema-chip ${STATE_CLASS[row.state]}`}>{row.badge ?? STATE_LABEL[row.state]}</span>
-              <span className="wo-score-detail">{row.detail}</span>
-              {row.fix && (
-                <details className="wo-fix">
-                  <summary>Suggested fix</summary>
-                  <pre>{row.fix}</pre>
-                  <button type="button" className="wo-btn-secondary" onClick={() => copyText(row.fix as string)}>
-                    Copy
-                  </button>
-                </details>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-    </>
-  );
+/** One status per area with a one-line reason. Not a combined score. */
+export const SiteHealthList: React.FC<{ manifest: SiteGraphManifest }> = ({ manifest }) => {
+  const { score } = buildDiscoveryChecklist(manifest);
+  return <ul className="wo-dr-status-list" aria-label="Site health by area">
+    {score.map((item) => <li key={item.id} className="wo-dr-status-row">
+      <span className="wo-dr-status-name">{item.label}</span>
+      <StatusPill status={SCORE[item.state].status} label={SCORE[item.state].label} />
+      <span className="wo-dr-status-reason" title={item.detail}>{item.detail}</span>
+    </li>)}
+  </ul>;
+};
+
+function StarterFile({ fix }: { fix: string }) {
+  const [copied, setCopied] = useState(false);
+  return <Disclosure summary="Starter file">
+    <pre className="wo-dr-pre">{fix}</pre>
+    <button type="button" className="wo-btn-secondary wo-btn-xs" onClick={() => setCopied(copyText(fix))}>{copied ? 'Copied' : 'Copy'}</button>
+  </Disclosure>;
+}
+
+/** Discovery files: name and status, with the reason shown only when something needs a look. */
+export const DiscoveryFilesList: React.FC<{ manifest: SiteGraphManifest }> = ({ manifest }) => {
+  const { rows } = buildDiscoveryChecklist(manifest);
+  const order = (row: DiscoveryRow) => (row.state === 'warn' || row.state === 'missing' ? 0 : row.state === 'ok' ? 1 : 2);
+  const sorted = [...rows].sort((a, b) => order(a) - order(b));
+  return <ul className="wo-dr-status-list" aria-label="Discovery files">
+    {sorted.map((row) => {
+      const state = FILE[row.state];
+      const needsLook = row.state === 'warn' || row.state === 'missing';
+      return <li key={row.id} className="wo-dr-status-row" title={needsLook ? undefined : row.detail}>
+        <span className="wo-dr-status-name">{row.label}</span>
+        <StatusPill status={state.status} label={row.badge ?? state.label} />
+        {needsLook && <span className="wo-dr-status-reason">{row.detail}</span>}
+        {row.fix && <div className="wo-dr-status-extra"><StarterFile fix={row.fix} /></div>}
+      </li>;
+    })}
+  </ul>;
 };

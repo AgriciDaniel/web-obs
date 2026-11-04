@@ -42,6 +42,14 @@ __all__ = [
     "decode_body",
     "decode_response_text",
     "DEFAULT_USER_AGENT",
+    "ENGINE_VERSION",
+    "MAX_RETRY_AFTER_SEC",
+    "retry_after_seconds",
+    "set_origin_pacing",
+    "apply_robots_pacing",
+    "wait_for_origin_pacing",
+    "note_origin_request",
+    "CRAWLER_INFO_URL",
     "DEFAULT_REQUEST_HEADERS",
     "request_context",
     "request_deadline",
@@ -89,10 +97,45 @@ _NEVER_ALLOWLISTABLE_HOSTNAMES: frozenset[str] = frozenset(
 
 _SHARED_ADDRESS_SPACE = ipaddress.ip_network("100.64.0.0/10")
 
-DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 WebObs/0.1"
-)
+def _engine_version() -> str:
+    """Read the version from engine/__init__.py, the one place it is set."""
+    try:
+        text = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "__init__.py"), encoding="utf-8").read()
+        match = re.search(r"__version__\s*=\s*[\"']([0-9A-Za-z.+-]+)[\"']", text)
+        return match.group(1) if match else "0"
+    except OSError:
+        return "0"
+
+
+ENGINE_VERSION = _engine_version()
+CRAWLER_INFO_URL = "https://github.com/AgriciDaniel/web-obs/blob/main/docs/CRAWLER.md"
+
+# An honest crawler identity: product token, version and a page that explains the crawler,
+# in the "compatible" form used by well-known bots. It does not pretend to be a browser
+# version, so it never contradicts the real Chromium client hints Playwright sends.
+DEFAULT_USER_AGENT = f"Mozilla/5.0 (compatible; WebObs/{ENGINE_VERSION}; +{CRAWLER_INFO_URL})"
+
+MAX_RETRY_AFTER_SEC = 300.0
+
+
+def retry_after_seconds(headers, default: float = 30.0, now: Optional[float] = None) -> float:
+    """Seconds a server asked us to wait (RFC 9110 Retry-After: delay seconds or an HTTP date)."""
+    value = None
+    for key, raw in (headers or {}).items():
+        if str(key).lower() == "retry-after":
+            value = str(raw).strip()
+            break
+    if not value:
+        return default
+    if value.isdigit():
+        return float(value)
+    try:
+        from email.utils import parsedate_to_datetime
+        when = parsedate_to_datetime(value)
+        return max(0.0, when.timestamp() - (time.time() if now is None else now))
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return default
+
 
 DEFAULT_REQUEST_HEADERS = {
     "User-Agent": DEFAULT_USER_AGENT,
@@ -158,9 +201,83 @@ def check_request_deadline():
         raise RequestDeadlineExceeded("Request deadline reached.")
 
 
+_PACING_LOCK = threading.Lock()
+_PACING_INTERVAL: dict[str, float] = {}
+_PACING_NEXT: dict[str, float] = {}
+
+
+def _pacing_key(url: str) -> str:
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or "").lower()
+    port = parsed.port or (443 if scheme == "https" else 80)
+    return f"{scheme}://{(parsed.hostname or '').lower()}:{port}"
+
+
+def set_origin_pacing(url: str, interval_sec: Optional[float]) -> None:
+    """Space requests to one origin at least this far apart in this process (robots.txt Crawl-delay).
+
+    Worker processes are paced by their shared lease broker instead.
+    """
+    if not url:
+        return
+    key = _pacing_key(url)
+    with _PACING_LOCK:
+        if interval_sec and interval_sec > 0:
+            _PACING_INTERVAL[key] = float(interval_sec)
+        else:
+            _PACING_INTERVAL.pop(key, None)
+            _PACING_NEXT.pop(key, None)
+
+
+def apply_robots_pacing(origin_url: str, policy: Optional[dict], cap_sec: float = 60.0) -> None:
+    delay = (policy or {}).get("crawlDelaySec")
+    set_origin_pacing(origin_url, min(float(delay), cap_sec) if isinstance(delay, (int, float)) and delay > 0 else None)
+
+
+def wait_for_origin_pacing(url: str) -> None:
+    """Block until this process may start another request to the origin (before handing off to workers)."""
+    key = _pacing_key(url)
+    while True:
+        with _PACING_LOCK:
+            wait = _PACING_NEXT.get(key, 0.0) - time.monotonic() if _PACING_INTERVAL.get(key) else 0.0
+        if wait <= 0:
+            return
+        time.sleep(min(wait, 0.25))
+
+
+def note_origin_request(url: str) -> None:
+    """Record a request made elsewhere (by a worker) so the next one here keeps the gap."""
+    key = _pacing_key(url)
+    with _PACING_LOCK:
+        interval = _PACING_INTERVAL.get(key)
+        if interval:
+            _PACING_NEXT[key] = max(_PACING_NEXT.get(key, 0.0), time.monotonic() + interval)
+
+
+def _pace(url: str) -> None:
+    key = _pacing_key(url)
+    while True:
+        with _PACING_LOCK:
+            interval = _PACING_INTERVAL.get(key)
+            if not interval:
+                return
+            now = time.monotonic()
+            start = _PACING_NEXT.get(key, 0.0)
+            if now >= start:
+                _PACING_NEXT[key] = now + interval
+                return
+            wait = start - now
+        check_request_deadline()
+        deadline = request_deadline()
+        if deadline is not None and time.monotonic() + wait >= deadline:
+            raise RequestDeadlineExceeded("Request deadline reached while waiting for the site's Crawl-delay.")
+        time.sleep(min(wait, 0.25))
+
+
 def _request_lease(url):
     value = getattr(_request_context, "value", None)
     if not value or value[0] is None:
+        _pace(url)
         return None, None
     limiter, owner, deadline, _policy = value
     while True:

@@ -110,6 +110,7 @@ export async function runDoctor(ctx: DoctorContext): Promise<DoctorRow[]> {
     browserError: caps?.browserError ?? null,
     vaultWritable: ctx.vaultBase ? checkWritable(ctx.vaultBase) : null,
     network,
+    optionalPackages: caps?.optionalPackages ?? null,
   };
   return buildDoctorReport(facts);
 }

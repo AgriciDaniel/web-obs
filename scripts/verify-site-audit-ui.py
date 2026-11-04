@@ -61,6 +61,9 @@ def main():
         expect(audit.locator('.wo-audit-stats')).to_contain_text(str(manifest['linkHealth']['totalCount']))
         expect(audit).to_contain_text('Not assessed')
         expect(audit).to_contain_text('There is no overall health grade')
+        if manifest.get('audit'):
+            expect(audit.locator('.wo-audit-work')).to_contain_text('Internal link opportunities')
+            expect(audit.get_by_role('button', name='Task list', exact=True)).to_be_visible()
         passed('Charts expose actual capture totals and unassessed areas without an invented grade')
         page.screenshot(path=str(args.evidence / 'audit-desktop.png'))
 
@@ -72,8 +75,15 @@ def main():
         finding = audit.locator('.wo-audit-finding').first
         finding.locator('summary').click()
         finding.get_by_role('button', name='Inspect page', exact=True).first.click()
-        expect(page.get_by_role('complementary', name='Page Inspector', exact=True)).to_be_visible()
+        inspector = page.get_by_role('complementary', name='Page Inspector', exact=True)
+        expect(inspector).to_be_visible()
         expect(audit).to_have_count(0)
+        if manifest.get('audit'):
+            inspector.get_by_role('tab', name='Checks', exact=True).click()
+            checks = inspector.get_by_role('tabpanel')
+            expect(checks).to_contain_text('Worth a look')
+            expect(checks).to_contain_text('Text to HTML')
+            page.screenshot(path=str(args.evidence / 'inspector-page-checks.png'))
         page.get_by_role('button', name='Close inspector', exact=True).click()
         expect(page.get_by_role('button', name='Site audit', exact=True)).to_be_focused()
         passed('Search, category filtering and affected-page inspection use actual captured findings')

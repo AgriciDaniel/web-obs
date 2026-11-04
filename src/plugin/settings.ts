@@ -16,6 +16,12 @@ export interface WebObsPluginSettings {
   downloadImages: boolean;
   imageMode: 'preferred' | 'all';
   renderMode: 'auto' | 'always' | 'never';
+  browserAudit: boolean;
+  pageSnapshots: boolean;
+  snapshotLimit: number;
+  snapshotHtml: boolean;
+  spellCheck: boolean;
+  dnsChecks: boolean;
   defaultViewMode: GlobeViewMode;
   themeBehavior: 'obsidian' | 'dark' | 'light';
   openInSplitPane: boolean;
@@ -28,6 +34,12 @@ export const DEFAULT_WEB_OBS_SETTINGS: WebObsPluginSettings = {
   downloadImages: true,
   imageMode: 'preferred',
   renderMode: 'auto',
+  browserAudit: true,
+  pageSnapshots: true,
+  snapshotLimit: 25,
+  snapshotHtml: false,
+  spellCheck: false,
+  dnsChecks: true,
   defaultViewMode: 'globe',
   themeBehavior: 'obsidian',
   openInSplitPane: true,
@@ -149,6 +161,69 @@ export class WebObsSettingTab extends PluginSettingTab {
             this.bridge.settings.renderMode = value as 'auto' | 'always' | 'never';
             await this.bridge.saveSettings();
           })
+      );
+
+    new Setting(containerEl)
+      .setName('Browser audit sample')
+      .setDesc('Opens up to five pages in the headless browser after capture for lab timings, automated accessibility rules (axe-core), screenshots, JavaScript dependence and third parties on first load. Needs Playwright and Chromium; skipped with Fast HTTP only.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.bridge.settings.browserAudit ?? true).onChange(async (value) => {
+          this.bridge.settings.browserAudit = value;
+          await this.bridge.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Page snapshots')
+      .setDesc('Saves a full-page screenshot of the most important pages after capture and shows it at the top of each note. Needs Playwright and Chromium; skipped with Fast HTTP only.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.bridge.settings.pageSnapshots ?? true).onChange(async (value) => {
+          this.bridge.settings.pageSnapshots = value;
+          await this.bridge.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Snapshot limit')
+      .setDesc('Most pages to snapshot per capture, home and the strongest pages first. Keeps capture time and vault size in check (about 0.3 to 1 MB per snapshot).')
+      .addText((text) =>
+        text.setValue(String(this.bridge.settings.snapshotLimit ?? 25)).onChange(async (value) => {
+          const parsed = Number.parseInt(value, 10);
+          if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 500) {
+            this.bridge.settings.snapshotLimit = parsed;
+            await this.bridge.saveSettings();
+          }
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Save rendered HTML with snapshots')
+      .setDesc('Also keeps the page HTML after JavaScript ran, next to each snapshot. Useful for comparing what crawlers and visitors see.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.bridge.settings.snapshotHtml ?? false).onChange(async (value) => {
+          this.bridge.settings.snapshotHtml = value;
+          await this.bridge.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Email DNS checks')
+      .setDesc('Looks up MX, SPF, DMARC, common DKIM selectors and CAA for the domain through your system DNS resolver. Needs the optional dnspython package.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.bridge.settings.dnsChecks ?? true).onChange(async (value) => {
+          this.bridge.settings.dnsChecks = value;
+          await this.bridge.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Spell check')
+      .setDesc('Lists possible English misspellings per page. Names and jargon show up too, so it is off by default. Needs the optional pyspellchecker package.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.bridge.settings.spellCheck ?? false).onChange(async (value) => {
+          this.bridge.settings.spellCheck = value;
+          await this.bridge.saveSettings();
+        })
       );
 
     new Setting(containerEl)

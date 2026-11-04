@@ -82,7 +82,7 @@ export const MapDiscoveryControls = memo(function MapDiscoveryControls({
       }
     }}>
       <div className="wo-discovery-head">
-        <Compass size={14} aria-hidden="true" /><span>MAP DISCOVERY</span>
+        <Compass size={14} aria-hidden="true" /><span>Map discovery</span>
         <small>{explored} / {nodes.length} explored</small>
         <button ref={closeRef} type="button" className="wo-discovery-dismiss" aria-label="Close map discovery" onClick={close}><X size={14} /></button>
       </div>

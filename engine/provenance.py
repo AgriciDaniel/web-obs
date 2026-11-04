@@ -12,7 +12,8 @@ def capture_provenance(configuration):
              for p in sorted(root.iterdir())
              if p.is_file() and (p.suffix == '.py' or p.name == 'requirements.txt')}
     versions = {}
-    for name in ('requests', 'beautifulsoup4', 'lxml', 'trafilatura', 'htmldate', 'playwright'):
+    for name in ('requests', 'beautifulsoup4', 'lxml', 'trafilatura', 'htmldate', 'playwright',
+                 'dnspython', 'pyspellchecker', 'html5lib'):
         try:
             versions[name] = metadata.version(name)
         except metadata.PackageNotFoundError:

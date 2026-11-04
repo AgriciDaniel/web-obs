@@ -10,7 +10,9 @@ import {
   GLOBE_EXTERNAL_RADIUS,
   GLOBE_HUB_RADIUS,
   GLOBE_SURFACE_RADIUS,
+  type ComputedSiteLayouts,
 } from '../data/globeLayout';
+import { attentionNodeIds, restingLabelIds } from '../data/mapAttention';
 import type {
   CameraAxisSnap,
   GlobeViewMode,
@@ -22,7 +24,6 @@ import type {
   ThemeMode,
 } from '../types/site';
 import type { ViewGizmoHandle } from './ViewGizmo3D';
-import { hasNodeIssue } from '../data/sitePresentation';
 import { MapDiscoveryControls } from './MapDiscoveryControls';
 
 interface SiteGlobeCanvas3DProps {
@@ -117,15 +118,6 @@ interface RuntimeEdgeEntry {
   pulseHighlighted: boolean;
 }
 
-const ROAD_COLUMNS = [
-  { x: -8.2, title: 'D0 · Site Root' },
-  { x: -4.9, title: 'D1 · Hubs' },
-  { x: -1.3, title: 'D2 · Pages' },
-  { x: 2.3, title: 'D3+ · Deep' },
-  { x: 5.5, title: 'Orphans' },
-  { x: 8.8, title: 'External' },
-];
-
 function boxesOverlap(a: ScreenBox, b: ScreenBox, pad = 5): boolean {
   return !(
     a.r + pad < b.l ||
@@ -166,7 +158,7 @@ function pushMeridianHalfArc(
   }
 }
 
-function matchesFilter(node: SiteNode, filter: NodeFilter, showExternal: boolean): boolean {
+function matchesFilter(node: SiteNode, filter: NodeFilter, showExternal: boolean, attention: ReadonlySet<string>): boolean {
   if (!showExternal && node.kind === 'external-domain') return false;
   switch (filter) {
     case 'hubs':
@@ -176,12 +168,49 @@ function matchesFilter(node: SiteNode, filter: NodeFilter, showExternal: boolean
     case 'orphans':
       return node.health === 'orphan' || node.health === 'unlisted' || node.kind === 'home';
     case 'issues':
-      return hasNodeIssue(node);
+      return attention.has(node.id);
     case 'external':
       return node.kind === 'external-domain' || node.externalDomainsOut > 0;
     default:
       return true;
   }
+}
+
+const GLOBE_VIEW_DIRECTION = new THREE.Vector3(-4.4, 5.0, 16.0).normalize();
+const ROAD_VIEW_DIRECTION = new THREE.Vector3(0, 0.05, 1).normalize();
+
+/**
+ * Camera position that frames every point in the stage, looking along `direction`.
+ * Leaves room for labels above nodes and for the discovery chip and legend in the corners.
+ */
+export function fitCameraToPoints(points: readonly THREE.Vector3[], direction: THREE.Vector3, fovDeg: number, stageW: number, stageH: number) {
+  const d = direction.clone().normalize();
+  const forward = d.clone().negate();
+  const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0));
+  if (right.lengthSq() < 1e-6) right.set(1, 0, 0);
+  right.normalize();
+  const up = new THREE.Vector3().crossVectors(right, forward).normalize();
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  const projected = points.map((p) => [p.dot(right), p.dot(up), p.dot(d)] as const);
+  for (const [x, y, z] of projected) {
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+  }
+  if (!Number.isFinite(minX)) { minX = maxX = minY = maxY = minZ = maxZ = 0; }
+  const cx = (minX + maxX) / 2; const cy = (minY + maxY) / 2; const cz = (minZ + maxZ) / 2;
+  const tanV = Math.tan(THREE.MathUtils.degToRad(fovDeg) / 2) * Math.max(0.5, (stageH - 88) / Math.max(1, stageH));
+  const tanH = Math.tan(THREE.MathUtils.degToRad(fovDeg) / 2) * Math.max(0.3, stageW / Math.max(1, stageH)) * Math.max(0.5, (stageW - 40) / Math.max(1, stageW));
+  // Exact per-point fit: a point nearer the camera needs more room than one at the back.
+  // Padding covers the node radius and the label that sits above each node.
+  let distance = 6;
+  for (const [x, y, z] of projected) {
+    const depth = z - cz;
+    distance = Math.max(distance, depth + (Math.abs(x - cx) + 0.9) / tanH, depth + (Math.abs(y - cy) + 0.8) / tanV);
+  }
+  distance = Math.min(40, distance);
+  const center = right.multiplyScalar(cx).add(up.multiplyScalar(cy)).add(d.clone().multiplyScalar(cz));
+  return { lookTarget: center, camTarget: center.clone().addScaledVector(d, distance) };
 }
 
 function shortPillLabel(node: SiteNode, domain?: string): string {
@@ -239,17 +268,19 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
     () => (manifest ? computeSiteLayouts(manifest) : null),
     [manifest]
   );
+  const attention = useMemo(() => attentionNodeIds(manifest), [manifest]);
   const discoveryNodes = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    return (manifest?.nodes ?? []).filter(node => matchesFilter(node, filter, showExternal) &&
+    return (manifest?.nodes ?? []).filter(node => matchesFilter(node, filter, showExternal, attention) &&
       (!query || [node.title, node.path, node.url].join(' ').toLowerCase().includes(query)));
-  }, [manifest, filter, searchQuery, showExternal]);
+  }, [manifest, filter, searchQuery, showExternal, attention]);
 
   // Bumped on every React render so any prop change marks the scene dirty for the on-demand frame loop.
   const renderVersionRef = useRef(0);
   const stateRef = useRef({
     manifest,
     layouts,
+    attention,
     viewMode,
     theme,
     selectedId: effectiveSelectedId,
@@ -267,6 +298,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
   stateRef.current = {
     manifest,
     layouts,
+    attention,
     viewMode,
     theme,
     selectedId: effectiveSelectedId,
@@ -312,6 +344,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
   });
   const wakeLoopRef = useRef<(() => void) | null>(null);
   const discoverCameraRef = useRef<((nodeId: string) => void) | null>(null);
+  const fitCameraRef = useRef<((mode: GlobeViewMode, layouts: ComputedSiteLayouts) => void) | null>(null);
   const discoverNode = useCallback((nodeId: string) => {
     if (callbacksRef.current.onBeginDiscovery) callbacksRef.current.onBeginDiscovery();
     else callbacksRef.current.onSelectNode(null);
@@ -496,6 +529,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
     globeFrameGroup.add(dynamicSectorsGroup);
     let dynamicSectorGeoms: THREE.BufferGeometry[] = [];
     let dynamicSectorPlaques: CSS2DObject[] = [];
+    const tagSizes = new WeakMap<HTMLElement, { w: number; h: number }>();
 
     const clearDynamicSectors = () => {
       for (const p of dynamicSectorPlaques) {
@@ -514,29 +548,41 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
     const roadFrameGroup = new THREE.Group();
     roadFrameGroup.visible = false;
     scene.add(roadFrameGroup);
-    let roadRootTagEl: HTMLDivElement | null = null;
-    {
-      const rPts: THREE.Vector3[] = [];
-      ROAD_COLUMNS.forEach((col, colIdx) => {
-        rPts.push(
-          new THREE.Vector3(col.x, -4.6, 0),
-          new THREE.Vector3(col.x, 4.6, 0)
-        );
-        const tagEl = document.createElement('div');
-        tagEl.className = 'wo-sector-tag';
-        tagEl.textContent = col.title;
-        if (colIdx === 0) roadRootTagEl = tagEl;
-        const tagObj = new CSS2DObject(tagEl);
-        tagObj.position.set(col.x, -5.05, 0);
-        roadFrameGroup.add(tagObj);
+    let roadTags: CSS2DObject[] = [];
+    let roadGeoms: THREE.BufferGeometry[] = [];
+    const clearRoadFrame = () => {
+      for (const tag of roadTags) { roadFrameGroup.remove(tag); tag.element.remove(); }
+      roadTags = [];
+      for (const geom of roadGeoms) geom.dispose();
+      roadGeoms = [];
+      roadFrameGroup.clear();
+    };
+    // Column titles sit above each depth column; faint rules separate neighbouring columns.
+    const buildRoadFrame = (curLayouts: ComputedSiteLayouts, domain: string) => {
+      clearRoadFrame();
+      const columns = curLayouts.roadColumns;
+      const top = Math.max(1, ...columns.map((column) => column.top));
+      const pts: THREE.Vector3[] = [];
+      columns.forEach((column, index) => {
+        if (index > 0) {
+          const x = (columns[index - 1].right + column.left) / 2;
+          pts.push(new THREE.Vector3(x, -top - 0.5, 0), new THREE.Vector3(x, top + 0.5, 0));
+        }
+        const el = document.createElement('div');
+        el.className = 'wo-sector-tag wo-road-tag';
+        el.dataset.columnId = column.id;
+        el.textContent = column.id === 'home' ? domain || column.title : `${column.title} · ${column.count}`;
+        const obj = new CSS2DObject(el);
+        obj.position.set(column.x, top + 1.05, 0);
+        roadFrameGroup.add(obj);
+        roadTags.push(obj);
       });
-      roadFrameGroup.add(
-        new THREE.LineSegments(
-          track(new THREE.BufferGeometry().setFromPoints(rPts)),
-          secondaryWireMat
-        )
-      );
-    }
+      if (pts.length) {
+        const geom = new THREE.BufferGeometry().setFromPoints(pts);
+        roadGeoms.push(geom);
+        roadFrameGroup.add(new THREE.LineSegments(geom, secondaryWireMat));
+      }
+    };
 
     // =========================================================================
     // 3. DYNAMIC NODES, EDGES, & SUBTLE MICRO-LIGHT FLOW
@@ -565,6 +611,29 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
         camTarget: point.clone().addScaledVector(direction, distance).add(new THREE.Vector3(0, 1.1, 0)),
         instant: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false,
       };
+    };
+
+    fitCameraRef.current = (mode, curLayouts) => {
+      const state = stateRef.current;
+      const map = mode === 'road' ? curLayouts.road : mode === 'clusters' ? curLayouts.clusters : curLayouts.globe;
+      const points: THREE.Vector3[] = [];
+      for (const node of state.manifest?.nodes ?? []) {
+        if (node.kind === 'external-domain' && !state.showExternal) continue;
+        const coordinates = map.get(node.id);
+        if (coordinates) points.push(new THREE.Vector3(...coordinates));
+      }
+      if (mode === 'road') {
+        const top = Math.max(1, ...curLayouts.roadColumns.map((column) => column.top));
+        points.push(new THREE.Vector3(0, top + 1.05, 0));
+      } else if (mode === 'globe') {
+        // Frame the globe wireframe, not just the nodes on it.
+        const r = GLOBE_SURFACE_RADIUS;
+        points.push(new THREE.Vector3(r, 0, 0), new THREE.Vector3(-r, 0, 0), new THREE.Vector3(0, r, 0),
+          new THREE.Vector3(0, -r, 0), new THREE.Vector3(0, 0, r), new THREE.Vector3(0, 0, -r));
+      }
+      if (!points.length) return;
+      const fit = fitCameraToPoints(points, mode === 'road' ? ROAD_VIEW_DIRECTION : GLOBE_VIEW_DIRECTION, camera.fov, stageW, stageH);
+      cameraFlyRef.current = { active: true, ...fit };
     };
 
     const unitSphereGeom = track(new THREE.SphereGeometry(1, 22, 22));
@@ -619,6 +688,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
     let measureAttempts = 0;
     let syncedGizmo: unknown = null;
     let labelHoverId: string | null = null;
+    let restingCache: { manifest: unknown; key: string; ids: Set<string> } = { manifest: null, key: '', ids: new Set() };
     let pulseEdges: RuntimeEdgeEntry[] = [];
     const lastCamPos = new THREE.Vector3(Number.NaN, 0, 0);
     const lastCamQuat = new THREE.Quaternion(Number.NaN, 0, 0, 1);
@@ -627,18 +697,11 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
       forceHeavy = true;
       clearRuntimeGraph();
       clearDynamicSectors();
-      if (!nextManifest) {
-        if (roadRootTagEl) roadRootTagEl.textContent = 'D0 · Site Root';
-        return;
-      }
-
-      if (roadRootTagEl) {
-        roadRootTagEl.textContent = nextManifest.domain
-          ? `D0 · ${nextManifest.domain}`
-          : 'D0 · Site Root';
-      }
+      clearRoadFrame();
+      if (!nextManifest) return;
 
       const curLayouts = stateRef.current.layouts ?? computeSiteLayouts(nextManifest);
+      buildRoadFrame(curLayouts, nextManifest.domain);
 
       // Build section boundary meridians & sector plaques
       const mPts: THREE.Vector3[] = [];
@@ -1113,6 +1176,17 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
             ? st.layouts.clusters
             : st.layouts.globe;
 
+      // Resting label set, recomputed only when the manifest, filter or external toggle changes.
+      const restingKey = `${st.filter}|${st.showExternal}`;
+      if (restingCache.manifest !== st.manifest || restingCache.key !== restingKey) {
+        const visibleNodes: SiteNode[] = [];
+        for (const entry of runtimeNodes.values()) {
+          if (matchesFilter(entry.node, st.filter, st.showExternal, st.attention)) visibleNodes.push(entry.node);
+        }
+        restingCache = { manifest: st.manifest, key: restingKey, ids: restingLabelIds(visibleNodes, st.attention) };
+      }
+      const resting = restingCache.ids;
+
       // Update nodes
       const visibleEntries: Array<{ entry: RuntimeNodeEntry; priority: number }> = [];
 
@@ -1126,7 +1200,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
         entry.group.position.copy(entry.currentPos);
         entry.haloMesh.quaternion.copy(camera.quaternion);
 
-        const allowedByFilter = matchesFilter(entry.node, st.filter, st.showExternal);
+        const allowedByFilter = matchesFilter(entry.node, st.filter, st.showExternal, st.attention);
         const matchesQuery =
           !query ||
           entry.node.title.toLowerCase().includes(query) ||
@@ -1163,16 +1237,22 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
           entry.labelEl.classList.add('is-hidden');
           return;
         }
+        // Only a few labels at rest; hover, selection, neighbours and search add the rest.
+        const linked = Boolean(focusId) && connectedIds.has(id);
+        if (!(isDirect || id === hoverId || id === st.selectedId || linked || (query && matchesQuery) || resting.has(id))) {
+          entry.labelEl.classList.add('is-hidden');
+          return;
+        }
 
         let priority = 10;
         if (isDirect) priority = 100;
         else if (query && matchesQuery) priority = 90;
         else if (entry.node.kind === 'home') priority = 86;
-        else if (focusId && isNeighbor) priority = 80;
+        else if (linked) priority = 80;
         else if (entry.node.kind === 'hub') priority = 60;
-        else if (entry.node.health === 'orphan' || entry.node.health === 'broken') priority = 50;
+        else if (st.attention.has(id)) priority = 56;
         else if (entry.node.kind === 'external-domain') priority = 25;
-        else priority = 35 + Math.min(12, entry.node.inlinksBody);
+        else priority = 35 + Math.min(12, (entry.node.authorityScore ?? entry.node.inlinksBody * 4) / 8);
 
         visibleEntries.push({ entry, priority });
       });
@@ -1183,6 +1263,41 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
       visibleEntries.sort((a, b) => b.priority - a.priority);
       const placedBoxes: ScreenBox[] = [];
       placedBoxes.push({ l: 0, r: stageW, t: 0, b: 12 });
+      // Keep labels clear of the discovery chip (top left) and the legend (bottom left).
+      placedBoxes.push({ l: 0, r: 250, t: 0, b: 50 }, { l: 0, r: 420, t: stageH - 34, b: stageH });
+
+      // Section and depth tags take part in the same collision pass so they never sit on a page label.
+      const frameTags = st.viewMode === 'globe' ? dynamicSectorPlaques : st.viewMode === 'road' ? roadTags : [];
+      const tagBoxes: Array<{ el: HTMLElement; box: ScreenBox | null; fixed: boolean }> = [];
+      for (const tag of frameTags) {
+        const el = tag.element as HTMLElement;
+        let size = tagSizes.get(el);
+        if (!size || measureLabels) {
+          const w = el.offsetWidth; const h = el.offsetHeight;
+          if (w && h) { size = { w, h }; tagSizes.set(el, size); }
+        }
+        tag.getWorldPosition(tmpWorldPos);
+        tmpVec.copy(tmpWorldPos).project(camera);
+        if (!size || tmpVec.z > 1 || tmpVec.z < -1) { tagBoxes.push({ el, box: null, fixed: false }); continue; }
+        const sx = (tmpVec.x * 0.5 + 0.5) * stageW;
+        const sy = (-tmpVec.y * 0.5 + 0.5) * stageH;
+        tagBoxes.push({ el, box: { l: sx - size.w / 2, r: sx + size.w / 2, t: sy - size.h / 2, b: sy + size.h / 2 }, fixed: st.viewMode === 'road' });
+      }
+      // Depth column titles are fixed scaffolding: place them first.
+      for (const tag of tagBoxes) {
+        if (tag.fixed && tag.box) { placedBoxes.push(tag.box); tag.el.classList.remove('is-hidden'); }
+      }
+      let tagsPlaced = false;
+      const placeSectorTags = () => {
+        if (tagsPlaced) return;
+        tagsPlaced = true;
+        for (const tag of tagBoxes) {
+          if (tag.fixed) continue;
+          const free = tag.box && !placedBoxes.some((placed) => boxesOverlap(tag.box!, placed, 3));
+          tag.el.classList.toggle('is-hidden', !free);
+          if (free) placedBoxes.push(tag.box!);
+        }
+      };
 
       {
         // Read every size in one pass so layout is flushed once, not interleaved with class and style writes.
@@ -1206,7 +1321,9 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
         if (sizeChanged || (unmeasured && measureAttempts < 30)) forceHeavy = true;
       }
 
-      for (const { entry } of visibleEntries) {
+      for (const { entry, priority } of visibleEntries) {
+        // Section tags rank just below section hubs.
+        if (priority < 58) placeSectorTags();
         entry.cssObj.getWorldPosition(tmpWorldPos);
         tmpVec.copy(tmpWorldPos).project(camera);
         if (tmpVec.z > 1 || tmpVec.z < -1) {
@@ -1253,6 +1370,8 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
           entry.labelEl.classList.remove('is-hidden');
         }
       }
+
+      placeSectorTags();
 
       // Update curved 3D edges & calm, sparse directional micro-pulses
       const densityScale = Math.max(
@@ -1407,35 +1526,23 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
     };
   }, []);
 
-  // Rebuild Three.js graph whenever manifest changes
+  // Rebuild Three.js graph whenever manifest changes, then frame it.
   useEffect(() => {
     syncGraphRef.current?.(manifest);
-    cameraFlyRef.current = {
-      active: true,
-      camTarget:
-        viewMode === 'road'
-          ? new THREE.Vector3(0, 1.2, 20.5)
-          : new THREE.Vector3(-4.4, 5.0, 16.0),
-      lookTarget: new THREE.Vector3(0, 0, 0),
-    };
   }, [manifest]);
 
-  // Reframe camera on viewMode or resetSignal
+  // Frame the whole layout on a new capture, a layout change or Reset camera.
   useEffect(() => {
-    if (viewMode === 'road') {
-      cameraFlyRef.current = {
-        active: true,
-        camTarget: new THREE.Vector3(0, 1.0, 20.5),
-        lookTarget: new THREE.Vector3(0, 0, 0),
-      };
-    } else {
-      cameraFlyRef.current = {
-        active: true,
-        camTarget: new THREE.Vector3(-4.4, 5.0, 16.0),
-        lookTarget: new THREE.Vector3(0, 0, 0),
-      };
+    if (layouts && fitCameraRef.current) {
+      fitCameraRef.current(viewMode, layouts);
+      return;
     }
-  }, [viewMode, resetSignal]);
+    cameraFlyRef.current = {
+      active: true,
+      camTarget: new THREE.Vector3(-4.4, 5.0, 16.0),
+      lookTarget: new THREE.Vector3(0, 0, 0),
+    };
+  }, [viewMode, resetSignal, layouts]);
 
   // Fly to a requested node
   useEffect(() => {
@@ -1453,7 +1560,8 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
     cameraFlyRef.current = {
       active: true,
       lookTarget: p.clone(),
-      camTarget: p.clone().addScaledVector(dir, 5.2).add(new THREE.Vector3(0, 1.1, 0)),
+      // Far enough back to keep the neighbourhood in view, and lifted so the node does not hide behind home.
+      camTarget: p.clone().addScaledVector(dir, 8.5).add(new THREE.Vector3(0, 1.8, 0)),
     };
   }, [flyRequest, layouts, viewMode]);
 

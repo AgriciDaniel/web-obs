@@ -65,7 +65,7 @@ export function webObsDevApiPlugin(): PluginOption {
           if (oversized || res.destroyed || req.aborted) return;
           body += bodyDecoder.end();
           const continuing = url.pathname === '/__web_obs/continue-links';
-          let options: { url: string; maxPages: number; renderMode: 'auto' | 'always' | 'never'; downloadImages: boolean; imageMode: 'preferred' | 'all'; continueLinksSiteId?: string };
+          let options: { url: string; maxPages: number; renderMode: 'auto' | 'always' | 'never'; downloadImages: boolean; imageMode: 'preferred' | 'all'; continueLinksSiteId?: string; browserAudit: boolean; spellCheck: boolean; dnsChecks: boolean; pageSnapshots: boolean; snapshotLimit: number; snapshotHtml: boolean };
           try {
             const data = JSON.parse(body || '{}');
             if (!data || typeof data !== 'object' || Array.isArray(data) || typeof data.url !== 'string' || !data.url.trim() || data.url.length > 2048) throw new Error('Enter a website URL.');
@@ -76,7 +76,9 @@ export function webObsDevApiPlugin(): PluginOption {
             const imageMode = data.imageMode ?? 'preferred';
             if (!['preferred', 'all'].includes(imageMode)) throw new Error('Invalid image variant mode.');
             if (continuing && !isSafeSiteId(data.continueLinksSiteId)) throw new Error('Invalid saved site ID.');
-            options = { url: data.url.trim(), maxPages, renderMode, imageMode, downloadImages: data.downloadImages !== false, continueLinksSiteId: continuing ? data.continueLinksSiteId : undefined };
+            options = { url: data.url.trim(), maxPages, renderMode, imageMode, downloadImages: data.downloadImages !== false, continueLinksSiteId: continuing ? data.continueLinksSiteId : undefined,
+              browserAudit: data.browserAudit !== false, spellCheck: data.spellCheck === true, dnsChecks: data.dnsChecks !== false,
+              pageSnapshots: data.pageSnapshots !== false, snapshotLimit: Number.isInteger(data.snapshotLimit) ? Math.max(1, Math.min(500, data.snapshotLimit)) : 25, snapshotHtml: data.snapshotHtml === true };
           } catch (error) { return json(400, { error: error instanceof Error ? error.message : 'Invalid capture request.' }); }
 
           res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
@@ -88,6 +90,14 @@ export function webObsDevApiPlugin(): PluginOption {
             ? [script, options.continueLinksSiteId!, '--vault', vaultRoot, '--continue-links']
             : [script, options.url, '--vault', vaultRoot, '--max-pages', String(options.maxPages), '--render', options.renderMode, '--image-mode', options.imageMode];
           if (!options.downloadImages) args.push('--no-images');
+          if (!options.continueLinksSiteId) {
+            if (!options.browserAudit) args.push('--no-browser-audit');
+            if (options.spellCheck) args.push('--spell-check');
+            if (!options.dnsChecks) args.push('--no-dns-checks');
+            if (!options.pageSnapshots) args.push('--no-snapshots');
+            else args.push('--snapshot-limit', String(options.snapshotLimit));
+            if (options.snapshotHtml) args.push('--snapshot-html');
+          }
           const child = spawn(fs.existsSync(venv) ? venv : (process.env.WEB_OBS_PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3')), args, { cwd: vaultRoot });
           children.add(child);
           let terminal = false;

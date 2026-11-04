@@ -1412,3 +1412,24 @@
 .wo-shell .wo-page-row.is-selected {
   background: var(--accent-soft);
 }
+
+/* Page checks and audit cards (schema 1.3.0) */
+.wo-shell .wo-page-checks > summary { cursor: pointer; }
+.wo-shell .wo-page-checks[open] > summary { margin-bottom: 10px; }
+.wo-shell .wo-check-group { display: flex; flex-direction: column; gap: 4px; padding: 8px 0; border-top: 1px solid var(--border-hairline); }
+.wo-shell .wo-check-group:first-of-type { border-top: 0; padding-top: 0; }
+.wo-shell .wo-check-group-title { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-secondary); margin-bottom: 2px; }
+.wo-shell .wo-check-subtitle { font-size: 10.5px; font-weight: 700; color: var(--ink-secondary); margin-top: 6px; }
+.wo-shell .wo-check-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.wo-shell .wo-check-val { font-size: 11.5px; color: var(--ink-primary); text-align: right; overflow-wrap: anywhere; min-width: 0; }
+.wo-shell .wo-check-tags { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 2fr); gap: 2px 8px; margin: 0; font-size: 10.5px; }
+.wo-shell .wo-check-tags dt { color: var(--ink-muted); font-family: 'JetBrains Mono', var(--font-monospace, monospace); overflow-wrap: anywhere; }
+.wo-shell .wo-check-tags dd { margin: 0; color: var(--ink-primary); overflow-wrap: anywhere; }
+.wo-shell .wo-check-list { margin: 2px 0 0; padding-left: 16px; font-size: 11px; color: var(--ink-primary); }
+.wo-shell .wo-check-list li { margin: 2px 0; }
+.wo-shell .wo-check-list li span { color: var(--ink-muted); }
+.wo-shell .wo-check-screenshot { align-self: flex-start; margin-bottom: 4px; }
+.wo-shell .wo-check-screenshot-img { display: block; width: 100%; height: auto; border-radius: 6px; border: 1px solid var(--border-hairline); margin-bottom: 6px; }
+.wo-shell .wo-state-ok { color: var(--hub); }
+.wo-shell .wo-state-warn { color: var(--orphan); }
+.wo-shell .wo-state-fail { color: var(--broken); }

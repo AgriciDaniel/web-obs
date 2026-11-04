@@ -1,14 +1,10 @@
-import React, { useMemo } from 'react';
-import {
-  ArrowDownLeft,
-  ArrowUpRight,
-  ExternalLink,
-  FileText,
-  Globe,
-  X,
-} from 'lucide-react';
-import type { SiteGraphManifest, SiteNode } from '../types/site';
+import React, { useMemo, useState } from 'react';
+import { ArrowDownLeft, ArrowUpRight, ChevronRight, ExternalLink, FileText, Globe, X } from 'lucide-react';
+import type { EngineFindingTone, SiteGraphManifest, SiteNode } from '../types/site';
 import { captureDate } from '../data/sitePresentation';
+import { BrowserSamplePanel, PageChecksSection, browserSampleFor, issueLabel, pageCheckNotes } from './PageChecksSection';
+import { Disclosure, EmptyState, Section, StatRow, StatTile, StatusPill, Tabs, formatCount, type Status, type TabItem } from './ui';
+import '../styles/drawers.css';
 
 interface InspectorDrawerProps {
   manifest: SiteGraphManifest;
@@ -16,20 +12,50 @@ interface InspectorDrawerProps {
   onClose: () => void;
   onSelectAndFly: (nodeId: string) => void;
   onOpenNote: (obsidianPath: string) => void;
+  resolveAssetUrl?: (vaultRelativePath: string) => string | null;
   onOpenExternalUrl: (url: string) => void;
 }
 
-const HEALTH_LABEL: Record<SiteNode['health'], string> = {
-  home: 'Homepage',
-  hub: 'Section Hub',
-  healthy: 'Live Page',
-  orphan: 'Orphan (In Sitemap, 0 Inlinks)',
-  unlisted: 'Unlisted (Not in Sitemap)',
-  redirect: 'Redirect',
-  broken: 'Broken Link',
-  unavailable: 'Unavailable or incomplete',
-  external: 'External Domain',
+const HEALTH: Record<SiteNode['health'], { label: string; status: Status }> = {
+  home: { label: 'Homepage', status: 'info' },
+  hub: { label: 'Section hub', status: 'good' },
+  healthy: { label: 'Live page', status: 'good' },
+  orphan: { label: 'Orphan: in sitemap, no inlinks', status: 'warning' },
+  unlisted: { label: 'Not in sitemap', status: 'warning' },
+  redirect: { label: 'Redirect', status: 'warning' },
+  broken: { label: 'Broken link', status: 'critical' },
+  unavailable: { label: 'Unavailable or incomplete', status: 'critical' },
+  external: { label: 'External domain', status: 'neutral' },
 };
+
+const TONE_GROUPS: Array<{ tone: EngineFindingTone; title: string }> = [
+  { tone: 'attention', title: 'Needs attention' },
+  { tone: 'review', title: 'Worth reviewing' },
+  { tone: 'coverage', title: 'Coverage gaps' },
+];
+
+const urlKey = (url: string) => url.replace(/\/+$/, '').toLowerCase();
+
+interface LinkItem { key: string; peer: SiteNode; anchor: string; nav: boolean }
+
+const LINK_CAP = 10;
+
+function LinkList({ items, icon, label, onPick, domain }: { items: LinkItem[]; icon: React.ReactNode; label: (peer: SiteNode) => string; onPick: (id: string) => void; domain: string }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? items : items.slice(0, LINK_CAP);
+  return <>
+    <ul className="wo-dr-linklist">
+      {shown.map(({ key, peer, anchor, nav }) => <li key={key}>
+        <button type="button" className="wo-dr-link" onClick={() => onPick(peer.id)} title={anchor ? `${peer.url}\nAnchor: ${anchor}` : peer.url}>
+          {icon}
+          <span className="wo-dr-link-main">{peer.kind === 'home' ? domain : label(peer)}</span>
+          {nav && <span className="wo-dr-tag">nav</span>}
+        </button>
+      </li>)}
+    </ul>
+    {items.length > LINK_CAP && <button type="button" className="wo-dr-more" onClick={() => setAll(!all)}>{all ? 'Show fewer' : `Show all ${items.length}`}</button>}
+  </>;
+}
 
 export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
   manifest,
@@ -37,335 +63,165 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
   onClose,
   onSelectAndFly,
   onOpenNote,
+  resolveAssetUrl,
   onOpenExternalUrl,
 }) => {
-  const nodeById = useMemo(
-    () => new Map(manifest.nodes.map((n) => [n.id, n])),
-    [manifest.nodes]
-  );
+  const nodeById = useMemo(() => new Map(manifest.nodes.map((n) => [n.id, n])), [manifest.nodes]);
 
-  const pageResources = (manifest.resources ?? []).filter(resource => resource.references.some(reference => reference.pageUrl === node.url));
-
-  const incoming = useMemo(() => {
-    const items: Array<{ peer: SiteNode; anchor: string; kind: string }> = [];
-    for (const e of manifest.edges) {
-      if (e.target !== node.id || e.kind === 'sitemap-hierarchy') continue;
-      const peer = nodeById.get(e.source);
-      if (peer) {
-        items.push({ peer, anchor: e.anchor ?? '', kind: e.kind });
+  const { incoming, outgoingInternal, outgoingExternal } = useMemo(() => {
+    const inc: LinkItem[] = [];
+    const outInt: LinkItem[] = [];
+    const outExt: LinkItem[] = [];
+    manifest.edges.forEach((e, index) => {
+      if (e.kind === 'sitemap-hierarchy') return;
+      if (e.target === node.id) {
+        const peer = nodeById.get(e.source);
+        if (peer) inc.push({ key: `${e.id}-${index}`, peer, anchor: e.anchor ?? '', nav: e.kind === 'internal-chrome' });
       }
-    }
-    return items;
+      if (e.source === node.id) {
+        const peer = nodeById.get(e.target);
+        if (!peer) return;
+        (e.kind === 'external' ? outExt : outInt).push({ key: `${e.id}-${index}`, peer, anchor: e.anchor ?? '', nav: e.kind === 'internal-chrome' });
+      }
+    });
+    return { incoming: inc, outgoingInternal: outInt, outgoingExternal: outExt };
   }, [manifest.edges, node.id, nodeById]);
 
-  const outgoingInternal = useMemo(() => {
-    const items: Array<{ peer: SiteNode; anchor: string; kind: string }> = [];
-    for (const e of manifest.edges) {
-      if (
-        e.source !== node.id ||
-        e.kind === 'external' ||
-        e.kind === 'sitemap-hierarchy'
-      ) {
-        continue;
-      }
-      const peer = nodeById.get(e.target);
-      if (peer) {
-        items.push({ peer, anchor: e.anchor ?? '', kind: e.kind });
-      }
-    }
-    return items;
-  }, [manifest.edges, node.id, nodeById]);
+  const pageResources = (manifest.resources ?? []).filter((resource) => resource.references.some((reference) => reference.pageUrl === node.url));
+  const sample = browserSampleFor(manifest, node);
 
-  const outgoingExternal = useMemo(() => {
-    const items: Array<{ peer: SiteNode; anchor: string; targetUrl?: string }> = [];
-    for (const e of manifest.edges) {
-      if (e.source !== node.id || e.kind !== 'external') continue;
-      const peer = nodeById.get(e.target);
-      if (peer) {
-        items.push({ peer, anchor: e.anchor ?? '', targetUrl: e.targetUrl });
-      }
-    }
-    return items;
-  }, [manifest.edges, node.id, nodeById]);
+  const issues = useMemo(() => (node.seoIssues ?? []).map((issue) => {
+    const slug = issue.replace(/\s*\(\d+\)$/, '');
+    const entry = manifest.issueCatalog?.[slug];
+    return { id: issue, label: issueLabel(manifest, issue), tone: (entry?.tone ?? 'review') as EngineFindingTone, explanation: entry?.explanation };
+  }), [manifest, node.seoIssues]);
+
+  const siteFindings = useMemo(() => {
+    const key = urlKey(node.url);
+    return (manifest.audit?.findings ?? []).flatMap((finding) => {
+      const target = finding.targets.find((t) => urlKey(t.url) === key);
+      return target ? [{ id: finding.id, title: finding.title, tone: finding.tone, detail: target.detail, explanation: finding.explanation }] : [];
+    });
+  }, [manifest.audit, node.url]);
 
   const isExternal = node.kind === 'external-domain';
+  const health = HEALTH[node.health];
+  const attention = issues.filter((i) => i.tone === 'attention').length + siteFindings.filter((f) => f.tone === 'attention').length;
+  const issueTotal = issues.length + siteFindings.length;
+  const linkTotal = incoming.length + outgoingInternal.length + outgoingExternal.length + pageResources.length;
+
+  const notes = [
+    `From the saved capture on ${captureDate(manifest.capturedAt)}.`,
+    ...(node.authorityScore !== undefined ? [`Link score ${node.authorityScore} of 100 is a relative internal link-graph heuristic, not a search engine metric.`] : []),
+    ...(isExternal ? [] : pageCheckNotes(manifest, node)),
+  ];
+
+  const issuesTab = issueTotal === 0 ? <EmptyState>No issues recorded for this page.</EmptyState> : <>
+    {TONE_GROUPS.map(({ tone, title }) => {
+      const own = issues.filter((i) => i.tone === tone);
+      if (!own.length) return null;
+      return <Section key={tone} title={title} aside={formatCount(own.length)}>
+        <ul className="wo-dr-issues">{own.map((issue) => <li key={issue.id}>
+          {issue.explanation ? <Disclosure summary={<span className="wo-dr-issue-title">{tone === 'attention' && <StatusPill status="critical" label="Fix" />}{issue.label}</span>}>
+            <p className="wo-ui-note">{issue.explanation}</p>
+          </Disclosure> : <span className="wo-dr-issue-plain">{issue.label}</span>}
+        </li>)}</ul>
+      </Section>;
+    })}
+    {siteFindings.length > 0 && <Section title="Site findings that include this page" aside={formatCount(siteFindings.length)}>
+      <ul className="wo-dr-issues">{siteFindings.map((finding) => <li key={finding.id}>
+        <Disclosure summary={<span className="wo-dr-issue-title">{finding.tone === 'attention' && <StatusPill status="critical" label="Fix" />}{finding.title}</span>}>
+          {finding.detail && <p className="wo-dr-line">{finding.detail}</p>}
+          <p className="wo-ui-note">{finding.explanation}</p>
+        </Disclosure>
+      </li>)}</ul>
+    </Section>}
+  </>;
+
+  const linksTab = linkTotal === 0 ? <EmptyState>No links recorded for this page.</EmptyState> : <div className="wo-dr-stack">
+    {incoming.length > 0 && <Disclosure summary="Incoming links" count={incoming.length} defaultOpen>
+      <LinkList items={incoming} icon={<ArrowDownLeft size={13} className="wo-link-icon-in" aria-hidden="true" />} label={(peer) => peer.path} onPick={onSelectAndFly} domain={manifest.domain} />
+    </Disclosure>}
+    {outgoingInternal.length > 0 && <Disclosure summary="Outgoing internal" count={outgoingInternal.length}>
+      <LinkList items={outgoingInternal} icon={<ArrowUpRight size={13} className="wo-link-icon-out" aria-hidden="true" />} label={(peer) => peer.path} onPick={onSelectAndFly} domain={manifest.domain} />
+    </Disclosure>}
+    {outgoingExternal.length > 0 && <Disclosure summary="External domains" count={outgoingExternal.length}>
+      <LinkList items={outgoingExternal} icon={<Globe size={13} className="wo-link-icon-ext" aria-hidden="true" />} label={(peer) => peer.title} onPick={onSelectAndFly} domain={manifest.domain} />
+    </Disclosure>}
+    {pageResources.length > 0 && <details className="wo-ui-disclosure wo-resource-details">
+      <summary><ChevronRight size={13} className="wo-ui-disclosure-chevron" aria-hidden="true" /><span>Media and resources</span><span className="wo-ui-count">{formatCount(pageResources.length)}</span></summary>
+      <div className="wo-ui-disclosure-body">
+        <ul className="wo-dr-linklist">{pageResources.map((resource) => <li key={resource.id}>
+          <button type="button" className="wo-dr-link" onClick={() => onOpenExternalUrl(resource.url)} title={resource.url}>
+            <span className="wo-dr-tag">{resource.type}</span>
+            <span className="wo-dr-link-main">{resource.references.find((reference) => reference.pageUrl === node.url && reference.label)?.label || resource.url.split('/').at(-1) || resource.url}</span>
+            <span className="wo-dr-link-aside">{resource.localFileStatus === 'preserved-local-edits' ? 'Local edit kept' : resource.checkStatus || resource.downloadState || 'Reference'}</span>
+          </button>
+        </li>)}</ul>
+      </div>
+    </details>}
+  </div>;
+
+  const tabs: TabItem[] = isExternal ? [] : [
+    { id: 'issues', label: 'Issues', badge: issueTotal, content: issuesTab },
+    { id: 'checks', label: 'Checks', content: <PageChecksSection manifest={manifest} node={node} /> },
+    { id: 'links', label: 'Links', badge: linkTotal, content: linksTab },
+    ...(sample ? [{ id: 'browser', label: 'Browser', content: <BrowserSamplePanel manifest={manifest} sample={sample} onOpenNote={onOpenNote} resolveAssetUrl={resolveAssetUrl} /> }] : []),
+  ];
 
   return (
-    <aside className="wo-inspector" aria-label="Page Inspector">
-      <div className="wo-inspector-head">
-        <div className="wo-inspector-badges">
-          <span className={`wo-badge wo-badge-${node.health}`}>
-            {HEALTH_LABEL[node.health]}
-          </span>
-          {!isExternal && (
-            <span className="wo-badge wo-badge-mono">{node.statusCode > 0 ? `HTTP ${node.statusCode}` : 'No HTTP response'}</span>
-          )}
-          {!isExternal && node.responseTimeMs !== undefined && node.responseTimeMs > 0 && (
-            <span className="wo-badge wo-badge-mono">{node.responseTimeMs} ms</span>
-          )}
+    <aside className="wo-inspector wo-dr" aria-label="Page Inspector">
+      <header className="wo-dr-head">
+        <div className="wo-dr-head-text">
+          <div className="wo-dr-badges">
+            <StatusPill status={health.status} label={health.label} />
+            {!isExternal && <span className="wo-dr-meta">{node.statusCode > 0 ? `HTTP ${node.statusCode}` : 'No HTTP response'}{node.responseTimeMs ? ` · ${formatCount(node.responseTimeMs)} ms` : ''}</span>}
+          </div>
+          <h2 className="wo-dr-title">{node.title}</h2>
+          <span className="wo-dr-sub wo-dr-mono" title={node.url}>{node.kind === 'home' ? `${manifest.domain} (/)` : node.path}</span>
         </div>
-        <button
-          type="button"
-          className="wo-icon-btn wo-icon-btn-sm"
-          onClick={onClose}
-          title="Close inspector (Esc)"
-          aria-label="Close inspector"
-        >
+        <button type="button" className="wo-icon-btn wo-icon-btn-sm" onClick={onClose} title="Close inspector (Esc)" aria-label="Close inspector">
           <X size={15} />
         </button>
-      </div>
+      </header>
 
-      <h2 className="wo-inspector-title">{node.title}</h2>
-      <div className="wo-inspector-path">
-        {node.kind === 'home' ? `${manifest.domain} (/)` : node.path}
-      </div>
-      <p className="wo-evidence-note">From the saved capture on {captureDate(manifest.capturedAt)}.</p>
+      {node.error && <p className="wo-dr-alert" role="status">{node.error}</p>}
+      {node.noteStatus === 'preserved-local-edits' && <p className="wo-dr-alert" role="status">Your existing note was preserved. A fresh generated version is listed in the recapture report.</p>}
 
-      {node.error && <p className="wo-evidence-note" role="status">{node.error}</p>}
-      {node.noteStatus === 'preserved-local-edits' && <p className="wo-evidence-note" role="status">Your existing note was preserved. A fresh generated version is listed in the recapture report.</p>}
-      {node.authorityScore !== undefined && <p className="wo-evidence-note">Relative internal link score: {node.authorityScore}/100. A local link-graph heuristic.</p>}
-
-      <div className="wo-inspector-actions">
-        <button
-          type="button"
-          className="wo-btn-primary"
-          onClick={() => onOpenNote(node.obsidianPath)}
-        >
-          <FileText size={14} />
-          <span>Open Note</span>
+      <div className="wo-dr-actions" role="group" aria-label="Page actions">
+        <button type="button" className="wo-btn-primary wo-btn-xs" onClick={() => onOpenNote(node.obsidianPath)}>
+          <FileText size={13} aria-hidden="true" /><span>Open Note</span>
         </button>
-        <button
-          type="button"
-          className="wo-btn-secondary"
-          onClick={() => onOpenExternalUrl(node.url)}
-          title={node.url}
-        >
-          <ExternalLink size={14} />
-          <span>Live URL</span>
+        <button type="button" className="wo-btn-secondary wo-btn-xs" onClick={() => onOpenExternalUrl(node.url)} title={node.url}>
+          <ExternalLink size={13} aria-hidden="true" /><span>Live URL</span>
         </button>
       </div>
 
-      {pageResources.length > 0 && <details className="wo-inspector-section wo-resource-details">
-        <summary className="wo-section-title">Media and resources ({pageResources.length})</summary>
-        <div className="wo-ext-sample-list">{pageResources.map((resource) => <button key={resource.id} type="button" className="wo-link-row" onClick={() => onOpenExternalUrl(resource.url)} title={resource.url}>
-          <span className="wo-link-row-main">{resource.type}: {resource.references.find((reference) => reference.pageUrl === node.url && reference.label)?.label || resource.url.split('/').at(-1) || resource.url}</span>
-          <span className="wo-badge wo-badge-mono">{resource.localFileStatus === 'preserved-local-edits' ? 'Local edit kept' : resource.checkStatus || resource.downloadState || 'Reference'}</span>
-        </button>)}</div>
-      </details>}
+      {isExternal ? <>
+        {node.metaDescription && <p className="wo-dr-line">{node.metaDescription}</p>}
+        {node.externalUrlsSample && node.externalUrlsSample.length > 0 && <Section title="Linked URLs" aside={formatCount(node.externalUrlsSample.length)}>
+          <ul className="wo-dr-linklist">{node.externalUrlsSample.slice(0, 8).map((url) => <li key={url}>
+            <button type="button" className="wo-dr-link" onClick={() => onOpenExternalUrl(url)} title={url}><Globe size={13} aria-hidden="true" /><span className="wo-dr-link-main">{url.replace(/^https?:\/\//, '')}</span></button>
+          </li>)}</ul>
+        </Section>}
+        {incoming.length > 0 && <Disclosure summary="Linked from" count={incoming.length} defaultOpen>
+          <LinkList items={incoming} icon={<ArrowDownLeft size={13} className="wo-link-icon-in" aria-hidden="true" />} label={(peer) => peer.path} onPick={onSelectAndFly} domain={manifest.domain} />
+        </Disclosure>}
+      </> : <>
+        <StatRow label="Page numbers">
+          <StatTile label="Words" value={formatCount(node.wordCount)} hint={node.readingTimeMin ? `${node.readingTimeMin} min read` : undefined} />
+          <StatTile label="Click depth" value={node.clickDepth !== null ? String(node.clickDepth) : 'None'} hint={node.clickDepth === null ? 'Not reached by links' : node.clickDepth === 0 ? 'Homepage' : 'Clicks from home'} />
+          <StatTile label="Inlinks" value={formatCount(incoming.length)} hint={node.authorityScore !== undefined ? `Link score ${node.authorityScore}` : undefined} />
+          <StatTile label="Issues" value={formatCount(issueTotal)} hint={attention ? `${attention} need attention` : undefined} status={attention ? 'critical' : undefined} />
+        </StatRow>
+        <Tabs label="Page inspector sections" initial={issueTotal ? 'issues' : 'checks'} tabs={tabs} />
+      </>}
 
-      {!isExternal ? (
-        <>
-          <div className="wo-metrics-grid">
-            <div className="wo-metric-card">
-              <span className="wo-metric-label">Click Depth</span>
-              <span className="wo-metric-val">
-                {node.clickDepth !== null ? `D${node.clickDepth}` : 'Orphan'}
-              </span>
-            </div>
-            <div className="wo-metric-card">
-              <span className="wo-metric-label">Sitemap</span>
-              <span className="wo-metric-val">{node.inSitemap ? 'Yes' : 'No'}</span>
-            </div>
-            <div className="wo-metric-card">
-              <span className="wo-metric-label">Words</span>
-              <span className="wo-metric-val">
-                {node.wordCount.toLocaleString()}
-                {node.readingTimeMin ? ` · ${node.readingTimeMin}m` : ''}
-              </span>
-            </div>
-            <div className="wo-metric-card">
-              <span className="wo-metric-label">Local Media</span>
-              <span className="wo-metric-val">
-                {node.localImagesCount}/{node.imagesCount}
-              </span>
-            </div>
-          </div>
-
-          {node.seoIssues && node.seoIssues.length > 0 && (
-            <div className="wo-inspector-section">
-              <div className="wo-section-title">
-                SEO Audit Signals ({node.seoIssues.length})
-              </div>
-              <div className="wo-schema-row">
-                {node.seoIssues.map((issue) => (
-                  <span key={issue} className="wo-schema-chip wo-chip-warn">
-                    {issue.replace(/-/g, ' ')}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {Boolean(
-            (node.tablesCount ?? 0) > 0 ||
-              (node.codeBlocksCount ?? 0) > 0 ||
-              (node.videosCount ?? 0) > 0 ||
-              (node.formsCount ?? 0) > 0
-          ) && (
-            <div className="wo-inspector-section">
-              <div className="wo-section-title">Extracted Structure</div>
-              <div className="wo-schema-row">
-                {(node.tablesCount ?? 0) > 0 && (
-                  <span className="wo-schema-chip">{node.tablesCount} table(s)</span>
-                )}
-                {(node.codeBlocksCount ?? 0) > 0 && (
-                  <span className="wo-schema-chip">
-                    {node.codeBlocksCount} code block(s)
-                  </span>
-                )}
-                {(node.videosCount ?? 0) > 0 && (
-                  <span className="wo-schema-chip">{node.videosCount} video(s)</span>
-                )}
-                {(node.formsCount ?? 0) > 0 && (
-                  <span className="wo-schema-chip">{node.formsCount} form(s)</span>
-                )}
-              </div>
-            </div>
-          )}
-
-          {(node.metaDescription ||
-            node.h1.length > 0 ||
-            node.schemaTypes.length > 0 ||
-            node.author ||
-            node.publishedDate) && (
-            <div className="wo-inspector-section">
-              <div className="wo-section-title">Page Metadata</div>
-              {node.h1.length > 0 && (
-                <div className="wo-meta-block">
-                  <span className="wo-meta-key">H1</span>
-                  <span className="wo-meta-text">{node.h1[0]}</span>
-                </div>
-              )}
-              {node.metaDescription && (
-                <div className="wo-meta-block">
-                  <span className="wo-meta-key">
-                    Description ({node.metaDescription.length} chars)
-                  </span>
-                  <span className="wo-meta-text">{node.metaDescription}</span>
-                </div>
-              )}
-              {node.canonical && <div className="wo-meta-block"><span className="wo-meta-key">Declared canonical</span><span className="wo-meta-text wo-break-url">{node.canonical}</span></div>}
-              {node.metaRobots && <div className="wo-meta-block"><span className="wo-meta-key">Page robots directive</span><span className="wo-meta-text">{node.metaRobots}</span></div>}
-              {(node.author || node.publishedDate || node.lang) && (
-                <div className="wo-meta-key">
-                  {[
-                    node.author ? `Author: ${node.author}` : '',
-                    node.publishedDate ? `Published: ${node.publishedDate.slice(0, 10)}` : '',
-                    node.lang ? `Lang: ${node.lang}` : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' · ')}
-                </div>
-              )}
-              {node.schemaTypes.length > 0 && (
-                <div className="wo-schema-row">
-                  {node.schemaTypes.map((st) => (
-                    <span key={st} className="wo-schema-chip">
-                      {st}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </>
-      ) : (
-        <div className="wo-inspector-section">
-          <div className="wo-section-title">External Satellite Summary</div>
-          <p className="wo-meta-text">{node.metaDescription}</p>
-          {node.externalUrlsSample && node.externalUrlsSample.length > 0 && (
-            <div className="wo-ext-sample-list">
-              {node.externalUrlsSample.slice(0, 6).map((u) => (
-                <button
-                  key={u}
-                  type="button"
-                  className="wo-link-row"
-                  onClick={() => onOpenExternalUrl(u)}
-                >
-                  <Globe size={12} />
-                  <span className="wo-link-row-main">{u}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {incoming.length > 0 && (
-        <div className="wo-inspector-section">
-          <div className="wo-section-title">
-            Incoming Links ({incoming.length})
-          </div>
-          <div className="wo-link-list">
-            {incoming.slice(0, 24).map(({ peer, anchor, kind }, idx) => (
-              <button
-                key={`${peer.id}-${idx}`}
-                type="button"
-                className="wo-link-row"
-                onClick={() => onSelectAndFly(peer.id)}
-              >
-                <ArrowDownLeft size={13} className="wo-link-icon-in" />
-                <span className="wo-link-row-main">
-                  {peer.kind === 'home' ? manifest.domain : peer.path}
-                </span>
-                {anchor && <span className="wo-link-row-sub">{anchor}</span>}
-                {kind === 'internal-chrome' && (
-                  <span className="wo-mini-tag">nav</span>
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {outgoingInternal.length > 0 && (
-        <div className="wo-inspector-section">
-          <div className="wo-section-title">
-            Outgoing Internal Links ({outgoingInternal.length})
-          </div>
-          <div className="wo-link-list">
-            {outgoingInternal.slice(0, 24).map(({ peer, anchor, kind }, idx) => (
-              <button
-                key={`${peer.id}-${idx}`}
-                type="button"
-                className="wo-link-row"
-                onClick={() => onSelectAndFly(peer.id)}
-              >
-                <ArrowUpRight size={13} className="wo-link-icon-out" />
-                <span className="wo-link-row-main">
-                  {peer.kind === 'home' ? manifest.domain : peer.path}
-                </span>
-                {anchor && <span className="wo-link-row-sub">{anchor}</span>}
-                {kind === 'internal-chrome' && (
-                  <span className="wo-mini-tag">nav</span>
-                )}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {outgoingExternal.length > 0 && (
-        <div className="wo-inspector-section">
-          <div className="wo-section-title">
-            Outgoing External Links ({outgoingExternal.length})
-          </div>
-          <div className="wo-link-list">
-            {outgoingExternal.slice(0, 24).map(({ peer, anchor }, idx) => (
-              <button
-                key={`${peer.id}-${idx}`}
-                type="button"
-                className="wo-link-row"
-                onClick={() => onSelectAndFly(peer.id)}
-              >
-                <Globe size={13} className="wo-link-icon-ext" />
-                <span className="wo-link-row-main">{peer.title}</span>
-                {anchor && <span className="wo-link-row-sub">{anchor}</span>}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+      <div className="wo-dr-about">
+        <Disclosure summary="About these numbers">
+          <ul className="wo-dr-list">{notes.map((note) => <li key={note}>{note}</li>)}</ul>
+        </Disclosure>
+      </div>
     </aside>
   );
 };

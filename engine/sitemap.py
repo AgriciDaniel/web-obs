@@ -21,7 +21,7 @@ from urllib.parse import unquote, urljoin, urlparse, urlunparse
 import requests
 from lxml import etree
 
-from url_safety import DEFAULT_REQUEST_HEADERS, URLSafetyError, safe_requests_session, validate_url
+from url_safety import DEFAULT_REQUEST_HEADERS, URLSafetyError, apply_robots_pacing, safe_requests_session, validate_url
 from site_intel import build_robots_policy, robots_url_decision
 
 COMMON_SITEMAP_PATHS = (
@@ -375,7 +375,7 @@ def discover_and_expand_sitemaps(
     result.robots_error = robots_resp["error"]
     result.robots_too_large = robots_resp["too_large"]
     if isinstance(robots_resp["status_code"], int) and 200 <= robots_resp["status_code"] < 300 and not robots_resp["error"] and not robots_resp["too_large"]:
-        text = robots_resp["content"].decode("utf-8", errors="replace")
+        text = robots_resp["content"].decode("utf-8-sig", errors="replace")
         result.robots_text = text
         for line in text.splitlines():
             m = _SITEMAP_LINE.match(line)
@@ -388,6 +388,7 @@ def discover_and_expand_sitemaps(
         result.robots_text, result.robots_status_code, result.robots_error, result.robots_too_large,
     )
     policies = {origin: result.robots_policy}
+    apply_robots_pacing(origin, result.robots_policy)
     if not result.robots_policy["canCrawl"]:
         warn(result.robots_policy["reason"])
 
@@ -400,6 +401,7 @@ def discover_and_expand_sitemaps(
                     fetched["content"].decode("utf-8", errors="replace"),
                     fetched["status_code"], fetched["error"], fetched["too_large"],
                 )
+                apply_robots_pacing(target_origin, policies[target_origin])
                 if fetched["too_large"]:
                     warn(f"Robots response exceeded byte limit: {target_origin}/robots.txt")
             decision = robots_url_decision(policies[target_origin], target)
@@ -460,6 +462,7 @@ def discover_and_expand_sitemaps(
                 "kind": kind,
                 "url_count": len(entries),
                 "child_count": len(children),
+                "bytes": len(fetched["content"] or b""),
             }
         )
 
