@@ -170,6 +170,15 @@ class ConverterRegions(unittest.TestCase):
         self.assertNotIn('**Talk to us**:', self.md)
 
 
+class PageAuditScreenshot(unittest.TestCase):
+    def test_browser_screenshot_embed_uses_the_full_vault_path(self):
+        from audit_outputs import page_audit_section
+        lines = page_audit_section('https://fixture.example/', {'seoIssues': []}, {}, None,
+                                   {'screenshot': 'assets/screenshots/home-abc123.jpg', 'lab': None, 'a11y': None, 'jsGap': None, 'thirdParty': None},
+                                   'fixture.example')
+        self.assertIn('![[sites/fixture.example/assets/screenshots/home-abc123.jpg|Screenshot]]', '\n'.join(lines))
+
+
 class CapturedNotes(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

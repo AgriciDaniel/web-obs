@@ -14,6 +14,7 @@ import {
   normalizePath,
 } from 'obsidian';
 import App from '../App';
+import { type ResyncAdapter, resyncVaultFolder } from './vaultResync';
 import {
   type MountedSiteGlobeView,
   WEB_OBS_VIEW_TYPE,
@@ -398,6 +399,8 @@ export class SiteGlobeView extends ItemView {
           const manifest = await this.loadVaultSiteManifest(completedSiteId);
           if (!isCurrent()) { finish(null); return; }
           if (!manifest) { finish(null, 'Crawler reported completion, but its saved capture could not be validated.'); return; }
+          await this.resyncSiteFolder(completedSiteId);
+          if (!isCurrent()) { finish(null); return; }
           const sites = await this.listVaultSites();
           if (!isCurrent()) { finish(null); return; }
           state.running = false;
@@ -417,6 +420,18 @@ export class SiteGlobeView extends ItemView {
         }
       });
     });
+  }
+
+  /** The capture swaps the site folder in one rename; make Obsidian index what is there now. */
+  private async resyncSiteFolder(siteId: string): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) return;
+    try {
+      const result = await resyncVaultFolder(adapter as unknown as ResyncAdapter, normalizePath(`sites/${siteId}`));
+      if (result.state === 'unsupported') new Notice('Capture saved. If new snapshots or notes do not show yet, reload Obsidian once.');
+    } catch {
+      new Notice('Capture saved. If new snapshots or notes do not show yet, reload Obsidian once.');
+    }
   }
 
   private tryInit(): void {

@@ -225,7 +225,8 @@ def write_tasks(site_root: str, previous_site_root: Optional[str], findings: lis
     return counts
 
 
-def page_audit_section(url: str, node: dict, findings_by_url: dict, checks: Optional[dict], browser_page: Optional[dict]) -> list[str]:
+def page_audit_section(url: str, node: dict, findings_by_url: dict, checks: Optional[dict], browser_page: Optional[dict],
+                       domain_folder: Optional[str] = None) -> list[str]:
     lines = ["## Page Audit", ""]
     issues = node.get("seoIssues") or []
     if issues:
@@ -256,7 +257,9 @@ def page_audit_section(url: str, node: dict, findings_by_url: dict, checks: Opti
         lines += ["", f"Browser sample: LCP {lab.get('lcpMs', 'n/a')} ms, CLS {lab.get('cls', 'n/a')}, "
                   f"{len(a11y.get('violations') or [])} axe rule violations. {lab.get('note', '')}"]
         if browser_page.get("screenshot"):
-            lines += ["", f"![[{browser_page['screenshot']}|Screenshot]]"]
+            # A full vault path, so Obsidian never has to guess between sites with similar file names.
+            shot = browser_page["screenshot"]
+            lines += ["", f"![[{f'sites/{domain_folder}/{shot}' if domain_folder else shot}|Screenshot]]"]
     lines.append("")
     return lines
 

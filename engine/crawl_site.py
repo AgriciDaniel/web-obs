@@ -1548,7 +1548,7 @@ def _capture_to_staging(
                  f"duplicate: {'true' if u in duplicate_urls else 'false'}",
                  f"link_opportunities: {opportunities_by_source.get(u, 0)}"]
         fm = frontmatter[:-1] + extra + [frontmatter[-1]]
-        audit_lines = page_audit_section(u, node, findings_by_url, checks or None, browser_by_url.get(u))
+        audit_lines = page_audit_section(u, node, findings_by_url, checks or None, browser_by_url.get(u), domain_folder)
         snap = node.get("snapshot") or {}
         if snap.get("screenshot"):
             callout = [f"> [!example]- Page snapshot", f"> ![[sites/{domain_folder}/{snap['screenshot']}|Full-page snapshot]]"]

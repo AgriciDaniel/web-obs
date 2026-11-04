@@ -588,6 +588,7 @@ async function main() {
   execFileSync(process.execPath, ['scripts/verify-resource-validation.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-site-audit.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-compare-sites.mjs'], { stdio: 'inherit', timeout: 60_000 });
+  execFileSync(process.execPath, ['scripts/verify-vault-resync.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-discovery-checklist.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-doctor.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-engine-bundle.mjs'], { stdio: 'inherit', timeout: 60_000 });

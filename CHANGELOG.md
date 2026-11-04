@@ -71,6 +71,8 @@ A much deeper audit. Every check still runs on your computer and talks only to t
 - The plugin stylesheet now includes every style file, so the new layout also applies inside Obsidian.
 
 ### Fixed
+- **New snapshots and notes now show in Obsidian right after a capture.** A capture replaces the site folder in one move, and Obsidian kept its old file list for a folder it already knew, so new files (such as snapshots) said "could not be found" until a reload. The plugin now has Obsidian re-index the site folder and re-attach its watchers after every capture, and asks for a reload only if that is not possible.
+- Page Audit screenshots are embedded with their full vault path.
 - A robots.txt that starts with a byte order mark had its first group misread. It is now decoded correctly.
 - A page whose HTML holds a malformed URL (such as `https://[bad`) no longer ends the whole capture. It is saved as unavailable with the reason. If every page fails to parse, the capture stops and the previous one stays in place.
 - The site audit runs inside its own guard. If it fails, notes and the map are still saved and the capture says why.

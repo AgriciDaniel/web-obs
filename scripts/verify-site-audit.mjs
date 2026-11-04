@@ -14,7 +14,9 @@ const fixture = JSON.parse(fs.readFileSync(FIXTURE_PATH, 'utf8'));
 const internal = fixture.nodes.filter(node => node.kind !== 'external-domain');
 const sum = rows => rows.reduce((total, row) => total + row.count, 0);
 const bucket = (rows, id) => rows.find(row => row.id === id).count;
-const clone = () => structuredClone(fixture);
+// The saved capture may come from any engine version. Tests start from its graph without the
+// 0.2.0 engine audit and add one where they need it, so results do not depend on that version.
+const clone = () => { const copy = structuredClone(fixture); delete copy.audit; delete copy.issueCatalog; return copy; };
 let passed = 0;
 function test(name, fn) { fn(); passed++; console.log('[PASS] ' + name); }
 
