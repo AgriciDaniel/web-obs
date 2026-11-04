@@ -6,6 +6,29 @@ import type { PluginOption } from 'vite';
 import { JsonlDecoder } from '../data/jsonl';
 import { isSafeSiteId, parseSiteManifest } from '../data/validateManifest';
 
+const SITE_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.ico', '.avif']);
+export const MAX_SITE_IMAGE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Resolves `sites/<siteId>/...` to a real image file inside that site's folder, or null. Rejects
+ * traversal, other file types, oversized files and symlinks that lead outside the capture.
+ */
+export function resolveSiteImage(sitesRoot: string, requested: string | null): string | null {
+  if (typeof requested !== 'string' || requested.length > 300 || /[\x00-\x1f\x7f\\]/.test(requested)) return null;
+  const parts = requested.split('/');
+  if (parts.length < 3 || parts[0] !== 'sites' || !isSafeSiteId(parts[1]) || parts.some((part) => !part || part === '.' || part === '..')) return null;
+  if (!SITE_IMAGE_EXTENSIONS.has(path.extname(requested).toLowerCase())) return null;
+  try {
+    const siteRoot = fs.realpathSync(path.join(sitesRoot, parts[1]));
+    const file = fs.realpathSync(path.join(sitesRoot, ...parts.slice(1)));
+    if (!file.startsWith(siteRoot + path.sep)) return null;
+    const stat = fs.statSync(file);
+    return stat.isFile() && stat.size <= MAX_SITE_IMAGE_BYTES ? file : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Local development transport for the same crawler used by the Obsidian view. */
 export function webObsDevApiPlugin(): PluginOption {
   const vaultRoot = process.cwd();
@@ -45,6 +68,17 @@ export function webObsDevApiPlugin(): PluginOption {
           if (!fs.existsSync(file)) return json(404, { error: 'Site capture not found.' });
           try { return json(200, parseSiteManifest(JSON.parse(fs.readFileSync(file, 'utf8')))); }
           catch (error) { return json(422, { error: error instanceof Error ? error.message : 'Invalid capture.' }); }
+        }
+        if (req.method === 'GET' && url.pathname === '/__web_obs/asset') {
+          // Read-only: a saved image inside one site's capture folder, for the map's brand badge.
+          if (req.headers['sec-fetch-site'] === 'cross-site') return json(403, { error: 'Assets require a same-origin request.' });
+          const asset = resolveSiteImage(sitesRoot, url.searchParams.get('path'));
+          if (!asset) return json(404, { error: 'Asset not found.' });
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/octet-stream');
+          res.setHeader('X-Content-Type-Options', 'nosniff');
+          res.setHeader('Cache-Control', 'no-store');
+          return res.end(fs.readFileSync(asset));
         }
         if (req.method !== 'POST' || !['/__web_obs/crawl', '/__web_obs/continue-links'].includes(url.pathname)) return json(404, { error: 'Unknown capture endpoint.' });
         if (req.headers['sec-fetch-site'] === 'cross-site') return json(403, { error: 'Capture requires a same-origin request.' });

@@ -320,6 +320,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
     <div className={`wo-shell wo-theme-${theme} ${manifest ? 'wo-workspace' : ''} ${auditOpen ? 'wo-audit-open' : ''} ${explorerOpen ? 'wo-explorer-open' : ''} ${selectedNode || intelOpen ? 'wo-inspector-open' : ''}`}>
       {/* 3D WebGL Globe Stage */}
       <SiteGlobeCanvas3D
+        readAssetBytes={activeHost.readAssetBytes}
         manifest={manifest}
         viewMode={viewMode}
         theme={theme}

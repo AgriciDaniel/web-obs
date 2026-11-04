@@ -474,7 +474,16 @@ export interface SiteGraphManifest {
   resources?: SiteResource[];
   captureProvenance?: { engineSha256: string; configuration: Record<string, unknown>; runtime: { pythonVersion: string; platform: string } };
   pipelineMetrics?: { elapsedSec: number; pages: number; resources: number; imagesBytes: number };
-  brandKit?: { colorTokens?: unknown[]; palette?: unknown[]; typography?: { primaryFamilies?: string[] } };
+  brandKit?: {
+    colorTokens?: unknown[];
+    palette?: unknown[];
+    typography?: { primaryFamilies?: string[] };
+    themeColor?: string | null;
+    logoUrls?: string[];
+    faviconUrls?: string[];
+    localLogoAsset?: string | null;
+    localFaviconAsset?: string | null;
+  };
   drift?: { hasChanges: boolean; contentChangesCount?: number; fileChangesCount?: number } | null;
   sitemaps: SiteSitemapInfo[];
   sections: SiteSectionSummary[];
@@ -546,6 +555,12 @@ export interface SiteHostAdapter {
   onOpenNote: (vaultRelativePath: string, splitPane?: boolean) => void;
   /** Turns a vault file path into a URL the view can display, such as a saved screenshot. */
   resolveAssetUrl?: (vaultRelativePath: string) => string | null;
+  /**
+   * Reads a saved image from the vault as bytes, for drawing into WebGL. A resource URL from another
+   * origin would taint the canvas, so the map loads its logo this way. Optional: without it the map
+   * shows the brand's initials instead.
+   */
+  readAssetBytes?: (vaultRelativePath: string) => Promise<ArrayBuffer | null>;
   onOpenExternalUrl: (url: string) => void;
   subscribeHostEvents?: (handlers: HostEventHandlers) => () => void;
   onWebGLContextLost?: () => void;

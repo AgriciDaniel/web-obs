@@ -69,10 +69,12 @@ A much deeper audit. Every check still runs on your computer and talks only to t
 - **Site audit** opens on five stat tiles, a work list and a row of charts (findings by category, pages by section, link check results, media inventory). Findings are grouped into Needs attention, Worth reviewing and Coverage gaps. Content and browser sample summaries now live here.
 - Each panel keeps its caveats in one "About these numbers" section. The toolbar and the audit panel count attention items the same way.
 - The plugin stylesheet now includes every style file, so the new layout also applies inside Obsidian.
+- **The site's own mark at the centre:** the home node shows the site's logo on a round badge that always faces you, ringed in the brand colour. It uses what the capture already saved (the logo, then the sharpest favicon), so older captures get it without recapturing. A logo is placed on a light or dark backing so it stays visible, and the ring is adjusted to at least 3:1 contrast on both map themes. Without a usable logo the badge shows the brand's initials. The domain label stays beside it, since the logo choice is not visually checked.
 
 ### Fixed
 - **New snapshots and notes now show in Obsidian right after a capture.** A capture replaces the site folder in one move, and Obsidian kept its old file list for a folder it already knew, so new files (such as snapshots) said "could not be found" until a reload. The plugin now has Obsidian re-index the site folder and re-attach its watchers after every capture, and asks for a reload only if that is not possible.
 - Page Audit screenshots are embedded with their full vault path.
+- **Inline SVG logos are saved as real, scalable logos.** The capture took the first SVG in the header, which could be a theme toggle or menu icon, and the HTML parser lowercased case-sensitive SVG names such as `viewBox` and `linearGradient`, so saved logos rendered unscaled or lost gradients. An inline SVG now needs a logo signal (inside the link to the homepage, or named logo or brand, never inside a button), and SVG names keep their case.
 - A robots.txt that starts with a byte order mark had its first group misread. It is now decoded correctly.
 - A page whose HTML holds a malformed URL (such as `https://[bad`) no longer ends the whole capture. It is saved as unavailable with the reason. If every page fails to parse, the capture stops and the previous one stays in place.
 - The site audit runs inside its own guard. If it fails, notes and the map are still saved and the capture says why.

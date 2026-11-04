@@ -13,6 +13,8 @@ import {
   type ComputedSiteLayouts,
 } from '../data/globeLayout';
 import { attentionNodeIds, restingLabelIds } from '../data/mapAttention';
+import { type BrandMark, pickBrandMark } from '../data/brandMark';
+import { type LogoTone, MIN_LOGO_COVERAGE, analyseLogo, badgeColors, decodeLogo, drawBrandBadge } from './brandBadge';
 import type {
   CameraAxisSnap,
   GlobeViewMode,
@@ -50,6 +52,8 @@ interface SiteGlobeCanvas3DProps {
   onOpenNoteNode?: (node: SiteNode) => void;
   onBeginDiscovery?: () => void;
   onWebGLContextLost?: () => void;
+  /** Reads a saved vault image as bytes; lets the home node show the site's logo. */
+  readAssetBytes?: (vaultRelativePath: string) => Promise<ArrayBuffer | null>;
 }
 
 const HEALTH_COLORS_LIGHT: Record<NodeHealth, number> = {
@@ -98,6 +102,24 @@ interface RuntimeNodeEntry {
   pillH: number;
   /** True once the label was laid out in the DOM and its real size read. */
   pillMeasured: boolean;
+  /** Home node only: the brand badge drawn in place of the sphere. */
+  badge?: BrandBadgeRuntime;
+}
+
+/** Badge diameter as a multiple of the home sphere's radius (the sphere itself is 2). */
+const BADGE_SCALE = 2.8;
+
+interface BrandBadgeRuntime {
+  mark: BrandMark;
+  canvas: HTMLCanvasElement;
+  texture: THREE.CanvasTexture;
+  material: THREE.SpriteMaterial;
+  sprite: THREE.Sprite;
+  logo: { img: HTMLCanvasElement; tone: LogoTone } | null;
+  theme: ThemeMode | null;
+  /** Ring colour for the current theme; the halo follows it. */
+  ringHex: number;
+  disposed: boolean;
 }
 
 interface RuntimeEdgeEntry {
@@ -256,6 +278,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
   onOpenNoteNode,
   onBeginDiscovery,
   onWebGLContextLost,
+  readAssetBytes,
 }) => {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const [renderUnavailable, setRenderUnavailable] = useState(false);
@@ -327,6 +350,9 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
     onWebGLContextLost,
     onBeginDiscovery,
   };
+
+  const assetReaderRef = useRef(readAssetBytes);
+  assetReaderRef.current = readAssetBytes;
 
   const gizmoHolderRef = useRef(gizmoRef);
   gizmoHolderRef.current = gizmoRef;
@@ -664,6 +690,11 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
         entry.labelEl.remove();
         entry.coreMat.dispose();
         entry.haloMat.dispose();
+        if (entry.badge) {
+          entry.badge.disposed = true;
+          entry.badge.texture.dispose();
+          entry.badge.material.dispose();
+        }
         nodesRoot.remove(entry.group);
       });
       runtimeNodes.clear();
@@ -770,6 +801,53 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
         haloMesh.scale.setScalar(baseRadius);
         group.add(haloMesh);
 
+        // The home node shows the site's own mark. The sphere stays as an invisible depth occluder
+        // and click target, so links still end at the centre and picking is unchanged.
+        let badge: BrandBadgeRuntime | undefined;
+        const mark = node.kind === 'home' ? pickBrandMark(nextManifest) : null;
+        if (mark) {
+          const canvas = document.createElement('canvas');
+          const texture = new THREE.CanvasTexture(canvas);
+          texture.colorSpace = THREE.SRGBColorSpace;
+          texture.anisotropy = 4;
+          // Drawn last and without a depth test, so pages in front never hide the site's mark.
+          const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false, depthTest: false });
+          const sprite = new THREE.Sprite(material);
+          sprite.scale.setScalar(baseRadius * BADGE_SCALE);
+          sprite.renderOrder = 10;
+          group.add(sprite);
+          haloMesh.scale.setScalar(baseRadius * (BADGE_SCALE / 2) * 0.82);
+          coreMat.colorWrite = false;
+          // The invisible sphere is the click target, so it grows to the badge's full size, rim included.
+          coreMesh.scale.setScalar(baseRadius * (BADGE_SCALE / 2));
+          badge = { mark, canvas, texture, material, sprite, logo: null, theme: null, ringHex: hex, disposed: false };
+          const reader = assetReaderRef.current;
+          if (reader && mark.logoCandidates.length > 0) {
+            const target = badge;
+            void (async () => {
+              // First candidate that decodes and actually paints something; otherwise keep the initials.
+              for (const candidate of mark.logoCandidates) {
+                try {
+                  const bytes = await reader(candidate.path);
+                  if (target.disposed) return;
+                  if (!bytes) continue;
+                  const img = await decodeLogo(bytes, candidate.path);
+                  if (target.disposed) return;
+                  if (!img) continue;
+                  const tone = analyseLogo(img);
+                  if (tone.coverage < MIN_LOGO_COVERAGE) continue;
+                  target.logo = { img, tone };
+                  target.theme = null; // redraw on the next frame
+                  renderVersionRef.current += 1;
+                  return;
+                } catch {
+                  // Try the next candidate.
+                }
+              }
+            })();
+          }
+        }
+
         const pillText = shortPillLabel(node, nextManifest.domain);
         const labelEl = document.createElement('div');
         labelEl.className = `wo-node-pill wo-health-${node.health} wo-kind-${node.kind}`;
@@ -822,7 +900,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
         });
 
         const cssObj = new CSS2DObject(labelEl);
-        cssObj.position.set(0, baseRadius + 0.16, 0);
+        cssObj.position.set(0, (badge ? baseRadius * (BADGE_SCALE / 2) : baseRadius) + 0.16, 0);
         group.add(cssObj);
         nodesRoot.add(group);
 
@@ -840,6 +918,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
           pillMeasured: false,
           pillW: Math.max(68, pillText.length * 7.2 + 28),
           pillH: 24,
+          badge,
         });
       }
 
@@ -1033,6 +1112,22 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
     const tmpColorA = new THREE.Color();
     const tmpColorB = new THREE.Color();
     const tmpVec = new THREE.Vector3();
+    // Redraws the badge when the theme changes (or a logo arrives), since its ring colour follows the theme.
+    const syncBadge = (badge: BrandBadgeRuntime, theme: ThemeMode) => {
+      if (badge.theme !== theme) {
+        const fallback = '#' + (theme === 'dark' ? HEALTH_COLORS_DARK : HEALTH_COLORS_LIGHT).home.toString(16).padStart(6, '0');
+        const colors = badgeColors(badge.mark, theme, fallback);
+        let drawn = drawBrandBadge(badge.canvas, badge.mark, colors, badge.logo);
+        if (!drawn && badge.logo) {
+          badge.logo = null; // An unreadable image would be refused by WebGL; fall back to initials.
+          drawn = drawBrandBadge(badge.canvas, badge.mark, colors, null);
+        }
+        badge.sprite.visible = drawn;
+        badge.ringHex = parseInt(colors.ring.slice(1), 16);
+        badge.texture.needsUpdate = true;
+        badge.theme = theme;
+      }
+    };
     const tmpMid = new THREE.Vector3();
     const tmpWorldPos = new THREE.Vector3();
     const tmpMat4 = new THREE.Matrix4();
@@ -1199,6 +1294,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
         else entry.currentPos.copy(entry.targetPos);
         entry.group.position.copy(entry.currentPos);
         entry.haloMesh.quaternion.copy(camera.quaternion);
+        if (entry.badge) syncBadge(entry.badge, st.theme);
 
         const allowedByFilter = matchesFilter(entry.node, st.filter, st.showExternal, st.attention);
         const matchesQuery =
@@ -1216,7 +1312,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
         const hex = palette[entry.node.health] ?? palette.healthy;
         entry.coreMat.color.setHex(hex);
         entry.coreMat.emissive.setHex(hex);
-        entry.haloMat.color.setHex(hex);
+        entry.haloMat.color.setHex(entry.badge ? entry.badge.ringHex : hex);
 
         const isDirect = id === focusId;
         entry.labelEl.setAttribute('aria-pressed', String(id === st.selectedId));

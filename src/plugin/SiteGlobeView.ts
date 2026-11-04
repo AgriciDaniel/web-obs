@@ -39,6 +39,10 @@ import { WindowVisibilityBinding } from './windowVisibility';
 import { JsonlDecoder } from '../data/jsonl';
 import { isSafeSiteId, parseSiteManifest } from '../data/validateManifest';
 
+/** A logo larger than this is not drawn on the map; real logos are far smaller. */
+const MAX_MAP_ASSET_BYTES = 4 * 1024 * 1024;
+const MAP_ASSET_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'ico', 'avif']);
+
 export interface WebObsPluginBridge {
   manifest: { dir?: string };
   settings: WebObsPluginSettings;
@@ -465,6 +469,18 @@ export class SiteGlobeView extends ItemView {
         if (!safe) return null;
         const file = this.app.vault.getAbstractFileByPath(normalizePath(safe));
         return file instanceof TFile ? this.app.vault.getResourcePath(file) : null;
+      },
+      readAssetBytes: async (vaultRelativePath: string) => {
+        const safe = sanitizeVaultRelativePath(vaultRelativePath);
+        if (!safe || !safe.startsWith('sites/')) return null;
+        const file = this.app.vault.getAbstractFileByPath(normalizePath(safe));
+        // Images only, so this can never become a way to read notes or capture data.
+        if (!(file instanceof TFile) || !MAP_ASSET_EXTENSIONS.has(file.extension.toLowerCase()) || file.stat.size > MAX_MAP_ASSET_BYTES) return null;
+        try {
+          return await this.app.vault.readBinary(file);
+        } catch {
+          return null;
+        }
       },
       onOpenExternalUrl: (url: string) => {
         const safe = sanitizeExternalHttpUrl(url);

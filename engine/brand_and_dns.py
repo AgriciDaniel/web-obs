@@ -32,6 +32,67 @@ try:
 except ImportError:
     _HTML_PARSER = "html.parser"
 
+# HTML parsers lowercase every tag and attribute name, but SVG names are case-sensitive: a saved
+# logo with "viewbox" or "lineargradient" renders unscaled or loses its gradients. These are the
+# camelCase names from the SVG 1.1 and 2 specifications.
+_SVG_CAMEL_NAMES = {name.lower(): name for name in (
+    "altGlyph altGlyphDef altGlyphItem animateColor animateMotion animateTransform clipPath feBlend "
+    "feColorMatrix feComponentTransfer feComposite feConvolveMatrix feDiffuseLighting feDisplacementMap "
+    "feDistantLight feDropShadow feFlood feFuncA feFuncB feFuncG feFuncR feGaussianBlur feImage feMerge "
+    "feMergeNode feMorphology feOffset fePointLight feSpecularLighting feSpotLight feTile feTurbulence "
+    "foreignObject glyphRef linearGradient radialGradient textPath "
+    "attributeName attributeType baseFrequency baseProfile calcMode clipPathUnits diffuseConstant edgeMode "
+    "filterUnits gradientTransform gradientUnits kernelMatrix kernelUnitLength keyPoints keySplines keyTimes "
+    "lengthAdjust limitingConeAngle markerHeight markerUnits markerWidth maskContentUnits maskUnits numOctaves "
+    "pathLength patternContentUnits patternTransform patternUnits pointsAtX pointsAtY pointsAtZ preserveAlpha "
+    "preserveAspectRatio primitiveUnits refX refY repeatCount repeatDur requiredExtensions requiredFeatures "
+    "specularConstant specularExponent spreadMethod startOffset stdDeviation stitchTiles surfaceScale "
+    "systemLanguage tableValues targetX targetY textLength viewBox viewTarget xChannelSelector "
+    "yChannelSelector zoomAndPan"
+).split()}
+_SVG_TAG_RE = re.compile(r"<(/?)([A-Za-z][\w:-]*)([^<>]*)>")
+_SVG_ATTR_NAME_RE = re.compile(r"(\s)([A-Za-z][\w:-]*)(?=\s*=)")
+# Words that mark interface icons (theme toggles, menus, search) rather than a brand mark.
+_UI_ICON_WORDS = {"icon", "sun", "moon", "theme", "toggle", "menu", "hamburger", "burger", "search", "close",
+                  "chevron", "arrow", "caret", "cart", "bag", "user", "account", "social", "dropdown", "mode"}
+
+
+def _restore_svg_case(markup: str) -> str:
+    def tag(match: re.Match) -> str:
+        name = _SVG_CAMEL_NAMES.get(match.group(2).lower(), match.group(2))
+        attrs = _SVG_ATTR_NAME_RE.sub(lambda a: a.group(1) + _SVG_CAMEL_NAMES.get(a.group(2).lower(), a.group(2)), match.group(3))
+        return f"<{match.group(1)}{name}{attrs}>"
+    return _SVG_TAG_RE.sub(tag, markup)
+
+
+def _labels(tag: Tag) -> str:
+    return f"{' '.join(tag.get('class') or [])} {tag.get('id') or ''} {tag.get('aria-label') or ''} {tag.get('title') or ''}".lower()
+
+
+def _inline_svg_is_logo(svg: Tag, home_url: str) -> bool:
+    """An inline SVG counts as the logo only with a positive signal and outside any button."""
+    home = urlparse(home_url)
+    linked_home = False
+    named_logo = "logo" in _labels(svg) or "brand" in _labels(svg)
+    depth = 0
+    for parent in svg.parents:
+        if not isinstance(parent, Tag) or parent.name in ("body", "html", "[document]"):
+            break
+        if parent.name == "button" or (parent.get("role") or "").lower() == "button":
+            return False
+        if parent.name == "a" and not linked_home:
+            target = urlparse(urljoin(home_url, (parent.get("href") or "").strip()))
+            linked_home = target.netloc == home.netloc and target.path.rstrip("/") in ("", home.path.rstrip("/")) and not target.query
+        if depth < 3:
+            words = _labels(parent)
+            named_logo = named_logo or "logo" in words or "brand" in words
+        depth += 1
+    if not (linked_home or named_logo):
+        return False
+    tokens = set(re.split(r"[^a-z]+", _labels(svg)))
+    return named_logo or not (tokens & _UI_ICON_WORDS)
+
+
 _CSS_COMMENT_RE = re.compile(r"/\*.*?\*/", re.S)
 _CSS_RULE_RE = re.compile(r"([^{};]{1,160})\{([^{}]{1,24000})\}")
 _FONT_FACE_RE = re.compile(r"@font-face\s*\{([^{}]{1,4000})\}", re.I | re.S)
@@ -281,13 +342,15 @@ def extract_observed_brand_kit(
                 if full_img not in logo_urls:
                     logo_urls.append(full_img)
         if inline_logo_svg is None:
-            svg = container.find("svg")
-            if isinstance(svg, Tag):
-                raw_svg = str(svg)
+            for svg in container.find_all("svg", limit=8):
+                if not isinstance(svg, Tag) or not _inline_svg_is_logo(svg, home_url):
+                    continue
+                raw_svg = _restore_svg_case(str(svg))
                 if 80 <= len(raw_svg) <= 120_000:
                     if "xmlns=" not in raw_svg[:180]:
                         raw_svg = raw_svg.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"', 1)
                     inline_logo_svg = raw_svg
+                    break
 
     result["logoUrls"] = logo_urls[:8]
     result["faviconUrls"] = favicon_urls[:6]
