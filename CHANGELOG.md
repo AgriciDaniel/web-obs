@@ -63,7 +63,7 @@ A much deeper audit. Every check still runs on your computer and talks only to t
 - **New page for site owners:** [docs/CRAWLER.md](docs/CRAWLER.md) explains what WebObs sends, what never shows in web logs (the TLS handshake and DNS lookups), and how to block or slow it in robots.txt.
 
 ### Changed: a calmer interface
-- **Map first:** one 47px toolbar with a short summary (pages, items needing attention, broken links, domains) replaces the stats strip. The page explorer starts closed and remembers your choice. The bottom bar shows only filters that have pages, with layer toggles in a Layers menu.
+- **Map first:** one 47px toolbar with a short summary (pages, items needing attention, broken links, domains) replaces the stats strip. On a narrow pane it wraps onto extra rows, and the map and panels start below it. The page explorer starts closed and remembers your choice. The bottom bar shows only filters that have pages, with layer toggles in a Layers menu.
 - **Readable 3D map:** at rest only home, sections, pages that need attention and the ten strongest pages are labelled, and labels never overlap. Road and Clusters fill the canvas and the camera fits every layout.
 - **Site Intel** is split into Health, Files, Tech and Brand tabs. **The page inspector** has Issues, Checks, Links and Browser tabs, with problems shown first and raw tables collapsed.
 - **Site audit** opens on five stat tiles, a work list and a row of charts (findings by category, pages by section, link check results, media inventory). Findings are grouped into Needs attention, Worth reviewing and Coverage gaps. Content and browser sample summaries now live here.

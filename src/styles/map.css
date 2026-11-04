@@ -110,16 +110,20 @@
 .wo-shell .wo-sector-tag.is-hidden { visibility: hidden; }
 .wo-shell .wo-road-tag { font-family: inherit; font-size: var(--ui-text-sm); font-weight: 600; letter-spacing: 0; color: var(--ink-secondary); padding: 3px 9px; }
 
-/* Narrower panes: the summary drops its identity block, then moves to a second row. */
+/* Narrower panes: the summary drops its identity block, then moves to its own last row.
+   Below 1180px every toolbar item joins one wrapping flow (the left group becomes display: contents)
+   and nothing is absolutely positioned, so items can never cover each other at any width. The app
+   measures the toolbar and sets --workspace-top, so the map and panels always start below it. */
 @container web-obs (max-width: 1360px) {
   .wo-shell .wo-site-identity { display: none; }
   .wo-shell .wo-summary-stat:first-of-type { border-left: 0; }
 }
 @container web-obs (max-width: 1180px) {
   .wo-shell.wo-workspace { --workspace-top: 100px; }
-  .wo-shell .wo-topbar { flex-wrap: wrap; row-gap: 6px; }
-  .wo-shell .wo-topbar-left { flex-wrap: wrap; row-gap: 6px; }
-  .wo-shell .wo-site-overview { order: 10; position: absolute; top: calc(var(--toolbar-h) + 6px); left: 0; }
+  .wo-shell .wo-topbar { flex-wrap: wrap; justify-content: flex-start; row-gap: 6px; column-gap: 6px; }
+  .wo-shell .wo-topbar-left { display: contents; }
+  .wo-shell .wo-topbar-right { margin-left: auto; flex-wrap: wrap; row-gap: 6px; }
+  .wo-shell .wo-site-overview { order: 10; position: static; flex: 1 0 100%; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
   .wo-shell .wo-site-identity { display: flex; }
   .wo-shell .wo-summary-stat:first-of-type { border-left: 1px solid var(--border-hairline); }
   .wo-shell .wo-workspace .wo-canvas-stage, .wo-workspace .wo-canvas-stage { top: var(--workspace-top); }
@@ -128,7 +132,7 @@
 }
 @container web-obs (max-width: 850px) {
   .wo-shell.wo-workspace { --workspace-top: 100px; --explorer-width: 260px; --inspector-width: 330px; }
-  .wo-shell .wo-topbar-left, .wo-shell .wo-topbar-right { width: auto; justify-content: flex-start; flex-wrap: nowrap; overflow: visible; padding: 0; }
+  .wo-shell .wo-topbar-right { width: auto; justify-content: flex-start; flex-wrap: wrap; overflow: visible; padding: 0; }
   .wo-shell .wo-mode-btn span { display: none; }
   .wo-shell .wo-mode-btn { padding: 0 9px; }
   .wo-shell .wo-site-select { max-width: 150px; }
@@ -141,7 +145,6 @@
   .wo-shell .wo-topbar { row-gap: 6px; }
   .wo-shell .wo-topbar .wo-mode-seg { order: 5; }
   .wo-shell .wo-topbar-right { order: 6; margin-left: auto; }
-  .wo-shell .wo-site-overview { top: calc(var(--toolbar-h) * 2 + 12px); right: 0; overflow-x: auto; scrollbar-width: none; }
   .wo-shell .wo-site-identity { display: none; }
   .wo-shell .wo-summary-stat:first-of-type { border-left: 0; }
   .wo-shell .wo-bottom-dock { flex-wrap: wrap; height: auto; max-width: calc(100% - 84px); bottom: 10px; }

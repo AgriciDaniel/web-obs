@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
+import fs from 'node:fs';
 
 async function load(entry) {
   const output = await build({ entryPoints: [entry], bundle: true, write: false, format: 'esm', platform: 'node', logLevel: 'silent' });
@@ -123,5 +124,17 @@ check('road layout uses only filled depth columns and spreads them across a wide
   const height = Math.max(...points.map(p => p[1])) - Math.min(...points.map(p => p[1]));
   assert.ok(width / height > 1.2, 'a single crowded depth wraps into side-by-side columns: ' + (width / height).toFixed(2));
   assert.ok(new Set(points.map(p => p[0].toFixed(2))).size >= 3, 'depth 1 uses several sub-columns');
+});
+check('a wrapping toolbar keeps every control in flow and the workspace starts below it', () => {
+  // A narrow pane once let the summary strip, absolutely positioned at a fixed row, cover Site Intel.
+  const css = fs.readFileSync('src/styles/map.css', 'utf8');
+  const narrow = css.slice(css.indexOf('@container web-obs (max-width: 1180px)'));
+  const overviewRules = [...narrow.matchAll(/\.wo-site-overview\s*\{([^}]*)\}/g)].map((m) => m[1]);
+  assert.ok(overviewRules.length > 0, 'narrow rules for the summary strip exist');
+  for (const rule of overviewRules) assert.doesNotMatch(rule, /position:\s*absolute|\btop:/, 'the summary strip stays in the toolbar flow');
+  assert.match(narrow, /\.wo-topbar-left\s*\{\s*display:\s*contents;/);
+  const app = fs.readFileSync('src/App.tsx', 'utf8');
+  assert.match(app, /new ResizeObserver\(measure\)/, 'the toolbar height is measured');
+  assert.match(app, /'--workspace-top': `\$\{workspaceTop\}px`/, 'panels and the map start below the measured toolbar');
 });
 console.log('Map discovery: ' + count + ' deterministic data cases passed.');

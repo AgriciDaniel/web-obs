@@ -76,6 +76,9 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
   const urlInputRef = useRef<HTMLInputElement | null>(null);
   const centerInputRef = useRef<HTMLInputElement | null>(null);
   const gizmoRef = useRef<ViewGizmoHandle | null>(null);
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const topbarRef = useRef<HTMLElement | null>(null);
+  const [workspaceTop, setWorkspaceTop] = useState<number | null>(null);
   const auditButtonRef = useRef<HTMLButtonElement | null>(null);
   const drawerReturnFocusRef = useRef<HTMLElement | null>(null);
 
@@ -316,8 +319,26 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
     requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.wo-audit-close')?.focus());
   };
 
+  // The toolbar wraps onto as many rows as the pane needs; panels and the map start just below it.
+  useEffect(() => {
+    const shell = shellRef.current;
+    const bar = topbarRef.current;
+    if (!shell || !bar || typeof ResizeObserver === 'undefined') return;
+    const measure = () => {
+      const bottom = bar.getBoundingClientRect().bottom - shell.getBoundingClientRect().top;
+      const next = Math.round(bottom + 10);
+      setWorkspaceTop((current) => (current === next ? current : next));
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(bar);
+    observer.observe(shell);
+    measure();
+    return () => observer.disconnect();
+  }, []);
+
   return (
-    <div className={`wo-shell wo-theme-${theme} ${manifest ? 'wo-workspace' : ''} ${auditOpen ? 'wo-audit-open' : ''} ${explorerOpen ? 'wo-explorer-open' : ''} ${selectedNode || intelOpen ? 'wo-inspector-open' : ''}`}>
+    <div ref={shellRef} style={workspaceTop !== null ? ({ '--workspace-top': `${workspaceTop}px` } as React.CSSProperties) : undefined}
+      className={`wo-shell wo-theme-${theme} ${manifest ? 'wo-workspace' : ''} ${auditOpen ? 'wo-audit-open' : ''} ${explorerOpen ? 'wo-explorer-open' : ''} ${selectedNode || intelOpen ? 'wo-inspector-open' : ''}`}>
       {/* 3D WebGL Globe Stage */}
       <SiteGlobeCanvas3D
         readAssetBytes={activeHost.readAssetBytes}
@@ -351,7 +372,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
       />
 
       {/* Toolbar: site and capture on the left, layout in the middle, panels and view tools on the right. */}
-      <header className="wo-topbar">
+      <header className="wo-topbar" ref={topbarRef}>
         <div className="wo-topbar-left">
           <span className="wo-brand-pill" title="web-obs">
             <Orbit size={15} className="wo-brand-icon" aria-hidden="true" />
