@@ -49,6 +49,7 @@ if _ENGINE_DIR not in sys.path:
     sys.path.insert(0, _ENGINE_DIR)
 
 from capture_store import CaptureTransaction
+from note_safety import make_notes_network_free
 from evidence_export import (build_pages_base_yaml, compute_internal_pagerank,
     write_fetch_log, compute_and_write_site_drift, write_evidence_pack)
 from brand_and_dns import extract_observed_brand_kit
@@ -195,7 +196,8 @@ def rewrite_markdown_for_obsidian(
             return f"![[{asset_rel}|{alt}]]" if alt else f"![[{asset_rel}]]"
         if raw_target.startswith("inline-svg://"):
             return ""
-        return match.group(0)
+        # Not saved: keep the evidence as a plain link, so opening the note fetches nothing.
+        return f"[Image not saved: {alt or 'image'}]({raw_target})"
 
     rewritten = img_pattern.sub(_replace_img, md_text)
 
@@ -1977,6 +1979,8 @@ def _capture_to_staging(
     manifest["elapsedSec"] = round(time.time() - started_at, 2)
     manifest["pipelineMetrics"]["captureBeforePromotionSec"] = manifest["elapsedSec"]
     site_summary["pipelineMetrics"] = manifest["pipelineMetrics"]
+    # Last step for notes: nothing in them may load from the network when the member opens them.
+    make_notes_network_free(site_root)
     for name, value in (("_site-graph.json", manifest), ("_site-summary.json", site_summary)):
         with open(os.path.join(site_root, name), "w", encoding="utf-8") as f:
             json.dump(value, f, indent=2, ensure_ascii=False)

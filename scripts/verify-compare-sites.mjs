@@ -32,4 +32,13 @@ assert.match(md, /Only b\.com:\*\* Organization/);
 const banned = [String.fromCharCode(0x2013), String.fromCharCode(0x2014)];
 assert.ok(!banned.some((ch) => md.includes(ch)), 'no dashes in generated text');
 assert.equal(comparisonNotePath('a.com', 'b.com'), 'sites/_compare/a.com-vs-b.com.md');
-console.log('[PASS] Site comparison note builds from new and legacy captures.');
+{
+  // Site text is shown as text: a schema type or label cannot become HTML or an image embed.
+  const hostile = structuredClone(b);
+  hostile.nodes[0].schemaTypes = ['<img src="https://cdn.thirdparty.invalid/t.gif">', '![x](https://cdn.thirdparty.invalid/x.png)'];
+  const note = buildComparisonMarkdown(a, hostile, '2026-11-03T00:00:00Z');
+  const body = note.slice(note.indexOf('---', 3) + 3);
+  assert.ok(!/<img|(?<!\\)!\[/.test(body), 'no raw HTML or image embed in the comparison note');
+  assert.match(body, /&lt;img src="https:\/\/cdn\.thirdparty\.invalid\/t\.gif">/);
+}
+console.log('[PASS] Site comparison note builds from new and legacy captures, with site text kept as text.');

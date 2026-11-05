@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from capture_store import CaptureTransaction, files_under, write_json
 from provenance import capture_provenance, assert_engine_unchanged
 from site_intel import summarize_link_results
+from note_safety import network_free_markdown
 from workers import WorkerDispatcher
 
 
@@ -116,7 +117,7 @@ def continue_link_checks(site_id, vault_dir, emit, *, max_checks=1000, max_secon
         summary.update(linkHealth=health, linkCheckSessions=sessions, resources=manifest.get('resources', []))
         write_json(staged / '_site-summary.json', summary)
         write_json(staged / '_link-health.json', health)
-        (staged / '_link-health.md').write_text(_report(health), encoding='utf-8')
+        (staged / '_link-health.md').write_text(network_free_markdown(_report(health)), encoding='utf-8')
         resource_file = staged / '_resources.json'
         changed = {'_site-graph.json', '_site-summary.json', '_link-health.json', '_link-health.md'}
         if resource_file.exists():
@@ -133,7 +134,7 @@ def continue_link_checks(site_id, vault_dir, emit, *, max_checks=1000, max_secon
                       resource.get('localPath') or 'Reference only',
                       ', '.join(sorted({r['pageUrl'] for r in resource['references']}))]
             resource_lines.append('| ' + ' | '.join(str(v).replace('|', '\\|').replace('\n', ' ') for v in values) + ' |')
-        (staged / '_resources.md').write_text('\n'.join(resource_lines) + '\n', encoding='utf-8')
+        (staged / '_resources.md').write_text(network_free_markdown('\n'.join(resource_lines) + '\n'), encoding='utf-8')
         changed.add('_resources.md')
         dashboard = staged / '_dashboard.md'
         if dashboard.exists():

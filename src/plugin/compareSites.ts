@@ -13,6 +13,8 @@ const median = (values: number[]) => {
 const pct = (part: number, whole: number) => (whole ? `${Math.round((part / whole) * 100)}%` : 'No data');
 const show = (value: unknown) => (value === null || value === undefined || value === '' ? 'No data' : String(value));
 const cell = (value: unknown) => show(value).replace(/\|/g, '\\|').replace(/\n/g, ' ');
+/** Site text (labels, schema types) shown as text: no raw HTML or image embed that Obsidian would load. */
+const plain = (text: string) => text.replace(/<(?=[A-Za-z!?/])/g, '&lt;').replace(/!\[/g, '\\![');
 
 export interface SiteMetrics {
   label: string;
@@ -108,7 +110,8 @@ export function buildComparisonMarkdown(a: Json, b: Json, generatedAt = new Date
     `- **Shared:** ${sharedPhrases.join(', ') || 'None'}`, '',
     `Open [[sites/${a.siteId}/_dashboard|${cell(left.label)} dashboard]] or [[sites/${b.siteId}/_dashboard|${cell(right.label)} dashboard]].`, '',
   ];
-  return lines.join('\n');
+  const fmEnd = lines.indexOf('---', 1) + 1;
+  return [...lines.slice(0, fmEnd), ...lines.slice(fmEnd).map(plain)].join('\n');
 }
 
 export function comparisonNotePath(a: string, b: string): string {
