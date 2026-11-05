@@ -1502,11 +1502,11 @@ def _capture_to_staging(
                           key=lambda n: (n["url"] != home_url, -(n.get("authorityScore") or 0), n["url"]))]
         snapshot_result = run_page_snapshots(snapshot_order, site_root=site_root, limit=snapshot_limit, save_html=snapshot_html,
             allow_url=allow_page, allow_resource_url=allow_resource, render_mode=render_mode,
-            time_budget_sec=max(60, min(900, 12 * snapshot_limit)))
+            time_budget_sec=max(60, min(900, 15 * snapshot_limit)))  # about 15 s for a load plus a 24,000 px scroll
         nodes_by_snapshot_url = {n["url"]: n for n in internal_only}
         for snap_url, snap in (snapshot_result.get("pages") or {}).items():
             if snap.get("screenshot") and snap_url in nodes_by_snapshot_url:
-                nodes_by_snapshot_url[snap_url]["snapshot"] = {k: snap.get(k) for k in ("screenshot", "html", "heightPx", "truncated")}
+                nodes_by_snapshot_url[snap_url]["snapshot"] = {k: snap.get(k) for k in ("screenshot", "html", "heightPx", "truncated", "capPx", "hiddenOverlays")}
     from transport_checks import analyze_header_quality, check_email_dns, check_tls_certificate, set_cookie_values, transport_findings
     tls_result = check_tls_certificate(origin)
     header_quality = analyze_header_quality(home_headers or {}, set_cookie_values(home_headers or {}), https=parsed_origin.scheme == "https")
@@ -1554,7 +1554,9 @@ def _capture_to_staging(
             callout = [f"> [!example]- Page snapshot", f"> ![[sites/{domain_folder}/{snap['screenshot']}|Full-page snapshot]]"]
             note_bits = ["rendered once at 1280 px wide"]
             if snap.get("truncated"):
-                note_bits.append(f"cut at 12,000 px of {snap.get('heightPx'):,}")
+                note_bits.append(f"cut at {snap.get('capPx') or 12000:,} px of {snap.get('heightPx'):,}")
+            if snap.get("hiddenOverlays"):
+                note_bits.append("pinned banners such as cookie notices hidden")
             if snap.get("html"):
                 note_bits.append(f"[[sites/{domain_folder}/{snap['html']}|rendered HTML]]")
             caption = "; ".join(note_bits)

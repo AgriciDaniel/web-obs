@@ -51,6 +51,10 @@ export interface PageSnapshot {
   html?: string | null;
   heightPx?: number | null;
   truncated?: boolean;
+  /** Height the image was cut at, in px. Missing on captures before this was recorded (they used 12000). */
+  capPx?: number | null;
+  /** Pinned overlays, such as cookie banners, hidden for the snapshot. */
+  hiddenOverlays?: number | null;
 }
 
 export interface SiteNode {
