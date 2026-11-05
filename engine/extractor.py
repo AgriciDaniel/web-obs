@@ -435,6 +435,7 @@ def extract_page_data(
     hreflang_links: list[dict] = []
     rss_feeds: list[str] = []
     markdown_alternates: list[str] = []
+    described_by: list[str] = []  # rel="describedby" points at the llms.txt that covers the page
 
     for link_el in soup.find_all("link"):
         rel_raw = link_el.get("rel") or []
@@ -460,6 +461,8 @@ def extract_page_data(
                 rss_feeds.append(full_l)
             if ltype == "text/markdown" and full_l not in markdown_alternates:
                 markdown_alternates.append(full_l)
+        if "describedby" in rels and full_l not in described_by and len(described_by) < 5:
+            described_by.append(full_l)
 
     # Heading hierarchy + level-skip check in DOM order. Skips are judged inside the main
     # content when the page has one. Headings in site-wide template regions (header, nav,
@@ -901,6 +904,7 @@ def extract_page_data(
         "favicon": favicon,
         "rss_feeds": rss_feeds,
         "markdown_alternates": markdown_alternates,
+        "described_by": described_by,
         "h1": headings["h1"],
         "h2": headings["h2"],
         "h3": headings["h3"],

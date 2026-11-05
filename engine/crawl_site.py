@@ -73,6 +73,7 @@ from site_intel import (  # noqa: E402
     detect_funnel_platforms,
     is_clean_social_profile_url,
     probe_ai_and_discovery_endpoints,
+    _check_direct_external_url,
 )
 from sitemap import (  # noqa: E402
     SitemapUrlEntry,
@@ -132,7 +133,10 @@ def _validation_summary(ai_intel: dict) -> str:
     parts = []
     for key, label in (("llmsTxt", "llms.txt"), ("securityTxt", "security.txt")):
         row = (ai_intel.get("validation") or {}).get(key)
-        if row:
+        if row and row.get("notes") is not None:  # llms.txt notes carry levels; info notes are guidance, not problems
+            problems = [n["code"] for n in row["notes"] if n["level"] in ("error", "warn")]
+            parts.append(f"{label} {'valid' if row['valid'] else 'not valid'}" + (f" with notes ({', '.join(dict.fromkeys(problems))})" if problems else ""))
+        elif row:
             parts.append(f"{label} {'valid' if row['valid'] else 'needs attention (' + ', '.join(row['issues']) + ')'}")
         elif ai_intel["endpoints"].get(key):
             parts.append(f"{label} not validated")
@@ -1548,8 +1552,49 @@ def _capture_to_staging(
     site_intel_bundle["snapshots"] = {k: v for k, v in snapshot_result.items() if k != "pages"}
     site_intel_bundle["transport"] = transport
     site_intel_bundle["pageCheckFeatures"] = page_checks.optional_feature_states()
+
+    # llms.txt: check its links against the capture, then write a draft built from the captured pages.
+    import llms_txt
+    markdown_by_url = {u: (p.get("extracted") or {}).get("markdown_alternates") or [] for u, p in crawled_pages.items()}
+    markdown_by_url = {u: alts for u, alts in markdown_by_url.items() if alts}
+    llms_validation = (ai_intel.get("validation") or {}).get("llmsTxt")
+    if llms_validation:
+        def llms_robots_allowed(url):
+            parsed = urlparse(url)
+            if f"{parsed.scheme}://{parsed.netloc}" not in robots_policies and capture_out_of_time(2):
+                return True  # robots.txt for that host was not read in time; leave the link unchecked, not blamed
+            return allow_page(url)
+        rows = llms_txt.link_report(llms_validation, internal_only, url_aliases, llms_robots_allowed)
+        to_check = llms_txt.links_to_check(rows)
+        checked = {}
+        if to_check and capture_out_of_time(2):
+            rows = llms_txt.link_report(llms_validation, internal_only, url_aliases, llms_robots_allowed,
+                                        unchecked_detail="Not captured, and the capture deadline was reached before it could be checked.")
+        elif to_check:
+            check_until = time.monotonic() + within_capture_deadline(llms_txt.DIRECT_CHECK_SECONDS)
+            for link_url in to_check:
+                if time.monotonic() >= check_until:
+                    break
+                checked[link_url] = _check_direct_external_url(link_url, check_until, 3)
+            rows = llms_txt.link_report(llms_validation, internal_only, url_aliases, llms_robots_allowed, checked)
+        ai_intel["llmsLinks"] = rows
+    llms_draft = llms_txt.draft_llms_txt(brand_name, home_url, internal_only, markdown_by_url)
+    if llms_draft["pages"]:
+        listed = {canonicalize_crawl_url(link["url"]) or link["url"] for link in (llms_validation or {}).get("links") or []}
+
+        def is_listed(n):  # a page counts as listed when llms.txt links it or the markdown version it declares
+            return any((canonicalize_crawl_url(u) or u) in listed for u in [n["url"], *markdown_by_url.get(n["url"], [])])
+        strong_unlisted = [n for n in sorted(internal_only, key=lambda n: (-(n.get("authorityScore") or 0), n["url"]))
+                           if n.get("statusCode") == 200 and not n.get("redirectChain")
+                           and "noindex" not in (n.get("metaRobots") or "").lower()
+                           and not llms_txt.is_secondary_page(n["url"]) and not is_listed(n)][:10]
+        llms_draft["path"] = llms_txt.write_draft_note(site_root, domain_folder, captured_iso, llms_draft, llms_validation, strong_unlisted)
+        ai_intel["llmsDraft"] = {**{k: v for k, v in llms_draft.items() if k != "text"}, "text": llms_draft["text"][:20000]}
+    ai_intel["describedBy"] = sorted({target for p in crawled_pages.values() for target in (p.get("extracted") or {}).get("described_by") or []})[:10]
+    ai_intel["markdownAlternatePages"] = len(markdown_by_url)
+
     audit["findings"] = (page_findings(internal_only) + audit["findings"] + list(browser_result.get("findings") or [])
-                         + t_findings
+                         + t_findings + llms_txt.llms_findings(ai_intel, origin)
                          + security_txt_findings(ai_intel, origin, datetime.now(timezone.utc).date()) + drift_findings(drift))
     findings_by_url: dict[str, list] = {}
     for finding in audit["findings"]:
@@ -1600,14 +1645,18 @@ def _capture_to_staging(
     checks_ran = {"browserUrls": {p["url"] for p in browser_result.get("pages") or [] if not p.get("error")},
                   "tls": tls_result.get("state") in ("ok", "warn", "fail"),
                   "dns": email_dns.get("state") in ("ok", "warn", "fail"),
-                  "headers": bool(home_headers), "robots": bool(sm_result.robots_text)}
+                  "headers": bool(home_headers), "robots": bool(sm_result.robots_text),
+                  "llms": ((ai_intel.get("llmsProbe") or {}).get("llmsTxt") or {}).get("state") in ("found", "absent", "html"),
+                  "llmsUncheckedLinks": {r["url"] for r in ai_intel.get("llmsLinks") or [] if r["state"] == "unchecked"}}
     if capture_warnings:
         capture_status = "partial"
     # --no-tasks: no _tasks.md (for a host app that keeps its own task list).
     task_counts = write_tasks(site_root, previous_site_root, audit["findings"], captured_iso,
         set(crawled_pages), capture_status == "complete", note_by_url, ok_urls=ok_page_urls, checks_ran=checks_ran) if tasks else None
     audit["tasks"] = task_counts
-    write_audit_report(site_root, domain_folder, clean_domain, captured_iso, audit, note_by_url, transport, browser_result, task_counts)
+    write_audit_report(site_root, domain_folder, clean_domain, captured_iso, audit, note_by_url, transport, browser_result, task_counts,
+                       llms={"probe": (ai_intel.get("llmsProbe") or {}).get("llmsTxt"), "validation": (ai_intel.get("validation") or {}).get("llmsTxt"),
+                             "links": ai_intel.get("llmsLinks"), "draftPath": (ai_intel.get("llmsDraft") or {}).get("path")})
     audit_summary = {"findings": len(audit["findings"]), "findingItems": sum(f.get("targetCount", len(f["targets"])) for f in audit["findings"]),
                      "linkOpportunities": len(audit["linkOpportunities"]), "linkFixes": len(audit["linkFixes"]),
                      "duplicateGroups": sum(len(audit["duplicates"][k]) for k in ("titles", "descriptions", "exactContent", "nearContent")),
@@ -1826,6 +1875,7 @@ def _capture_to_staging(
             "## AI Search & Agent Readiness (GEO)",
             "",
             f"- **llms.txt:** `{'Present (saved locally)' if ai_intel['endpoints']['llmsTxt'] else 'Missing'}` | **llms-full.txt:** `{'Present (saved locally)' if ai_intel['endpoints']['llmsFullTxt'] else 'Missing'}` | **ai-catalog.json:** `{'Present' if ai_intel['endpoints']['aiCatalogJson'] else 'Not found'}`",
+            *([f"- **llms.txt draft:** [[{ai_intel['llmsDraft']['path'].removesuffix('.md')}|Built from this capture, ready to review]]"] if (ai_intel.get("llmsDraft") or {}).get("path") else []),
             f"- **Validation:** {_validation_summary(ai_intel)}",
             f"- **Sitemap hygiene:** {_hygiene_summary(ai_intel.get('sitemapHygiene') or {})}",
             f"- **AI Crawlers Allowed in robots.txt:** `{ai_intel['allowedAiBotsCount']}/{len(ai_intel['aiBotsPolicy'])}`"

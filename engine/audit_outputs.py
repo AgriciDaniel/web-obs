@@ -50,6 +50,14 @@ def _rechecked(fid: str, url: str, source: str, ctx: dict) -> bool:
         return ctx["dns"]
     if fid.startswith(_HEADER_IDS):
         return ctx["headers"]
+    if fid.startswith("llmstxt-"):
+        # The llms.txt probe must have got an answer (found, absent or an HTML page). A link task also needs that
+        # link answered this time: a link the direct checks did not reach proves nothing.
+        if not ctx.get("llms", False):
+            return False
+        if fid in ("llmstxt-dead-links", "llmstxt-link-hygiene"):
+            return url not in ctx.get("llmsUncheckedLinks", set())
+        return True
     if fid.startswith(_SITE_FILE_IDS):
         return ctx["robots"] if fid == "robots-syntax" else ctx["complete"]
     key = source or url
@@ -264,8 +272,45 @@ def page_audit_section(url: str, node: dict, findings_by_url: dict, checks: Opti
     return lines
 
 
+_LLMS_PROBE_TEXT = {"absent": "Not found.", "html": "The address serves a web page instead of a markdown file.",
+                    "refused": "Not checked: robots.txt does not allow fetching it.", "unavailable": "Not checked: the site answered with an error.",
+                    "not-checked": "Not checked."}
+
+
+def _llms_section(llms: dict, domain_folder: str) -> list[str]:
+    probe = llms.get("probe") or {}
+    if not probe:
+        return []
+    lines = ["## llms.txt", "", "Checked against the [llmstxt.org](https://llmstxt.org/) format. Its links are matched against this capture."]
+    draft = llms.get("draftPath")
+    draft_link = f"[[{draft.removesuffix('.md')}|llms.txt draft built from this capture]]" if draft else None
+    if probe.get("state") != "found":
+        lines += ["", f"- {_LLMS_PROBE_TEXT.get(probe.get('state'), 'Not checked.')} {probe.get('detail') or ''}".rstrip()]
+        if draft_link:
+            lines.append(f"- {draft_link}")
+        return lines + [""]
+    v = llms.get("validation") or {}
+    stats = v.get("stats") or {}
+    lines += ["", f"- **Title:** {v.get('title') or 'missing'}", f"- **Summary:** {v.get('summary') or 'missing'}",
+              f"- **Sections:** {', '.join(s['name'] for s in v.get('sections') or []) or 'none'}" + (" (with Optional)" if v.get("hasOptional") else ""),
+              f"- **Links:** {stats.get('links', 0)} ({stats.get('sameSiteLinks', 0)} on this site, {stats.get('externalLinks', 0)} elsewhere, "
+              f"{stats.get('markdownLinks', 0)} to markdown, {stats.get('linksWithNotes', 0)} with notes)",
+              f"- **Size:** {stats.get('bytes', 0):,} bytes, about {stats.get('approxTokens', 0):,} tokens"]
+    if draft_link:
+        lines.append(f"- {draft_link}")
+    notes = v.get("notes") or []
+    if notes:
+        lines += ["", "| Line | Level | Note |", "| :--- | :--- | :--- |"]
+        lines += [f"| {n['line'] or ''} | {n['level']} | {n['message'].replace('|', '/')} |" for n in notes[:60]]
+    rows = [r for r in llms.get("links") or [] if r["state"] not in ("ok", "external")]
+    if rows:
+        lines += ["", "| Line | Link | Result |", "| :--- | :--- | :--- |"]
+        lines += [f"| {r['line']} | {r['url']} | {r['state']}: {r['detail'].replace('|', '/')} |" for r in rows[:100]]
+    return lines + [""]
+
+
 def write_audit_report(site_root: str, domain_folder: str, clean_domain: str, captured_iso: str, audit: dict,
-                       note_by_url: dict, transport: dict, browser: dict, tasks: Optional[dict]) -> None:
+                       note_by_url: dict, transport: dict, browser: dict, tasks: Optional[dict], llms: Optional[dict] = None) -> None:
     def link(url):
         note = note_by_url.get(url)
         return f"[[{note[:-3]}]]" if note else url
@@ -324,6 +369,7 @@ def write_audit_report(site_root: str, domain_folder: str, clean_domain: str, ca
         if aa_pairs:
             lines += ["", "Palette pairs that reach 4.5:1: " + ", ".join(f"`{p['a']}` on `{p['b']}` ({p['ratio']}:1)" for p in aa_pairs)]
         lines.append("")
+    lines += _llms_section(llms or {}, domain_folder)
     tls = (transport or {}).get("tls") or {}
     if tls:
         lines += ["## Certificate and Email Security", "",

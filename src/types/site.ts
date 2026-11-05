@@ -239,6 +239,22 @@ export interface SiteTechStackIntel {
   };
 }
 
+export interface LlmsTxtNote { line: number; code: string; level: 'error' | 'warn' | 'info'; message: string }
+
+/** llms.txt checked against the llmstxt.org format. Only `error` notes make it invalid. */
+export interface LlmsTxtValidation {
+  valid: boolean;
+  issues: string[];
+  notes?: LlmsTxtNote[];
+  title?: string | null;
+  summary?: string | null;
+  sections?: Array<{ name: string; line: number; links: number }>;
+  hasOptional?: boolean;
+  stats?: { bytes: number; approxTokens: number; sections?: number; links?: number; sameSiteLinks?: number; externalLinks?: number; markdownLinks?: number; linksWithNotes?: number };
+  contentType?: string | null;
+  convention?: boolean;
+}
+
 export interface SiteAiReadinessIntel {
   endpoints: {
     llmsTxt: boolean;
@@ -252,7 +268,13 @@ export interface SiteAiReadinessIntel {
     humansTxt?: boolean;
     webManifest?: boolean;
   };
-  validation?: Record<string, { valid: boolean; issues: string[]; expires?: string | null }>;
+  validation?: Record<string, LlmsTxtValidation & { expires?: string | null }>;
+  /** Whether the llms.txt checks got an answer: found, absent (404/410), html, unavailable, refused or not-checked. */
+  llmsProbe?: Record<string, { state: 'found' | 'absent' | 'html' | 'unavailable' | 'refused' | 'not-checked'; statusCode?: number; detail?: string; contentType?: string | null; truncated?: boolean }>;
+  llmsLinks?: Array<{ url: string; line: number; section: string; title: string; sameSite: boolean; state: 'ok' | 'redirect' | 'broken' | 'unavailable' | 'noindex' | 'non-canonical' | 'blocked' | 'external' | 'unchecked'; detail: string; statusCode?: number | null }>;
+  llmsDraft?: { text: string; pages: number; hasSummary: boolean; markdownLinks: number; path?: string };
+  describedBy?: string[];
+  markdownAlternatePages?: number;
   userTriggeredBots?: string[];
   siteChecks?: Record<string, { state: 'ok' | 'warn' | 'fail' | 'skipped' | 'not-resolving' | 'unreachable'; detail: string; statusCode?: number }>;
   robotsFindings?: { blanketDisallow: boolean; blocksAssets: string[]; hasSitemapLine: boolean; contentSignal?: string | null };

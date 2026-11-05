@@ -36,6 +36,39 @@ bad.linkHealth.brokenLinks = [{}];
 assert.equal(rows.find((r) => r.id === 'llms').state, 'missing');
 assert.ok(rows.find((r) => r.id === 'llms').fix.startsWith('# '));
 assert.equal(rows.find((r) => r.id === 'sitemap').state, 'missing');
+
+// llms.txt: the site's own draft is the fix, a check that got no answer is not called missing,
+// links agents cannot use make it a warning, and captures from before 0.2.0 keep their wording.
+{
+  const ai = structuredClone(base.siteIntel.aiReadiness);
+  const row = (patch) => mod.llmsRow({ ...ai, ...patch }, patch.validation?.llmsTxt ?? ai.validation.llmsTxt);
+  const draft = '# Brand\n\n> What Brand does.\n';
+  let r = row({ endpoints: { ...ai.endpoints, llmsTxt: false }, llmsProbe: { llmsTxt: { state: 'absent', statusCode: 404 } }, llmsDraft: { text: draft, pages: 3, hasSummary: true, markdownLinks: 0 } });
+  assert.equal(r.state, 'missing');
+  assert.equal(r.fix, draft, 'the draft built from the capture is offered, not the generic template');
+  assert.match(r.detail, /draft built from this capture/);
+  r = row({ endpoints: { ...ai.endpoints, llmsTxt: false }, llmsProbe: { llmsTxt: { state: 'refused' } } });
+  assert.equal(r.state, 'unknown');
+  assert.equal(r.fix, undefined);
+  r = row({ endpoints: { ...ai.endpoints, llmsTxt: false }, llmsProbe: { llmsTxt: { state: 'html', statusCode: 200 } } });
+  assert.equal(r.state, 'missing');
+  assert.match(r.detail, /serves a web page/);
+  const checked = { valid: true, issues: [], notes: [], stats: { bytes: 400, approxTokens: 100, sections: 1, links: 2 }, hasOptional: false };
+  r = row({ validation: { llmsTxt: checked }, llmsLinks: [{ url: 'https://a.test/', sameSite: true, state: 'ok', line: 5 }, { url: 'https://a.test/b', sameSite: true, state: 'ok', line: 6 }] });
+  assert.equal(r.state, 'ok');
+  assert.match(r.detail, /All 2 links on this site work/);
+  assert.equal(r.badge, '~100 tokens');
+  r = row({ validation: { llmsTxt: checked }, llmsLinks: [{ url: 'https://a.test/gone', sameSite: true, state: 'broken', line: 5 }] });
+  assert.equal(r.state, 'warn');
+  assert.match(r.detail, /1 link agents cannot use/);
+  r = row({ validation: { llmsTxt: { ...checked, valid: false, notes: [{ line: 1, code: 'missing-h1-title', level: 'error', message: 'x' }] } }, llmsDraft: { text: draft, pages: 1, hasSummary: true, markdownLinks: 0 } });
+  assert.equal(r.state, 'warn');
+  assert.equal(r.fix, draft);
+  r = row({ validation: { llmsTxt: { ...checked, notes: [{ line: 7, code: 'relative-url', level: 'info', message: 'x' }] } }, llmsLinks: [] });
+  assert.equal(r.state, 'ok', 'writing guidance alone is not a warning');
+  r = row({ validation: { llmsTxt: { valid: true, issues: [] } } });
+  assert.equal(r.detail, 'Found and matches the llmstxt.org format.', 'an older capture makes no claim about links');
+}
 assert.equal(score.find((s) => s.id === 'links').state, 'fail');
 assert.equal(score.find((s) => s.id === 'crawlability').state, 'warn');
 

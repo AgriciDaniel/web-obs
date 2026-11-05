@@ -599,18 +599,10 @@ MAX_DISCOVERY_REDIRECTS = 3
 USER_TRIGGERED_AI_BOTS = ("ChatGPT-User", "Claude-User", "Perplexity-User")
 
 
-def validate_llms_txt(text: str) -> dict:
-    """Check llms.txt against llmstxt.org: an H1 title is required; summary and link lists are expected."""
-    lines = [ln.rstrip() for ln in (text or "").lstrip("\ufeff").splitlines()]
-    first = next((ln for ln in lines if ln.strip()), "")
-    issues: list[str] = []
-    if not re.match(r"^#\s+\S", first):
-        issues.append("missing-h1-title")
-    if not any(ln.lstrip().startswith(">") for ln in lines):
-        issues.append("no-summary-blockquote")
-    if not any(re.match(r"^\s*[-*]\s+\[[^\]]+\]\([^)\s]+\)", ln) for ln in lines):
-        issues.append("no-link-list")
-    return {"valid": "missing-h1-title" not in issues, "issues": issues}
+def validate_llms_txt(text: str, base_url: Optional[str] = None, content_type: Optional[str] = None) -> dict:
+    """Check llms.txt against the llmstxt.org format. The full rules live in llms_txt.py."""
+    from llms_txt import validate_llms_txt as _validate
+    return _validate(text, base_url=base_url, content_type=content_type)
 
 
 def validate_security_txt(text: str, now: Optional[datetime] = None) -> dict:
@@ -747,6 +739,8 @@ def probe_ai_and_discovery_endpoints(
     site_checks: dict[str, dict] = {}
 
     validation: dict[str, dict] = {}
+    # Whether the llms.txt checks got an answer, so a missing file is told apart from a failed request.
+    llms_probe: dict[str, dict] = {key: {"state": "not-checked"} for key in ("llmsTxt", "llmsFullTxt")}
     markdown_negotiation = {
         "supported": False,
         "varyAccept": False,
@@ -847,29 +841,51 @@ def probe_ai_and_discovery_endpoints(
                 if endpoints.get(key) and not save_name:
                     continue
                 target = f"{origin.rstrip('/')}{rel_url}"
+                tracked = key in llms_probe
                 if not allowed(target):
+                    if tracked:
+                        llms_probe[key] = {"state": "refused", "detail": "robots.txt does not allow fetching it."}
                     continue
                 try:
                     resp = _fetch_following(session, target, allowed, skipped, timeout=4.0, stream=True)
                     if resp is None:
+                        if tracked:
+                            llms_probe[key] = {"state": "not-checked", "detail": "It redirects to another site, which is not followed."}
                         continue
                     try:
-                        if resp.status_code != 200:
+                        status = resp.status_code
+                        if status != 200:
+                            if tracked:
+                                llms_probe[key] = ({"state": "absent", "statusCode": status} if status in (404, 410)
+                                                   else {"state": "unavailable", "statusCode": status, "detail": f"HTTP {status}."})
                             continue
                         ctype = (resp.headers.get("Content-Type") or "").lower()
                         if "text/html" in ctype:
+                            if tracked:
+                                llms_probe[key] = {"state": "html", "statusCode": status, "contentType": ctype.split(";")[0].strip()}
                             continue
-                        raw = resp.raw.read(512 * 1024, decode_content=True)
+                        limit = 512 * 1024
+                        raw = resp.raw.read(limit, decode_content=True)
                         text = raw.decode("utf-8", errors="replace").strip()
-                        if not text or text.lstrip().lower().startswith("<!doctype html"):
+                        if not text or text.lstrip().lower().startswith(("<!doctype html", "<html")):
+                            if tracked:
+                                llms_probe[key] = {"state": "html" if text else "absent", "statusCode": status,
+                                                   "detail": "Empty response." if not text else "HTML returned."}
                             continue
                         if expected_kind == "json":
                             json.loads(text)
-                        endpoints[key] = True
                         if key == "llmsTxt":
-                            validation[key] = validate_llms_txt(text)
+                            validation[key] = validate_llms_txt(text, base_url=resp.url or target, content_type=ctype)
+                        elif key == "llmsFullTxt":
+                            from llms_txt import validate_llms_full_txt
+                            validation[key] = validate_llms_full_txt(text, content_type=ctype)
                         elif key == "securityTxt":
                             validation[key] = validate_security_txt(text)
+                        # Marked found only after validation, so a validation crash never reads as a clean recheck.
+                        endpoints[key] = True
+                        if tracked:
+                            llms_probe[key] = {"state": "found", "statusCode": status, "url": resp.url or target,
+                                               "contentType": ctype.split(";")[0].strip() or None, "truncated": len(raw) >= limit}
                         if save_name and save_name not in saved_files:
                             out_path = os.path.join(site_root, save_name)
                             with open(out_path, "w", encoding="utf-8") as f:
@@ -877,7 +893,9 @@ def probe_ai_and_discovery_endpoints(
                             saved_files.append(save_name)
                     finally:
                         resp.close()
-                except Exception:
+                except Exception as exc:
+                    if tracked and llms_probe[key]["state"] != "found":
+                        llms_probe[key] = {"state": "not-checked", "detail": f"Request failed ({type(exc).__name__})."}
                     continue
 
             # 3. Site level checks: https redirect, www/non-www duplicate, soft 404
@@ -950,6 +968,7 @@ def probe_ai_and_discovery_endpoints(
         "aiBotsPolicy": ai_bots,
         "userTriggeredBots": [b for b in USER_TRIGGERED_AI_BOTS if b in ai_bots],
         "validation": validation,
+        "llmsProbe": llms_probe,
         "siteChecks": site_checks,
         "robotsFindings": analyze_robots(robots_text),
         "allowedAiBotsCount": len(allowed_bots),
