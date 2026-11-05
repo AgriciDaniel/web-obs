@@ -99,7 +99,7 @@ export function webObsDevApiPlugin(): PluginOption {
           if (oversized || res.destroyed || req.aborted) return;
           body += bodyDecoder.end();
           const continuing = url.pathname === '/__web_obs/continue-links';
-          let options: { url: string; maxPages: number; renderMode: 'auto' | 'always' | 'never'; downloadImages: boolean; imageMode: 'preferred' | 'all'; continueLinksSiteId?: string; browserAudit: boolean; spellCheck: boolean; dnsChecks: boolean; pageSnapshots: boolean; snapshotLimit: number; snapshotHtml: boolean };
+          let options: { url: string; maxPages: number; renderMode: 'auto' | 'always' | 'never'; downloadImages: boolean; imageMode: 'preferred' | 'all'; continueLinksSiteId?: string; browserAudit: boolean; spellCheck: boolean; dnsChecks: boolean; pageSnapshots: boolean; snapshotLimit: number; snapshotHtml: boolean; tlsCheck: boolean; taskList: boolean; deadlineSec: number | null };
           try {
             const data = JSON.parse(body || '{}');
             if (!data || typeof data !== 'object' || Array.isArray(data) || typeof data.url !== 'string' || !data.url.trim() || data.url.length > 2048) throw new Error('Enter a website URL.');
@@ -110,9 +110,12 @@ export function webObsDevApiPlugin(): PluginOption {
             const imageMode = data.imageMode ?? 'preferred';
             if (!['preferred', 'all'].includes(imageMode)) throw new Error('Invalid image variant mode.');
             if (continuing && !isSafeSiteId(data.continueLinksSiteId)) throw new Error('Invalid saved site ID.');
+            const deadlineSec = data.deadlineSec ?? null;
+            if (deadlineSec !== null && (typeof deadlineSec !== 'number' || !Number.isFinite(deadlineSec) || deadlineSec < 0 || deadlineSec > 86400)) throw new Error('Capture time limit must be between 0 and 86400 seconds.');
             options = { url: data.url.trim(), maxPages, renderMode, imageMode, downloadImages: data.downloadImages !== false, continueLinksSiteId: continuing ? data.continueLinksSiteId : undefined,
               browserAudit: data.browserAudit !== false, spellCheck: data.spellCheck === true, dnsChecks: data.dnsChecks !== false,
-              pageSnapshots: data.pageSnapshots !== false, snapshotLimit: Number.isInteger(data.snapshotLimit) ? Math.max(1, Math.min(500, data.snapshotLimit)) : 25, snapshotHtml: data.snapshotHtml === true };
+              pageSnapshots: data.pageSnapshots !== false, snapshotLimit: Number.isInteger(data.snapshotLimit) ? Math.max(1, Math.min(500, data.snapshotLimit)) : 25, snapshotHtml: data.snapshotHtml === true,
+              tlsCheck: data.tlsCheck !== false, taskList: data.taskList !== false, deadlineSec: deadlineSec ? Math.max(1, Math.round(deadlineSec)) : null };
           } catch (error) { return json(400, { error: error instanceof Error ? error.message : 'Invalid capture request.' }); }
 
           res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
@@ -131,6 +134,9 @@ export function webObsDevApiPlugin(): PluginOption {
             if (!options.pageSnapshots) args.push('--no-snapshots');
             else args.push('--snapshot-limit', String(options.snapshotLimit));
             if (options.snapshotHtml) args.push('--snapshot-html');
+            if (!options.tlsCheck) args.push('--no-tls-check');
+            if (!options.taskList) args.push('--no-tasks');
+            if (options.deadlineSec) args.push('--deadline', String(options.deadlineSec));
           }
           const child = spawn(fs.existsSync(venv) ? venv : (process.env.WEB_OBS_PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3')), args, { cwd: vaultRoot });
           children.add(child);

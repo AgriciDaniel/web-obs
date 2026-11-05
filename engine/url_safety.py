@@ -177,9 +177,47 @@ def request_context(limiter=None, owner_id=None, deadline=None, allow_url=None):
         _request_context.value = previous
 
 
+# One optional deadline for the whole capture (time.monotonic()), set by the capture entry point.
+# Every guarded request takes the earlier of it and its own task deadline, so no phase that goes
+# through this module can run past it. Worker jobs are clamped to it when they are dispatched.
+_CAPTURE_DEADLINE: Optional[float] = None
+
+
+def set_capture_deadline(deadline: Optional[float]) -> None:
+    global _CAPTURE_DEADLINE
+    _CAPTURE_DEADLINE = deadline
+
+
+def capture_deadline() -> Optional[float]:
+    return _CAPTURE_DEADLINE
+
+
+def capture_time_left() -> Optional[float]:
+    """Seconds left before the capture deadline, or None when the capture has no deadline."""
+    return None if _CAPTURE_DEADLINE is None else max(0.0, _CAPTURE_DEADLINE - time.monotonic())
+
+
+def capture_out_of_time(need_sec: float = 0.5) -> bool:
+    """Whether the capture deadline leaves less than `need_sec` for the next piece of work.
+
+    Work started with a sliver of time left would only time out and look like a fault of the site.
+    """
+    left = capture_time_left()
+    return left is not None and left < need_sec
+
+
+def within_capture_deadline(budget_sec: float) -> float:
+    """A phase budget shortened to the time the capture has left."""
+    left = capture_time_left()
+    return budget_sec if left is None else max(0.0, min(budget_sec, left))
+
+
 def request_deadline():
     value = getattr(_request_context, "value", None)
-    return value[2] if value else None
+    own = value[2] if value else None
+    if _CAPTURE_DEADLINE is None:
+        return own
+    return _CAPTURE_DEADLINE if own is None else min(own, _CAPTURE_DEADLINE)
 
 
 @contextmanager
@@ -575,6 +613,9 @@ class _SafeSession(requests.Session):
                 self._current_adapter = self.adapters[origin]
                 options = dict(kwargs)
                 deadline = request_deadline()
+                # When the capture deadline is the binding limit, a timeout means the deadline cut the
+                # request short, not that the site was slow. Say so, so it is not reported as a site fault.
+                capture_bound = _CAPTURE_DEADLINE is not None and deadline is not None and _CAPTURE_DEADLINE <= deadline
                 if deadline is not None:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
@@ -582,7 +623,12 @@ class _SafeSession(requests.Session):
                     configured = options.get("timeout")
                     connect, read = configured if isinstance(configured, tuple) else (configured, configured)
                     options["timeout"] = tuple(min(value, remaining / 2) if isinstance(value, (float, int)) else remaining / 2 for value in (connect, read))
-                response = super().request(method, norm, allow_redirects=False, **options)
+                try:
+                    response = super().request(method, norm, allow_redirects=False, **options)
+                except requests.Timeout as exc:
+                    if capture_bound:
+                        raise RequestDeadlineExceeded("Capture deadline reached.") from exc
+                    raise
             except BaseException:
                 if lease:
                     limiter.release(lease)

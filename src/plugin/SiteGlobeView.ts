@@ -306,6 +306,10 @@ export class SiteGlobeView extends ItemView {
       if (!(options.pageSnapshots ?? this.plugin.settings.pageSnapshots ?? true)) args.push('--no-snapshots');
       else args.push('--snapshot-limit', String(Math.max(1, Math.min(500, Math.trunc(options.snapshotLimit ?? this.plugin.settings.snapshotLimit ?? 25)))));
       if (options.snapshotHtml ?? this.plugin.settings.snapshotHtml ?? false) args.push('--snapshot-html');
+      if (!(options.tlsCheck ?? this.plugin.settings.tlsCheck ?? true)) args.push('--no-tls-check');
+      if (!(options.taskList ?? this.plugin.settings.taskList ?? true)) args.push('--no-tasks');
+      const deadlineSec = options.deadlineSec ?? (this.plugin.settings.captureDeadlineMinutes ?? 0) * 60;
+      if (Number.isFinite(deadlineSec) && deadlineSec > 0) args.push('--deadline', String(Math.max(1, Math.min(86400, Math.round(deadlineSec)))));
     }
 
     return new Promise((resolve) => {

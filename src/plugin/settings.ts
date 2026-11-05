@@ -22,6 +22,10 @@ export interface WebObsPluginSettings {
   snapshotHtml: boolean;
   spellCheck: boolean;
   dnsChecks: boolean;
+  tlsCheck: boolean;
+  taskList: boolean;
+  /** One time limit for the network phases of a capture, in minutes. 0 means no limit. */
+  captureDeadlineMinutes: number;
   defaultViewMode: GlobeViewMode;
   themeBehavior: 'obsidian' | 'dark' | 'light';
   openInSplitPane: boolean;
@@ -40,6 +44,9 @@ export const DEFAULT_WEB_OBS_SETTINGS: WebObsPluginSettings = {
   snapshotHtml: false,
   spellCheck: false,
   dnsChecks: true,
+  tlsCheck: true,
+  taskList: true,
+  captureDeadlineMinutes: 0,
   defaultViewMode: 'globe',
   themeBehavior: 'obsidian',
   openInSplitPane: true,
@@ -212,6 +219,38 @@ export class WebObsSettingTab extends PluginSettingTab {
       .addToggle((toggle) =>
         toggle.setValue(this.bridge.settings.dnsChecks ?? true).onChange(async (value) => {
           this.bridge.settings.dnsChecks = value;
+          await this.bridge.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Certificate check')
+      .setDesc('Reads the TLS certificate over one handshake with the site: who issued it, when it expires and which names it covers.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.bridge.settings.tlsCheck ?? true).onChange(async (value) => {
+          this.bridge.settings.tlsCheck = value;
+          await this.bridge.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Task list')
+      .setDesc('Writes _tasks.md, a checklist of fixes from the audit that keeps your ticks between captures. Turn it off if you track tasks somewhere else.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.bridge.settings.taskList ?? true).onChange(async (value) => {
+          this.bridge.settings.taskList = value;
+          await this.bridge.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Capture time limit')
+      .setDesc('Minutes a capture may spend on the network, across every phase. When it runs out, the capture stops requesting, saves what it has and is marked partial. 0 means no limit.')
+      .addText((text) =>
+        text.setPlaceholder('0').setValue(String(this.bridge.settings.captureDeadlineMinutes ?? 0)).onChange(async (value) => {
+          const minutes = Number(value.trim() || '0');
+          if (!Number.isFinite(minutes) || minutes < 0 || minutes > 1440) return;
+          this.bridge.settings.captureDeadlineMinutes = minutes;
           await this.bridge.saveSettings();
         })
       );

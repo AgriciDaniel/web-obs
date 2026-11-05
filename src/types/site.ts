@@ -516,6 +516,10 @@ export interface CrawlOptions {
   pageSnapshots?: boolean;
   snapshotLimit?: number;
   snapshotHtml?: boolean;
+  tlsCheck?: boolean;
+  taskList?: boolean;
+  /** One time limit for every network phase, in seconds (1 to 86400). Unset or 0 means no limit. */
+  deadlineSec?: number;
 }
 
 export interface CrawlProgressState {

@@ -16,9 +16,10 @@ from datetime import datetime, timezone
 from typing import Optional
 from urllib.parse import urljoin, urlparse, urlunparse
 
-from url_safety import DEFAULT_REQUEST_HEADERS, URLSafetyError, safe_requests_session
+from url_safety import DEFAULT_REQUEST_HEADERS, RequestDeadlineExceeded, URLSafetyError, safe_requests_session
 
-ROBOTS_PRODUCT_TOKEN = "WebObs"
+# The public robots.txt product name (RFC 9309) that WebObs answers to. Not a credential.
+ROBOTS_PRODUCT_NAME = "WebObs"
 
 # Token sources: OpenAI, Anthropic, Perplexity, Google, Apple, Meta, Common Crawl and Amazon list their tokens in
 # their own crawler documentation. Bytespider and DuckAssistBot are widely documented by crawler trackers but
@@ -503,7 +504,7 @@ def _robots_octets(value: str, *, pattern: bool) -> str:
 
 def _robots_rules_for_agent(groups: dict, user_agent: str) -> tuple[list, list[str]]:
     # The browser-shaped header still identifies this crawler as WebObs.
-    product = ROBOTS_PRODUCT_TOKEN if re.search(r"\bWebObs(?:/|\b)", user_agent, re.I) else user_agent.split("/", 1)[0].strip()
+    product = ROBOTS_PRODUCT_NAME if re.search(r"\bWebObs(?:/|\b)", user_agent, re.I) else user_agent.split("/", 1)[0].strip()
     key = product.lower()
     if key in groups:
         return groups[key], [key]
@@ -532,7 +533,7 @@ def build_robots_policy(
         groups, _ = _parse_robots_groups(robots_text)
         rules, matched_agents = _robots_rules_for_agent(groups, user_agent)
         delays = _parse_crawl_delays(robots_text)
-        product = ROBOTS_PRODUCT_TOKEN.lower() if re.search(r"\bWebObs\b", user_agent, re.I) else user_agent.split("/", 1)[0].strip().lower()
+        product = ROBOTS_PRODUCT_NAME.lower() if re.search(r"\bWebObs\b", user_agent, re.I) else user_agent.split("/", 1)[0].strip().lower()
         # The most specific group wins, as for allow and disallow rules.
         crawl_delay = delays.get(product, delays.get("*") if product not in groups else None)
     elif status_code in (404, 410):
@@ -545,7 +546,7 @@ def build_robots_policy(
         reason = "Robots server failed; crawling is deferred."
     return {
         "state": state, "statusCode": status_code, "userAgent": user_agent,
-        "productToken": ROBOTS_PRODUCT_TOKEN if re.search(r"\bWebObs\b", user_agent, re.I) else user_agent.split("/", 1)[0],
+        "productToken": ROBOTS_PRODUCT_NAME if re.search(r"\bWebObs\b", user_agent, re.I) else user_agent.split("/", 1)[0],
         "canCrawl": can_crawl, "reason": reason, "matchedAgents": matched_agents,
         "crawlDelaySec": crawl_delay,
         "rules": [[directive, pattern] for directive, pattern in rules],
@@ -1024,6 +1025,8 @@ def _check_direct_external_url(url: str, deadline: float, request_timeout: float
         row["reason"] = "Redirect or method-fallback limit reached."
     except URLSafetyError:
         row["reason"] = "Target or redirect refused by URL safety."
+    except RequestDeadlineExceeded as exc:
+        row["reason"] = f"Direct check failed: {exc}"
     except Exception as exc:
         row["reason"] = "Direct check failed: " + type(exc).__name__
     return row

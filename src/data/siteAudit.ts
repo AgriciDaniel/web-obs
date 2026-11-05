@@ -39,7 +39,7 @@ function mediaState(resource: SiteResource): string {
   if (resource.localPath) return 'saved';
   if (resource.downloadState === 'not-selected' || resource.downloadState === 'not-requested') return 'intentional';
   if (resource.downloadState === 'unavailable') return 'unavailable';
-  if (resource.downloadState === 'budget-skipped') return 'budget';
+  if (resource.downloadState === 'budget-skipped' || resource.downloadState === 'deadline-skipped') return 'budget';
   if (resource.downloadState === 'reference' || !resource.downloadState) return 'reference';
   return 'other';
 }

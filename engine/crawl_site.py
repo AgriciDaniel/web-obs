@@ -445,6 +445,9 @@ def _capture_to_staging(
     dns_checks: bool = True,
     snapshot_limit: int = 25,
     snapshot_html: bool = False,
+    tls_check: bool = True,
+    tasks: bool = True,
+    deadline_sec: Optional[float] = None,
 ) -> dict:
     started_at = time.time()
     page_checks.configure(spell_check=spell_check)
@@ -454,6 +457,7 @@ def _capture_to_staging(
         "checkExternal": check_external, "parallel": parallel,
         "browserAudit": browser_audit, "spellCheck": spell_check, "dnsChecks": dns_checks,
         "snapshotLimit": snapshot_limit, "snapshotHtml": snapshot_html,
+        "tlsCheck": tls_check, "tasks": tasks, "deadlineSec": deadline_sec,
         "limits": {"assets": 500, "assetBytes": 128 * 1024 * 1024, "linkChecks": 1000, "linkDrainSeconds": 30}})
     emit_event("start", target=target_url, maxPages=max_pages)
 
@@ -1479,8 +1483,19 @@ def _capture_to_staging(
         audit = build_site_audit(nodes=[], extracted_by_url={}, internal_pair_meta={}, redirects={}, home_url=home_url, origin=origin,
             brand=brand_name, resources=[], sitemaps_found=[], sitemap_urls=[], robots_text="", captured_iso=captured_iso)
         audit["error"] = f"{type(exc).__name__}: {exc}"
+    from url_safety import capture_out_of_time, capture_time_left, within_capture_deadline
+
+    def out_of_time(what: str, need_sec: float) -> bool:
+        """A phase with too little time left is skipped and said so, rather than run into a timeout."""
+        if capture_out_of_time(need_sec):
+            capture_warnings.append(f"The capture deadline was reached before {what}.")
+            return True
+        return False
+
     browser_result = {"state": "skipped", "detail": "Browser audit turned off for this capture.", "pages": [], "findings": []}
-    if browser_audit:
+    if browser_audit and out_of_time("the browser sample", 15):
+        browser_result = {"state": "skipped", "detail": "The capture deadline was reached before the browser sample.", "pages": [], "findings": []}
+    elif browser_audit:
         from browser_audit import run_browser_audit
         ranked = sorted((n for n in internal_only if n["statusCode"] == 200 and n["health"] in ("home", "hub", "healthy", "unlisted")),
                         key=lambda n: (n["url"] != home_url, -(n.get("authorityScore") or 0), n["url"]))
@@ -1493,25 +1508,38 @@ def _capture_to_staging(
                     with open(os.path.join(site_root, source), "rb") as raw_file:
                         raw_html_by_url[record["url"]] = raw_file.read().decode("utf-8", errors="replace")
         browser_result = run_browser_audit(sample_urls, site_root=site_root, domain_folder=domain_folder,
-            allow_url=allow_page, allow_resource_url=allow_resource, raw_html_by_url=raw_html_by_url, render_mode=render_mode)
+            allow_url=allow_page, allow_resource_url=allow_resource, raw_html_by_url=raw_html_by_url, render_mode=render_mode,
+            time_budget_sec=within_capture_deadline(90))
     snapshot_result = {"state": "skipped", "detail": "Page snapshots are turned off for this capture.", "pages": {}, "limit": 0}
-    if snapshot_limit > 0:
+    if snapshot_limit > 0 and out_of_time("the page snapshots", 15):
+        snapshot_result = {"state": "skipped", "detail": "The capture deadline was reached before the page snapshots.", "pages": {}, "limit": snapshot_limit}
+    elif snapshot_limit > 0:
         from page_snapshots import run_page_snapshots
         emit_event("phase", phase="snapshots", message="Saving full-page snapshots...")
         snapshot_order = [n["url"] for n in sorted((n for n in internal_only if n["statusCode"] == 200 and n["health"] in ("home", "hub", "healthy", "unlisted", "orphan")),
                           key=lambda n: (n["url"] != home_url, -(n.get("authorityScore") or 0), n["url"]))]
         snapshot_result = run_page_snapshots(snapshot_order, site_root=site_root, limit=snapshot_limit, save_html=snapshot_html,
             allow_url=allow_page, allow_resource_url=allow_resource, render_mode=render_mode,
-            time_budget_sec=max(60, min(900, 15 * snapshot_limit)))  # about 15 s for a load plus a 24,000 px scroll
+            time_budget_sec=within_capture_deadline(max(60, min(900, 15 * snapshot_limit))))  # about 15 s for a load plus a 24,000 px scroll
         nodes_by_snapshot_url = {n["url"]: n for n in internal_only}
         for snap_url, snap in (snapshot_result.get("pages") or {}).items():
             if snap.get("screenshot") and snap_url in nodes_by_snapshot_url:
                 nodes_by_snapshot_url[snap_url]["snapshot"] = {k: snap.get(k) for k in ("screenshot", "html", "heightPx", "truncated", "capPx", "hiddenOverlays")}
     from transport_checks import analyze_header_quality, check_email_dns, check_tls_certificate, set_cookie_values, transport_findings
-    tls_result = check_tls_certificate(origin)
+    if not tls_check:
+        tls_result = {"state": "skipped", "detail": "The certificate check is turned off for this capture."}
+    elif out_of_time("the certificate check", 2):
+        tls_result = {"state": "skipped", "detail": "The capture deadline was reached before the certificate check."}
+    else:
+        tls_result = check_tls_certificate(origin, timeout=within_capture_deadline(6.0))
     header_quality = analyze_header_quality(home_headers or {}, set_cookie_values(home_headers or {}), https=parsed_origin.scheme == "https")
     host_is_ip = bool(re.fullmatch(r"[0-9.]+|.*:.*", target_host))
-    email_dns = check_email_dns(clean_domain) if dns_checks and not host_is_ip else {"state": "skipped", "detail": "DNS checks are turned off or the site is addressed by IP."}
+    if dns_checks and not host_is_ip and out_of_time("the email DNS checks", 2):
+        email_dns = {"state": "skipped", "detail": "The capture deadline was reached before the email DNS checks."}
+    elif dns_checks and not host_is_ip:
+        email_dns = check_email_dns(clean_domain, budget_sec=capture_time_left())
+    else:
+        email_dns = {"state": "skipped", "detail": "DNS checks are turned off or the site is addressed by IP."}
     transport = {"tls": tls_result, "headerQuality": header_quality, "emailDns": email_dns}
     alternate = ((ai_intel.get("siteChecks") or {}).get("alternateHost") or {}).get("state")
     t_findings = [f for f in transport_findings(tls_result, header_quality, email_dns, home_url)
@@ -1573,8 +1601,11 @@ def _capture_to_staging(
                   "tls": tls_result.get("state") in ("ok", "warn", "fail"),
                   "dns": email_dns.get("state") in ("ok", "warn", "fail"),
                   "headers": bool(home_headers), "robots": bool(sm_result.robots_text)}
+    if capture_warnings:
+        capture_status = "partial"
+    # --no-tasks: no _tasks.md (for a host app that keeps its own task list).
     task_counts = write_tasks(site_root, previous_site_root, audit["findings"], captured_iso,
-        set(crawled_pages), capture_status == "complete", note_by_url, ok_urls=ok_page_urls, checks_ran=checks_ran)
+        set(crawled_pages), capture_status == "complete", note_by_url, ok_urls=ok_page_urls, checks_ran=checks_ran) if tasks else None
     audit["tasks"] = task_counts
     write_audit_report(site_root, domain_folder, clean_domain, captured_iso, audit, note_by_url, transport, browser_result, task_counts)
     audit_summary = {"findings": len(audit["findings"]), "findingItems": sum(f.get("targetCount", len(f["targets"])) for f in audit["findings"]),
@@ -1763,7 +1794,7 @@ def _capture_to_staging(
         f"- Internal authority is a relative weighted link heuristic, not search-engine authority.",
         *([f"- [[sites/{domain_folder}/_drift-report|Changes since previous capture]]"] if drift else []),
         f"- [[sites/{domain_folder}/_audit|Site audit]]: {audit_summary['findings']} findings over {audit_summary['findingItems']} items, {audit_summary['linkOpportunities']} internal link opportunities, {audit_summary['linkFixes']} internal links to fix.",
-        f"- [[sites/{domain_folder}/_tasks|Task list]]: {task_counts['open']} open, {task_counts['resolvedNow']} resolved in this capture.",
+        *([f"- [[sites/{domain_folder}/_tasks|Task list]]: {task_counts['open']} open, {task_counts['resolvedNow']} resolved in this capture."] if task_counts else []),
         "",
         "## Collection Coverage",
         "",
@@ -1886,17 +1917,27 @@ def crawl_website_to_vault(
     dns_checks: bool = True,
     snapshot_limit: int = 25,
     snapshot_html: bool = False,
+    tls_check: bool = True,
+    tasks: bool = True,
+    deadline_sec: Optional[float] = None,
 ) -> dict:
-    with CaptureTransaction(vault_dir) as transaction:
-        manifest = _capture_to_staging(
-            target_url, str(transaction.stage), max_pages, download_images,
-            render_mode, delay_sec, previous_vault_dir=vault_dir,
-            check_external=check_external, parallel=parallel, image_mode=image_mode,
-            browser_audit=browser_audit, spell_check=spell_check, dns_checks=dns_checks,
-            snapshot_limit=snapshot_limit, snapshot_html=snapshot_html,
-        )
-        emit_event("phase", phase="compile", message="Validating and saving notes, media inventory and map...")
-        manifest = transaction.commit(manifest)
+    from url_safety import set_capture_deadline
+    # One deadline for every network phase. Writing the notes and saving the capture still finish.
+    set_capture_deadline(time.monotonic() + deadline_sec if deadline_sec else None)
+    try:
+        with CaptureTransaction(vault_dir) as transaction:
+            manifest = _capture_to_staging(
+                target_url, str(transaction.stage), max_pages, download_images,
+                render_mode, delay_sec, previous_vault_dir=vault_dir,
+                check_external=check_external, parallel=parallel, image_mode=image_mode,
+                browser_audit=browser_audit, spell_check=spell_check, dns_checks=dns_checks,
+                snapshot_limit=snapshot_limit, snapshot_html=snapshot_html,
+                tls_check=tls_check, tasks=tasks, deadline_sec=deadline_sec,
+            )
+            emit_event("phase", phase="compile", message="Validating and saving notes, media inventory and map...")
+            manifest = transaction.commit(manifest)
+    finally:
+        set_capture_deadline(None)
     emit_event(
         "complete", captureStatus=manifest.get("captureStatus", "partial"),
         siteId=manifest["siteId"], domain=manifest["domain"],
@@ -1929,6 +1970,10 @@ def main() -> int:
     parser.add_argument("--no-snapshots", action="store_true", help="Skip full-page snapshots")
     parser.add_argument("--snapshot-limit", type=int, default=25, help="Most pages to snapshot, most important first (default: 25)")
     parser.add_argument("--snapshot-html", action="store_true", help="Also save the rendered HTML next to each snapshot")
+    parser.add_argument("--no-tls-check", action="store_true", help="Skip the TLS certificate check (one handshake with the site)")
+    parser.add_argument("--no-tasks", action="store_true", help="Do not write _tasks.md")
+    parser.add_argument("--deadline", type=float, default=None, metavar="SECONDS",
+                        help="One time limit for every network phase of the capture; phases that hit it are marked partial")
     parser.add_argument("--max-pages", type=int, default=250, help="Maximum pages to crawl (default: 250)")
     parser.add_argument(
         "--no-images",
@@ -1949,6 +1994,9 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.deadline is not None and not (1 <= args.deadline <= 86400):
+        emit_event("error", message="--deadline must be between 1 and 86400 seconds.")
+        return 2
     vault_dir = os.path.abspath(args.vault)
     if not os.path.isdir(vault_dir):
         emit_event("error", message=f"Vault directory does not exist: {vault_dir}")
@@ -1969,6 +2017,7 @@ def main() -> int:
             browser_audit=not args.no_browser_audit, spell_check=args.spell_check, dns_checks=not args.no_dns_checks,
             snapshot_limit=0 if args.no_snapshots else max(0, min(500, args.snapshot_limit)), snapshot_html=args.snapshot_html,
             delay_sec=max(0.0, min(10.0, args.delay)),
+            tls_check=not args.no_tls_check, tasks=not args.no_tasks, deadline_sec=args.deadline,
         )
         return 0
     except KeyboardInterrupt:

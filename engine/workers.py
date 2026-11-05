@@ -15,7 +15,7 @@ import time
 from urllib.parse import urlparse
 import uuid
 
-from url_safety import request_context
+from url_safety import capture_deadline, request_context, set_capture_deadline
 
 CAPACITIES = {'page-http': 3, 'render': 1, 'asset': 2, 'link': 3}
 
@@ -141,6 +141,7 @@ def _worker_main(connection, limiter):
             if job is None:
                 break
             identifier, operation, payload, deadline = job
+            set_capture_deadline(payload.get('capture_deadline'))
             try:
                 page_policy, resource_policy = _policies(payload)
                 transport_policy = page_policy if operation == 'page-http' else resource_policy
@@ -440,6 +441,13 @@ class WorkerDispatcher:
                     if not job['future'].set_running_or_notify_cancel():
                         continue
                     job['deadline'] = time.monotonic() + job['timeout']
+                    whole = capture_deadline()
+                    if whole is not None:
+                        if time.monotonic() >= whole:
+                            job['future'].set_exception(TaskDeadlineExceeded('Capture deadline reached before this task started.'))
+                            continue
+                        job['deadline'] = min(job['deadline'], whole)
+                        job['payload']['capture_deadline'] = whole
                     slot['job'] = job
                     try:
                         slot['commands'].put((job['id'], operation, job['payload'], job['deadline']))

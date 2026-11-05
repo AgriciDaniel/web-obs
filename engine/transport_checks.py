@@ -374,8 +374,27 @@ def _txt(resolver, name: str) -> list[str]:
     return values
 
 
-def check_email_dns(domain: str, timeout: float = 4.0, *, resolver=None) -> dict:
-    """MX, SPF, DMARC, common DKIM selectors and CAA through the system resolver."""
+class _BudgetedResolver:
+    """Gives each query the shorter of its own timeout and the time left in a total budget."""
+
+    def __init__(self, inner, timeout: float, budget_sec: float):
+        self.inner, self.timeout = inner, timeout
+        self.end = time.monotonic() + max(0.0, budget_sec)
+
+    def resolve(self, name, rdtype):
+        left = self.end - time.monotonic()
+        if left <= 0.05:
+            raise DNSTimeout("The DNS time budget was used up.")
+        if hasattr(self.inner, "lifetime"):
+            self.inner.lifetime = self.inner.timeout = min(self.timeout, left)
+        return self.inner.resolve(name, rdtype)
+
+
+def check_email_dns(domain: str, timeout: float = 4.0, *, resolver=None, budget_sec: Optional[float] = None) -> dict:
+    """MX, SPF, DMARC, common DKIM selectors and CAA through the system resolver.
+
+    `budget_sec` caps the whole check (about a dozen queries), for a capture with an overall deadline.
+    """
     note = "Queried through the system DNS resolver."
     empty = {"mx": [], "spf": None, "dmarc": None, "dkim": {"checkedSelectors": [], "found": [], "note": "Common selectors only."},
              "caa": [], "note": note}
@@ -392,6 +411,8 @@ def check_email_dns(domain: str, timeout: float = 4.0, *, resolver=None) -> dict
             resolver = dns.resolver.Resolver()
             resolver.lifetime = timeout
             resolver.timeout = timeout
+        if budget_sec is not None:
+            resolver = _BudgetedResolver(resolver, timeout, budget_sec)
         result = dict(empty)
         try:
             mx_answer = resolver.resolve(host, "MX")

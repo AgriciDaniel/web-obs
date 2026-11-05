@@ -265,7 +265,7 @@ def page_audit_section(url: str, node: dict, findings_by_url: dict, checks: Opti
 
 
 def write_audit_report(site_root: str, domain_folder: str, clean_domain: str, captured_iso: str, audit: dict,
-                       note_by_url: dict, transport: dict, browser: dict, tasks: dict) -> None:
+                       note_by_url: dict, transport: dict, browser: dict, tasks: Optional[dict]) -> None:
     def link(url):
         note = note_by_url.get(url)
         return f"[[{note[:-3]}]]" if note else url
@@ -273,7 +273,7 @@ def write_audit_report(site_root: str, domain_folder: str, clean_domain: str, ca
     lines = ["---", "tags:", "  - web-obs", "  - web-obs/audit", f"captured_at: \"{captured_iso}\"", "---", "",
              f"# Site Audit: {clean_domain}", "",
              "Observations from one capture. Uncaptured pages can change any result. This is not a combined score.", "",
-             f"- [[sites/{domain_folder}/_tasks|Task list]]: {tasks.get('open', 0)} open, {tasks.get('resolvedNow', 0)} resolved in this capture.",
+             *([f"- [[sites/{domain_folder}/_tasks|Task list]]: {tasks.get('open', 0)} open, {tasks.get('resolvedNow', 0)} resolved in this capture."] if tasks else []),
              f"- `_findings.csv` holds every finding row for spreadsheets.", ""]
     order = {"attention": 0, "review": 1, "coverage": 2}
     findings = sorted(audit["findings"], key=lambda f: (order.get(f["tone"], 3), -f.get("targetCount", len(f["targets"]))))

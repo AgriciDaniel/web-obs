@@ -21,7 +21,8 @@ from urllib.parse import unquote, urljoin, urlparse, urlunparse
 import requests
 from lxml import etree
 
-from url_safety import DEFAULT_REQUEST_HEADERS, URLSafetyError, apply_robots_pacing, safe_requests_session, validate_url
+from url_safety import (DEFAULT_REQUEST_HEADERS, RequestDeadlineExceeded, URLSafetyError, apply_robots_pacing,
+                        capture_out_of_time, safe_requests_session, validate_url)
 from site_intel import build_robots_policy, robots_url_decision
 
 COMMON_SITEMAP_PATHS = (
@@ -214,6 +215,8 @@ def _bounded_fetch_bytes(
                     resp.close()
     except URLSafetyError as exc:
         out["error"] = f"URL safety validation failed: {exc}"
+    except RequestDeadlineExceeded as exc:
+        out["error"] = str(exc)
     except requests.exceptions.RequestException as exc:
         out["error"] = f"Request failed: {exc}"
     except (ValueError, OSError) as exc:
@@ -389,6 +392,11 @@ def discover_and_expand_sitemaps(
     )
     policies = {origin: result.robots_policy}
     apply_robots_pacing(origin, result.robots_policy)
+    deadline_note = "The capture deadline was reached while reading robots.txt and sitemaps."
+    if capture_out_of_time():
+        # robots.txt was not read in time, so nothing can be said about it or the sitemaps.
+        warn(deadline_note)
+        return result
     if not result.robots_policy["canCrawl"]:
         warn(result.robots_policy["reason"])
 
@@ -426,6 +434,9 @@ def discover_and_expand_sitemaps(
     while idx < len(queue):
         sm_url, source = queue[idx]
         idx += 1
+        if capture_out_of_time():
+            warn(deadline_note)
+            break
         if sm_url in visited_sitemaps:
             continue
         visited_sitemaps.add(sm_url)

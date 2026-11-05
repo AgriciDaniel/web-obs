@@ -5,8 +5,8 @@ import time
 import uuid
 
 from page_fetch import PageFetcher
-from url_safety import request_context
-from workers import CAPACITIES, WorkerError, _LeaseBroker, _policies
+from url_safety import capture_deadline, request_context
+from workers import CAPACITIES, TaskDeadlineExceeded, WorkerError, _LeaseBroker, _policies
 
 
 class SerialDispatcher:
@@ -38,6 +38,12 @@ class SerialDispatcher:
         future.set_running_or_notify_cancel()
         owner = uuid.uuid4().hex
         deadline = time.monotonic() + max(.01, float(timeout_sec))
+        whole = capture_deadline()
+        if whole is not None:
+            if time.monotonic() >= whole:
+                future.set_exception(TaskDeadlineExceeded('Capture deadline reached before this task started.'))
+                return future
+            deadline = min(deadline, whole)
         try:
             page_policy, resource_policy = _policies(payload)
             with request_context(self.limiter, owner, deadline, allow_url=page_policy if operation == 'page-http' else resource_policy):

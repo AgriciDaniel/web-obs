@@ -167,7 +167,7 @@ export function SiteAuditPanel({ manifest, onClose, onInspectPage, onOpenNote, o
       </div>
       <div className="wo-audit-actions" role="group" aria-label="Audit notes">
         <button type="button" className="wo-audit-button" onClick={() => onOpenNote(notePath('_audit.md'))}><FileText size={14} aria-hidden="true" /> Audit report</button>
-        <button type="button" className="wo-audit-button" onClick={() => onOpenNote(notePath('_tasks.md'))}><CheckSquare size={14} aria-hidden="true" /> Task list</button>
+        {extras?.tasks && <button type="button" className="wo-audit-button" onClick={() => onOpenNote(notePath('_tasks.md'))}><CheckSquare size={14} aria-hidden="true" /> Task list</button>}
         <button type="button" className="wo-audit-button" onClick={() => onOpenNote(notePath('_findings.csv'))}><FileSpreadsheet size={14} aria-hidden="true" /> Findings CSV</button>
         <button type="button" className="wo-audit-button" onClick={() => onOpenNote(notePath('_link-health.md'))}><Link2 size={14} aria-hidden="true" /> Link report</button>
       </div>

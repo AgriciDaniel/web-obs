@@ -42,6 +42,13 @@ A much deeper audit. Every check still runs on your computer and talks only to t
 - **Web-Obs: Compare two captured sites** writes a side-by-side note under `sites/_compare/`.
 - Settings for the browser sample, email DNS checks and spell check. CLI flags: `--no-browser-audit`, `--no-dns-checks`, `--spell-check`.
 
+### Added: run controls
+For apps that run captures on a fixed plan. Each one is also a plugin setting, and every default keeps today's behaviour.
+- **Capture time limit** (`--deadline SECONDS`): one limit across every network phase, from robots.txt and sitemaps through the crawl, link checks, the browser sample, snapshots, the certificate and DNS. When it runs out, nothing new is requested, the notes and map are still written, and the capture is marked partial with each phase it cut. Pages, files and links it cut are recorded as not requested or not finished, never as broken. A phase that would have too little time to finish is skipped and named, rather than run into a timeout that looks like a fault of the site.
+- **Certificate check** can be turned off (`--no-tls-check`), so no TLS handshake is made.
+- **Task list** can be turned off (`--no-tasks`) for teams that track fixes elsewhere. No `_tasks.md` is written, and the audit report, dashboard and Site Audit panel leave out the task list link.
+- In the engine, `ROBOTS_PRODUCT_TOKEN` is now `ROBOTS_PRODUCT_NAME`. The value (`WebObs`) and the manifest key `productToken` are unchanged.
+
 ### Changed
 - The manifest schema is 1.3.0 and adds `audit`, `issueCatalog`, per-page `pageChecks`, `siteIntel.browserAudit` and `siteIntel.transport`. 1.2 captures still open.
 - Page notes and the manifest keep up to 40 issues per page instead of 10.
@@ -72,6 +79,7 @@ A much deeper audit. Every check still runs on your computer and talks only to t
 - **The site's own mark at the centre:** the home node shows the site's logo on a round badge that always faces you, ringed in the brand colour. It uses what the capture already saved (the logo, then the sharpest favicon), so older captures get it without recapturing. A logo is placed on a light or dark backing so it stays visible, and the ring is adjusted to at least 3:1 contrast on both map themes. Without a usable logo the badge shows the brand's initials. The domain label stays beside it, since the logo choice is not visually checked.
 
 ### Fixed
+- **Map labels show on a cold start.** On a slow first render the resting labels were worked out before the pages had loaded, and stayed empty until a filter changed.
 - **New snapshots and notes now show in Obsidian right after a capture.** A capture replaces the site folder in one move, and Obsidian kept its old file list for a folder it already knew, so new files (such as snapshots) said "could not be found" until a reload. The plugin now has Obsidian re-index the site folder and re-attach its watchers after every capture, and asks for a reload only if that is not possible.
 - Page Audit screenshots are embedded with their full vault path.
 - **Inline SVG logos are saved as real, scalable logos.** The capture took the first SVG in the header, which could be a theme toggle or menu icon, and the HTML parser lowercased case-sensitive SVG names such as `viewBox` and `linearGradient`, so saved logos rendered unscaled or lost gradients. An inline SVG now needs a logo signal (inside the link to the homepage, or named logo or brand, never inside a button), and SVG names keep their case.
