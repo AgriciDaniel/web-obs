@@ -82,7 +82,9 @@ export function parseSiteManifest(value: unknown): SiteGraphManifest {
     if (!object(audit) || !Array.isArray(audit.findings)) return fail('invalid site audit');
     if (audit.findings.some((finding) => !object(finding) || typeof finding.id !== 'string' || typeof finding.category !== 'string' || typeof finding.title !== 'string' || typeof finding.explanation !== 'string' || !['attention', 'review', 'coverage'].includes(String(finding.tone)) || !Array.isArray(finding.targets) || finding.targets.some((target) => !object(target) || typeof target.url !== 'string' || !optionalText(target.detail) || !optionalText(target.sourceUrl)))) return fail('invalid audit findings');
     for (const key of ['linkFixes', 'linkOpportunities', 'conflicts', 'cannibalization', 'anchorConflicts', 'crawlTraps']) if (audit[key] !== undefined && !Array.isArray(audit[key])) return fail(`invalid audit ${key}`);
-    for (const key of ['duplicates', 'weakPages', 'keywords', 'freshness', 'trust', 'schema', 'images', 'sitemapLimits', 'robotsSyntax', 'tasks']) if (audit[key] !== undefined && !object(audit[key])) return fail(`invalid audit ${key}`);
+    for (const key of ['duplicates', 'weakPages', 'keywords', 'freshness', 'trust', 'schema', 'images', 'sitemapLimits', 'robotsSyntax']) if (audit[key] !== undefined && !object(audit[key])) return fail(`invalid audit ${key}`);
+    // A capture made with --no-tasks records tasks as null: the task list was not written, which is valid.
+    if (audit.tasks !== undefined && audit.tasks !== null && !object(audit.tasks)) return fail('invalid audit tasks');
     if (object(audit.tasks) && ['open', 'resolved'].some((key) => (audit.tasks as ObjectValue)[key] !== undefined && !count((audit.tasks as ObjectValue)[key]))) return fail('invalid task counts');
   }
   if (value.issueCatalog !== undefined && (!object(value.issueCatalog) || Object.values(value.issueCatalog).some((entry) => !object(entry) || typeof entry.title !== 'string' || typeof entry.explanation !== 'string'))) return fail('invalid issue catalog');

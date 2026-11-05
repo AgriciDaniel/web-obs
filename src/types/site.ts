@@ -337,7 +337,8 @@ export interface SiteAuditData {
   images?: { oversized: Array<{ url: string; bytes: number; pages: string[] }>; legacyFormats: Array<{ url: string; format: string; bytes: number; pages: string[] }>; thresholdBytes?: number; note?: string };
   sitemapLimits?: { overUrlLimit: string[]; overSizeLimit: string[]; otherHostUrls: string[]; nonCanonicalUrls: string[]; note?: string };
   robotsSyntax?: { issues: Array<{ line: number; issue: string }>; issueCount: number };
-  tasks?: { open: number; ticked: number; resolved: number; notRechecked: number };
+  /** null when the capture was made with --no-tasks. */
+  tasks?: { open: number; ticked: number; resolved: number; notRechecked: number } | null;
 }
 
 export interface BrowserAuditPage {
