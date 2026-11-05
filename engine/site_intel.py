@@ -14,7 +14,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import urljoin, urlparse, urlsplit, urlunparse
 
 from url_safety import DEFAULT_REQUEST_HEADERS, RequestDeadlineExceeded, URLSafetyError, safe_requests_session
 
@@ -394,7 +394,10 @@ def _parse_robots_groups(robots_text: str) -> tuple[dict[str, list[tuple[str, st
         v_clean = val.strip()
 
         if f_low == "user-agent":
-            agent_token = v_clean.lower()
+            # RFC 9309: the product token is letters, "_" and "-" only, and Google ignores the rest
+            # ("googlebot/1.2" and "googlebot*" both mean googlebot).
+            token = re.match(r"\*|[A-Za-z_-]+", v_clean)
+            agent_token = token.group(0).lower() if token else ""
             if not agent_token:
                 continue
             if seen_rule_in_group:
@@ -558,7 +561,7 @@ def robots_url_decision(policy: dict, url: str) -> dict:
     if not policy.get("canCrawl"):
         return {"allowed": False, "status": "unknown", "reason": policy.get("reason", "Unknown robots policy."), "matchedPattern": None}
     try:
-        parsed = urlparse(url)
+        parsed = urlsplit(url)  # urlsplit keeps ";params" in the path, which rules must see (RFC 9309)
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
             raise ValueError("Not an HTTP URL")
         target = parsed.path or "/"
@@ -573,8 +576,10 @@ def robots_url_decision(policy: dict, url: str) -> dict:
         if not pattern or directive not in ("allow", "disallow"):
             continue
         if _match_robots_path(target, pattern):
-            normalized = _robots_octets(pattern[:-1] if pattern.endswith("$") else pattern, pattern=True)
-            specificity = len(re.sub(r"%[0-9A-F]{2}", "_", normalized).replace("*", ""))
+            # Specificity is the length of the rule path as written, "*" and "$" included: Google's example
+            # "allow: /page" against "disallow: /*.htm" for /page.htm is disallowed, because /*.htm is longer.
+            # Each percent-encoded octet counts once. An exact tie goes to allow (least restrictive).
+            specificity = len(re.sub(r"%[0-9A-F]{2}", "_", _robots_octets(pattern, pattern=True)))
             if specificity > best_len or (specificity == best_len and directive == "allow"):
                 best_len, best_directive, best_pattern = specificity, directive, pattern
     allowed = best_directive != "disallow"
