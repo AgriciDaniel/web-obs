@@ -222,6 +222,9 @@ export function buildDiscoveryChecklist(manifest: SiteGraphManifest): { rows: Di
   const redirectFail = Object.values(ai?.siteChecks ?? {}).some((c) => c.state === 'fail');
   const headers = manifest.siteIntel?.techStack?.securityHeaders;
   const blocked = ai?.blockedAiBots.length ?? 0;
+  // When robots.txt could not be read every bot is "unknown": that is no data, never a pass.
+  const botStates = Object.values(ai?.aiBotsPolicy ?? {});
+  const botsUnknown = botStates.length > 0 && botStates.every((status) => status.startsWith('unknown'));
 
   const score: ScoreItem[] = [
     {
@@ -240,8 +243,9 @@ export function buildDiscoveryChecklist(manifest: SiteGraphManifest): { rows: Di
       id: 'ai',
       label: 'AI readiness',
       // A missing llms.txt is optional and does not lower this score; an invalid one does.
-      state: !ai ? 'unknown' : blocked > 0 || (v('llmsTxt') && !v('llmsTxt')!.valid) ? 'warn' : 'pass',
-      detail: !ai ? 'No data.' : `llms.txt ${ai.endpoints.llmsTxt ? 'present' : 'missing'}; ${blocked} AI bots blocked in robots.txt.`,
+      state: !ai ? 'unknown' : blocked > 0 || (v('llmsTxt') && !v('llmsTxt')!.valid) ? 'warn' : botsUnknown ? 'unknown' : 'pass',
+      detail: !ai ? 'No data.' : `llms.txt ${ai.endpoints.llmsTxt ? 'present' : 'missing'}; `
+        + (botsUnknown ? 'AI crawler access unknown: robots.txt could not be read.' : `${blocked} AI bots blocked in robots.txt.`),
     },
     {
       id: 'security',

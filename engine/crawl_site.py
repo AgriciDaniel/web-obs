@@ -129,6 +129,22 @@ def url_to_vault_rel_note(url: str, domain_folder: str) -> tuple[str, str]:
     return f"sites/{domain_folder}/pages/{joined}", section
 
 
+def _ai_crawler_line(ai_intel: dict) -> str:
+    """AI crawler access from robots.txt. Unknown is not allowed: an unreadable robots.txt means no data."""
+    policy = ai_intel.get("aiBotsPolicy") or {}
+    unknown = [bot for bot, status in policy.items() if str(status).startswith("unknown")]
+    if policy and len(unknown) == len(policy):
+        return "- **AI Crawlers Allowed in robots.txt:** No data: robots.txt could not be read, so AI crawler access is unknown."
+    line = f"- **AI Crawlers Allowed in robots.txt:** `{ai_intel['allowedAiBotsCount']}/{len(policy)}`"
+    if ai_intel.get("blockedAiBots"):
+        line += f" (Blocked: `{', '.join(ai_intel['blockedAiBots'])}`)"
+    if unknown:
+        line += f" (Unknown: `{', '.join(unknown)}`)"
+    if not ai_intel.get("blockedAiBots") and not unknown and ai_intel["allowedAiBotsCount"] == len(policy):
+        line += " (All listed AI crawlers allowed)"
+    return line
+
+
 def _validation_summary(ai_intel: dict) -> str:
     parts = []
     for key, label in (("llmsTxt", "llms.txt"), ("securityTxt", "security.txt")):
@@ -1896,8 +1912,7 @@ def _capture_to_staging(
             *([f"- **llms.txt draft:** [[{ai_intel['llmsDraft']['path'].removesuffix('.md')}|Built from this capture, ready to review]]"] if (ai_intel.get("llmsDraft") or {}).get("path") else []),
             f"- **Validation:** {_validation_summary(ai_intel)}",
             f"- **Sitemap hygiene:** {_hygiene_summary(ai_intel.get('sitemapHygiene') or {})}",
-            f"- **AI Crawlers Allowed in robots.txt:** `{ai_intel['allowedAiBotsCount']}/{len(ai_intel['aiBotsPolicy'])}`"
-            + (f" (Blocked: `{', '.join(ai_intel['blockedAiBots'])}`)" if ai_intel["blockedAiBots"] else " (All major AI search & training bots allowed)"),
+            _ai_crawler_line(ai_intel),
             "",
         ]
     )

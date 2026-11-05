@@ -36,6 +36,13 @@ bad.linkHealth.brokenLinks = [{}];
 assert.equal(rows.find((r) => r.id === 'llms').state, 'unknown', 'a missing llms.txt is optional, not a problem');
 assert.ok(rows.find((r) => r.id === 'llms').fix.startsWith('# '));
 assert.equal(score.find((s) => s.id === 'ai').state, 'pass', 'a missing llms.txt does not lower the AI readiness score');
+{
+  const unread = structuredClone(base);
+  unread.siteIntel.aiReadiness.aiBotsPolicy = { GPTBot: 'unknown (robots fetch incomplete)', ClaudeBot: 'unknown (robots fetch incomplete)' };
+  const ai = mod.buildDiscoveryChecklist(unread).score.find((s) => s.id === 'ai');
+  assert.equal(ai.state, 'unknown', 'an unreadable robots.txt is no data, not a pass');
+  assert.match(ai.detail, /AI crawler access unknown/);
+}
 assert.equal(rows.find((r) => r.id === 'sitemap').state, 'missing');
 
 // llms.txt: the site's own draft is the fix, a check that got no answer is not called missing,
