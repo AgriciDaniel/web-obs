@@ -21,6 +21,7 @@ import re
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
+from note_safety import plain_language
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
 INLINE_TAGS = {
@@ -764,7 +765,7 @@ def _render_block_node(node: Tag | NavigableString, base_url: str, list_depth: i
         raw_code = node.get_text("\n", strip=False).strip("\r\n")
         if not raw_code.strip():
             return ""
-        lang = _guess_code_lang(node, raw_code)
+        lang = plain_language(_guess_code_lang(node, raw_code))  # no live renderer names (mermaid, agent...)
         # CommonMark: the fence must be longer than any backtick run inside, or a fence shown in the
         # code (a tutorial's "```js") would close the block early and turn the rest into page text.
         fence = "`" * max(3, max((len(run) for run in re.findall(r"`+", raw_code)), default=0) + 1)
@@ -792,8 +793,15 @@ def _render_block_node(node: Tag | NavigableString, base_url: str, list_depth: i
             nested_lists = [c for c in li.children if isinstance(c, Tag) and (c.name or "").lower() in ("ul", "ol")]
             for nl in nested_lists:
                 nl.extract()
+            # Code inside the item stays a code block, indented to the item's content so it stays in the item.
+            code_blocks = [pre.extract() for pre in li.find_all("pre")]
             li_text = _collapse_ws(_render_inline_children(li, base_url))
             line = f"{indent}{prefix}{li_text}" if li_text else ""
+            pad = " " * (len(indent) + len(prefix))
+            codes = [_render_block_node(pre, base_url, list_depth) for pre in code_blocks]
+            codes = ["\n".join((pad + row) if row else row for row in code.split("\n")) for code in codes if code]
+            if codes:
+                line = "\n".join(([line or f"{indent}{prefix}".rstrip()]) + codes)
             sub_rendered = [_render_block_node(nl, base_url, list_depth + 1) for nl in nested_lists]
             sub_rendered = [s for s in sub_rendered if s]
             if line and sub_rendered:

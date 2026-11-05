@@ -26,7 +26,7 @@ from __future__ import annotations
 import os
 import re
 
-ZW = "​"  # zero-width space
+ZW = "\u200b"  # zero-width space
 _SCHEME = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|//|\\\\)")
 
 # A destination may hold balanced parentheses, as CommonMark allows: a_(1).png stays one link.
@@ -39,6 +39,33 @@ _EMBED = re.compile(r"!\[\[(?P<target>[^\]|\n]+)(?:\|(?P<alias>[^\]\n]*))?\]\]")
 _CODE_SPAN = re.compile(r"(?<!`)(?P<ticks>`+)(?!`)(?:[^`\n]|`+(?!(?P=ticks)(?!`))|\n(?![ \t>]*\n))+?(?<!`)(?P=ticks)(?!`)")
 _AUTOLINK = re.compile(r"<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+)>")
 _TAG_OPEN = re.compile(r"<(?=[A-Za-z!?/])")
+
+# Code fence languages kept in notes: plain programming, data and markup names that Obsidian shows as code.
+# Any other info string is dropped, because a vault plugin can register it as a live renderer (mermaid,
+# chartsview, agent, dataview, dataviewjs, base, tasks, or any name a vault's own plugin registers), and a page must not
+# be able to plant one of those in a member's vault.
+PLAIN_CODE_LANGUAGES = frozenset("""
+    asm bash bat c cfg clojure cmake cobol conf console cpp cs csharp css csv d dart diff docker dockerfile
+    elixir elm erlang fish fortran fsharp go gradle graphql groovy haskell hcl html http ini java javascript
+    js json json5 jsonc jsx julia kotlin kt less lisp lua makefile markdown matlab md nginx nim nix objc
+    objectivec ocaml pascal perl php plaintext powershell properties proto protobuf ps1 py python r rb
+    regex ruby rust rs sass scala scheme scss sh shell solidity sql svelte swift terraform text tf toml ts
+    tsv tsx txt typescript vb vbnet vue wasm xml yaml yml zig zsh
+""".split())
+_DATAVIEW_INLINE = re.compile(r"^(`+)(\s*)(?=\$?=)")
+
+
+def plain_language(info: str) -> str:
+    """The fence language to keep: the first word of the info string if it is a plain language, else none."""
+    words = (info or "").strip().split()
+    word = words[0].lower() if words else ""
+    return word if word in PLAIN_CODE_LANGUAGES else ""
+
+
+def _plain_fence(line: str) -> str:
+    m = re.search(r"(`{3,}|~{3,})([^\r\n]*)", line)
+    return line if not m else line[:m.start(2)] + plain_language(m.group(2)) + line[m.end(2):]
+
 
 _QUOTE = re.compile(r" {0,3}> ?")
 _LIST = re.compile(r"( {0,3})([-+*]|\d{1,9}[.)])( {1,4}(?=\S)| *$)")
@@ -77,7 +104,7 @@ def _images_and_embeds(text: str) -> str:
             dest = m.group("dest")
             out.append(f"[Image not saved: {_label(m.group('alt'), 'image')}]({_destination(dest)})" if _is_remote(dest) else m.group(0))
         else:
-            target = m.group("target").strip()
+            target = m.group("target").strip().rstrip("\\")
             out.append(f"[Embed not loaded: {_label(m.group('alias') or '', 'remote file')}]({_destination(target)})"
                        if _is_remote(target) else m.group(0))
         last = m.end()
@@ -99,7 +126,8 @@ def _rewrite_prose(chunk: str) -> str:
     out, last = [], 0
     for m in _CODE_SPAN.finditer(chunk):
         out.append(_escape_tags(_images_and_embeds(chunk[last:m.start()])))
-        out.append(inert(m.group(0)))
+        # Inline code starting with "=" or "$=" runs as a Dataview query or script where Dataview is on.
+        out.append(_DATAVIEW_INLINE.sub(lambda s: s.group(1) + s.group(2) + ZW, inert(m.group(0))))
         last = m.end()
     out.append(_escape_tags(_images_and_embeds(chunk[last:])))
     return "".join(out)
@@ -110,7 +138,7 @@ def _indent(text: str) -> int:
 
 
 def code_lines(lines: list[str]) -> list[bool]:
-    """Which lines CommonMark renders as code. Blockquotes, list items, fences and indented code."""
+    """Which lines CommonMark renders as code: True, or "open" for a fence opener; False for prose."""
     containers: list[tuple] = []  # ("q",) or ("l", content_indent)
     fence = None  # (char, length, container depth)
     paragraph = False
@@ -173,7 +201,7 @@ def code_lines(lines: list[str]) -> list[bool]:
         if opener:
             fence = (opener.group("run")[0], len(opener.group("run")), len(containers))
             paragraph = False
-            result.append(True)
+            result.append("open")
             continue
         paragraph = not re.match(r" {0,3}(?:#{1,6}(?:\s|$)|(?:[-*_][ \t]*){3,}$)", rest)
         result.append(False)
@@ -203,7 +231,7 @@ def network_free_markdown(text: str) -> str:
             if prose:
                 out.append(_rewrite_prose("".join(prose)))
                 prose.clear()
-            out.append(inert(line))
+            out.append(inert(_plain_fence(line) if is_code == "open" else line))
         else:
             prose.append(line)
     if prose:

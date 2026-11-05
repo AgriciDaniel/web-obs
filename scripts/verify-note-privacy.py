@@ -169,6 +169,23 @@ class Evidence(Capture):
             self.assertIn(f"({CDN}/text-wikilink.png)", home)
 
 
+class Recapture(Capture):
+    def test_files_kept_from_an_earlier_capture_are_made_safe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest, _notes, _resolved = self.capture(directory)
+            site = Path(directory) / "sites" / manifest["siteId"]
+            home = next(p for p in site.rglob("*.md") if "Team photo" in p.read_text(encoding="utf-8"))
+            home.write_text(home.read_text(encoding="utf-8") + f"\n![legacy]({CDN}/legacy.png)\n<img src=\"{CDN}/legacy.gif\">\n",
+                            encoding="utf-8")
+            (site / "_generated-files.json").unlink()  # a capture from before edit baselines existed
+            (site / "_retained-note.md").write_text(f"![kept]({CDN}/kept.png)\n", encoding="utf-8")
+            _manifest, notes, _resolved = self.capture(directory)
+            found = {name: network_loads(text) for name, text in notes.items() if network_loads(text)}
+            self.assertEqual(found, {})
+            self.assertIn(f"[Image not saved: legacy]({CDN}/legacy.png)", home.read_text(encoding="utf-8"))
+            self.assertIn(f"[Image not saved: kept]({CDN}/kept.png)", (site / "_retained-note.md").read_text(encoding="utf-8"))
+
+
 class Sanitizer(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

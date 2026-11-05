@@ -30,7 +30,7 @@ import crawl_site  # noqa: E402
 import markdown_converter  # noqa: E402
 import note_safety  # noqa: E402
 
-ZW = "​"
+ZW = "\u200b"
 R = "https://e.invalid"
 
 RENDER = r"""
@@ -66,10 +66,17 @@ class Check(HTMLParser):
 out = []
 for doc in json.load(sys.stdin):
     html = md.render(doc)
+    infos, inline = [], []
+    for token in md.parse(doc):
+        if token.type == "fence":
+            infos.append(token.info)
+        for child in token.children or []:
+            if child.type == "code_inline":
+                inline.append(child.content)
     c = Check(); c.feed(html); c.close()
     prose = "".join(c.prose)
     c.loads += [m.group(0) for m in re.finditer(r"!\[\[\s*(?:[A-Za-z][A-Za-z0-9+.-]*:|//)[^\]]*", prose)]
-    out.append({"loads": c.loads, "code": c.code, "prose": prose})
+    out.append({"loads": c.loads, "code": c.code, "prose": prose, "infos": infos, "inline": inline})
 json.dump(out, sys.stdout)
 """
 
@@ -123,6 +130,30 @@ four
 </main></body></html>"""
 PRE_TEXT = f'Install:\n```js\nnpm install\n```\n<img src="{R}/badge.svg" alt="build">\n````\nfour\n````'
 
+# Fence languages that Obsidian or a vault plugin renders as live content, written down here apart from the
+# engine's allowlist: Obsidian core (mermaid), community plugins (chartsview, dataview, dataviewjs, base, query,
+# tasks, kanban, plantuml, tikz, chart...), and made-up names standing in for a vault's own plugins
+# (plugin-agent, custom-flow): the allowlist must drop names it has never heard of.
+LIVE_RENDERERS = {"mermaid", "chartsview", "agent", "plugin-agent", "custom-flow", "base", "query", "dataview", "dataviewjs",
+                  "tasks", "kanban", "plantuml", "tikz", "chart", "abc", "music-abc", "gnuplot", "excalidraw", "math"}
+RENDERER_HTML = '<p>Ordinary words on this page so the converter keeps the main content block intact here.</p>'
+RENDERER_PAGES = {
+    f"{attr}{lang}": f'<html><body><main><h1>Docs</h1>{RENDERER_HTML}<pre><code class="{attr}{lang}">x: 1\n'
+                      f'img: "{R}/r.png"</code></pre>{RENDERER_HTML}</main></body></html>'
+    for lang in ("chartsview", "mermaid", "plugin-agent", "agent", "custom-flow", "dataviewjs", "base", "tasks", "python")
+    for attr in ("language-", "lang-", "highlight-source-")}
+RENDERER_DIRECT = {
+    "mermaid": f"```mermaid\nflowchart LR\n  A@{{ img: \"{R}/m.png\" }}\n```\n",
+    "tilde chartsview": f"~~~chartsview\ntype: Graph\nimg: '{R}/c.png'\n~~~\n",
+    "spaced plugin-agent": "``` plugin-agent\nprompt: hello\npersist: true\n```\n",
+    "upper case": "```MERMAID\ngraph TD\n```\n",
+    "braced": "```{mermaid}\ngraph TD\n```\n",
+    "language first, renderer second": "```js mermaid\nx\n```\n",
+    "in a quote": "> ```custom-flow\n> nodes: []\n> ```\n",
+    "in a list": "- item\n\n  ````dataviewjs\n  dv.el('img', '')\n  ````\n",
+    "dataview inline": f"Run `$= dv.el('img', '', {{attr: {{src: '{R}/d.png'}}}})` and `= this.file.name` and ` $=x`.\n",
+}
+
 CONTAINERS = [("", ""), ("> ", "> "), ("- ", "  "), ("1. ", "   "), ("  ", "  "), ("    ", "    "),
               ("> - ", ">   "), ("- ", "- "), ("> ", "")]
 TAILS = [["", f"![x]({R}/t1.png)", f'<img src="{R}/t2.png">', "![a", f"b]({R}/t3.png)", f"![p]({R}/a_(1).png)"],
@@ -132,7 +163,7 @@ TAILS = [["", f"![x]({R}/t1.png)", f'<img src="{R}/t2.png">', "![a", f"b]({R}/t3
 def generated() -> list[str]:
     docs = []
     for ch, n, info, inner, (first, cont), closed, tail in itertools.product(
-            "`~", (3, 4, 5), ("", "js"), [None] + [(m, i) for m in (3, 4, 5) for i in ("", "js")],
+            "`~", (3, 4, 5), ("", "js", "mermaid"), [None] + [(m, i) for m in (3, 4, 5) for i in ("", "js")],
             CONTAINERS, (True, False), TAILS):
         lines = [first + ch * n + info, cont + f"code <img src={R}/c1.png>", cont + f"![in]({R}/c2.png)"]
         if inner:
@@ -165,6 +196,11 @@ class Render(unittest.TestCase):
         cls.pre_note = note_safety.network_free_markdown(
             crawl_site.rewrite_markdown_for_obsidian(md, "https://site.example/", {}, {}, {}, "site.example"))
         originals = {f"review: {k}": v for k, v in REVIEW.items()}
+        for key, page in RENDERER_PAGES.items():
+            originals[f"renderer page: {key}"] = crawl_site.rewrite_markdown_for_obsidian(
+                markdown_converter.convert_html_to_markdown(page, "https://docs.example/"), "https://docs.example/", {}, {}, {}, "docs.example")
+        for key, text in RENDERER_DIRECT.items():
+            originals[f"renderer: {key}"] = text
         originals["converter: fence shown in <pre>"] = crawl_site.rewrite_markdown_for_obsidian(
             md, "https://site.example/", {}, {}, {}, "site.example")
         for i, note in enumerate(fixture_notes()):
@@ -189,6 +225,28 @@ class Render(unittest.TestCase):
         for group, names in groups.items():
             print(f"    {group}: {len(names)}, e.g. {names[0]}: {bad[names[0]][:3]}", file=sys.stderr)
         self.assertEqual(bad, {})
+
+    def test_no_fence_names_a_live_renderer(self):
+        allowed = getattr(note_safety, "PLAIN_CODE_LANGUAGES", None)
+        live, unlisted, dataview = {}, {}, {}
+        for name, r in self.rendered.items():
+            words = [(info.split() or [""])[0].strip("{}").lower() for info in r["infos"]]
+            if any(w in LIVE_RENDERERS for w in words):
+                live[name] = r["infos"]
+            if allowed is not None and any(w and w not in allowed for w in words):
+                unlisted[name] = r["infos"]
+            if any(code.lstrip().startswith(("=", "$=")) for code in r["inline"]):
+                dataview[name] = r["inline"]
+        print(f"\n  fences naming a live renderer: {len(live)} notes; outside the allowlist: {len(unlisted)}; "
+              f"inline Dataview queries: {len(dataview)}", file=sys.stderr)
+        for group in (live, dataview):
+            for name in list(group)[:3]:
+                print(f"    {name}: {group[name][:3]}", file=sys.stderr)
+        self.assertEqual(live, {})
+        self.assertEqual(unlisted, {})
+        self.assertEqual(dataview, {})
+        kept = [i for n, r in self.rendered.items() if n.startswith("renderer page: language-python") for i in r["infos"]]
+        self.assertEqual(kept, ["python"], "a plain language keeps its name")
 
     def test_code_shown_in_pre_stays_one_code_block_with_its_text(self):
         code = self.rendered["converter: fence shown in <pre>"]["code"]
