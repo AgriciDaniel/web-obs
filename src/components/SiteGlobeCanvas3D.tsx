@@ -719,7 +719,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
     let measureAttempts = 0;
     let syncedGizmo: unknown = null;
     let labelHoverId: string | null = null;
-    let restingCache: { manifest: unknown; key: string; ids: Set<string> } = { manifest: null, key: '', ids: new Set() };
+    let restingCache: { manifest: unknown; key: string; count: number; attention: unknown; ids: Set<string> } = { manifest: null, key: '', count: -1, attention: null, ids: new Set() };
     let pulseEdges: RuntimeEdgeEntry[] = [];
     const lastCamPos = new THREE.Vector3(Number.NaN, 0, 0);
     const lastCamQuat = new THREE.Quaternion(Number.NaN, 0, 0, 1);
@@ -1273,12 +1273,13 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
 
       // Resting label set, recomputed only when the manifest, filter or external toggle changes.
       const restingKey = `${st.filter}|${st.showExternal}`;
-      if (restingCache.manifest !== st.manifest || restingCache.key !== restingKey) {
+      // The node count and attention set are part of the cache key: a frame drawn before the nodes exist must not freeze an empty set.
+      if (restingCache.manifest !== st.manifest || restingCache.key !== restingKey || restingCache.count !== runtimeNodes.size || restingCache.attention !== st.attention) {
         const visibleNodes: SiteNode[] = [];
         for (const entry of runtimeNodes.values()) {
           if (matchesFilter(entry.node, st.filter, st.showExternal, st.attention)) visibleNodes.push(entry.node);
         }
-        restingCache = { manifest: st.manifest, key: restingKey, ids: restingLabelIds(visibleNodes, st.attention) };
+        restingCache = { manifest: st.manifest, key: restingKey, count: runtimeNodes.size, attention: st.attention, ids: restingLabelIds(visibleNodes, st.attention) };
       }
       const resting = restingCache.ids;
 
