@@ -349,6 +349,18 @@ def _is_decorative_image(img) -> bool:
     return False
 
 
+def parse_link_header(value: str) -> list[tuple[str, dict[str, str]]]:
+    """RFC 8288 Link header: `<url>; rel="alternate"; type="text/markdown", <url2>; rel=describedby`."""
+    out = []
+    for part in re.findall(r"<([^>]*)>([^,<]*(?:\"[^\"]*\"[^,<]*)*)", value or "")[:20]:
+        target, rest = part
+        params = {}
+        for key, quoted, bare in re.findall(r";\s*([\w*-]+)\s*=\s*(?:\"([^\"]*)\"|([^;,\s]*))", rest):
+            params.setdefault(key.lower(), quoted or bare)
+        out.append((target.strip(), params))
+    return out
+
+
 def extract_page_data(
     html: str,
     page_url: str,
@@ -461,6 +473,17 @@ def extract_page_data(
                 rss_feeds.append(full_l)
             if ltype == "text/markdown" and full_l not in markdown_alternates:
                 markdown_alternates.append(full_l)
+        if "describedby" in rels and full_l not in described_by and len(described_by) < 5:
+            described_by.append(full_l)
+
+    for target, params in parse_link_header(hdrs_low.get("link", "")):
+        try:
+            full_l = urljoin(page_url, target)
+        except ValueError:
+            continue
+        rels = params.get("rel", "").lower().split()
+        if "alternate" in rels and params.get("type", "").lower() == "text/markdown" and full_l not in markdown_alternates:
+            markdown_alternates.append(full_l)
         if "describedby" in rels and full_l not in described_by and len(described_by) < 5:
             described_by.append(full_l)
 

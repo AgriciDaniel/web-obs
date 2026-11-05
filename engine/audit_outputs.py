@@ -50,6 +50,8 @@ def _rechecked(fid: str, url: str, source: str, ctx: dict) -> bool:
         return ctx["dns"]
     if fid.startswith(_HEADER_IDS):
         return ctx["headers"]
+    if fid.startswith("markdown-alternate-"):
+        return url in ctx.get("markdownChecked", set())
     if fid.startswith("llmstxt-"):
         # The llms.txt probe must have got an answer (found, absent or an HTML page). A link task also needs that
         # link answered this time: a link the direct checks did not reach proves nothing.

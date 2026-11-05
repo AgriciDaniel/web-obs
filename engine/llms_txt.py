@@ -311,14 +311,23 @@ def llms_findings(ai_intel: dict, origin: str) -> list[dict]:
     validation = (ai_intel.get("validation") or {}).get("llmsTxt") or {}
     out: list[dict] = []
     draft_note = " A draft built from this capture is in _llms-txt-draft.md." if (ai_intel.get("llmsDraft") or {}).get("path") else ""
+    # A missing file is information, not a task: Google Search ignores llms.txt, Lighthouse marks a 404 as not
+    # applicable, and no major AI assistant documents reading it. Tools that are pointed at a site may still use it.
+    optional = (" It is optional: Google Search ignores it and it does not affect rankings, but coding tools and "
+                "assistants that are given your site can use it.")
     if state == "absent":
-        out.append(_finding("llmstxt-missing", "review", "No llms.txt",
-                            "llms.txt is an optional, plain markdown index that points AI agents at your key pages." + draft_note,
+        out.append(_finding("llmstxt-missing", "coverage", "No llms.txt",
+                            "llms.txt is a plain markdown index that points AI agents at your key pages." + optional + draft_note,
                             [{"url": file_url, "detail": f"HTTP {probe.get('statusCode')}."}]))
     elif state == "html":
-        out.append(_finding("llmstxt-serves-html", "review", "llms.txt address serves a web page",
-                            "The address answers with an HTML page instead of a markdown file, so agents find no llms.txt." + draft_note,
+        out.append(_finding("llmstxt-serves-html", "coverage", "llms.txt address serves a web page",
+                            "The address answers with an HTML page instead of a markdown file, so agents find no llms.txt." + optional + draft_note,
                             [{"url": file_url, "detail": "HTML returned with HTTP 200."}]))
+    elif state == "unavailable" and (probe.get("statusCode") or 0) >= 500:
+        out.append(_finding("llmstxt-server-error", "attention", "llms.txt returns a server error",
+                            "The server fails when asked for /llms.txt. Chrome Lighthouse fails its llms.txt check for this, "
+                            "and agents get an error instead of a file or a clean 404.",
+                            [{"url": file_url, "detail": f"HTTP {probe.get('statusCode')}."}]))
     if state != "found" or not validation:
         return out
     format_notes = [n for n in validation.get("notes") or [] if n["level"] in ("error", "warn")]
@@ -347,6 +356,44 @@ def llms_findings(ai_intel: dict, origin: str) -> list[dict]:
                             "Agents that fetch pages when a person asks them to are blocked in robots.txt, so they cannot follow the llms.txt links.",
                             [{"url": origin.rstrip("/") + "/robots.txt", "detail": ", ".join(blocked)}]))
     return out
+
+
+MARKDOWN_CHECK_PAGES = 10
+MARKDOWN_CHECK_SECONDS = 15
+
+
+def check_markdown_copy(url: str, timeout: float) -> dict:
+    """GET a declared markdown copy and say whether it is one: HTTP 200 and not an HTML page."""
+    from url_safety import DEFAULT_REQUEST_HEADERS, safe_requests_session
+    try:
+        with safe_requests_session(url) as session:
+            response = session.get(url, headers={**DEFAULT_REQUEST_HEADERS, "Accept": "text/markdown, text/plain;q=0.9, */*;q=0.1"},
+                                   timeout=timeout, stream=True)
+            try:
+                status = response.status_code
+                kind = (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+                head = response.raw.read(2048, decode_content=True).decode("utf-8", errors="replace").lstrip().lower()
+            finally:
+                response.close()
+    except Exception as exc:  # a refused, failed or timed-out request is not a verdict on the copy
+        return {"state": "unchecked", "statusCode": None, "detail": f"Not checked ({type(exc).__name__})."}
+    if status != 200:
+        return {"state": "broken" if status in (404, 410) else "unavailable", "statusCode": status, "detail": f"HTTP {status}."}
+    if kind == "text/html" or head.startswith(("<!doctype html", "<html")):
+        return {"state": "html", "statusCode": status, "detail": "Returns an HTML page, not markdown."}
+    return {"state": "ok", "statusCode": status, "detail": f"Markdown served ({kind or 'no content type'})."}
+
+
+def markdown_findings(rows: list[dict]) -> list[dict]:
+    """Pages that declare a markdown version (llms.txt v2) that does not load as markdown."""
+    bad = [r for r in rows if r["state"] in ("broken", "unavailable", "html")]
+    if not bad:
+        return []
+    return [{"id": "markdown-alternate-broken", "category": "structure", "tone": "review",
+             "title": "Declared markdown versions that do not load",
+             "explanation": "These pages point agents at a markdown copy (rel=\"alternate\" type=\"text/markdown\"), but the copy is missing, "
+                            "fails, or is an HTML page. Fix the copy or remove the pointer.",
+             "targets": [{"url": r["page"], "detail": f"{r['url']}: {r['detail']}"} for r in bad][:200], "targetCount": len(bad)}]
 
 
 # Draft: an llms.txt built only from what this capture observed

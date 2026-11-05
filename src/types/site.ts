@@ -274,6 +274,7 @@ export interface SiteAiReadinessIntel {
   llmsLinks?: Array<{ url: string; line: number; section: string; title: string; sameSite: boolean; state: 'ok' | 'redirect' | 'broken' | 'unavailable' | 'noindex' | 'non-canonical' | 'blocked' | 'external' | 'unchecked'; detail: string; statusCode?: number | null }>;
   llmsDraft?: { text: string; pages: number; hasSummary: boolean; markdownLinks: number; path?: string };
   describedBy?: string[];
+  markdownAlternates?: { declaredPages: number; checked: Array<{ page: string; url: string; state: 'ok' | 'broken' | 'unavailable' | 'html' | 'blocked' | 'unchecked'; statusCode?: number | null; detail: string }> };
   markdownAlternatePages?: number;
   userTriggeredBots?: string[];
   siteChecks?: Record<string, { state: 'ok' | 'warn' | 'fail' | 'skipped' | 'not-resolving' | 'unreachable'; detail: string; statusCode?: number }>;

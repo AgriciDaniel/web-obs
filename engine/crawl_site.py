@@ -1590,11 +1590,27 @@ def _capture_to_staging(
                            and not llms_txt.is_secondary_page(n["url"]) and not is_listed(n)][:10]
         llms_draft["path"] = llms_txt.write_draft_note(site_root, domain_folder, captured_iso, llms_draft, llms_validation, strong_unlisted)
         ai_intel["llmsDraft"] = {**{k: v for k, v in llms_draft.items() if k != "text"}, "text": llms_draft["text"][:20000]}
+    # llms.txt v2: pages may declare a markdown copy. Check that the strongest few load as markdown.
+    markdown_rows = []
+    by_strength = sorted(internal_only, key=lambda n: (n["url"] != home_url, -(n.get("authorityScore") or 0), n["url"]))
+    candidates = [(n["url"], markdown_by_url[n["url"]][0]) for n in by_strength if n["url"] in markdown_by_url][:llms_txt.MARKDOWN_CHECK_PAGES]
+    if candidates and not capture_out_of_time(2):
+        check_until = time.monotonic() + within_capture_deadline(llms_txt.MARKDOWN_CHECK_SECONDS)
+        for page_url, copy_url in candidates:
+            left = check_until - time.monotonic()
+            if left < 0.5:
+                break
+            if not allow_page(copy_url):
+                markdown_rows.append({"page": page_url, "url": copy_url, "state": "blocked", "statusCode": None,
+                                      "detail": "robots.txt does not allow fetching it."})
+                continue
+            markdown_rows.append({"page": page_url, "url": copy_url, **llms_txt.check_markdown_copy(copy_url, min(5.0, left))})
+    ai_intel["markdownAlternates"] = {"declaredPages": len(markdown_by_url), "checked": markdown_rows}
     ai_intel["describedBy"] = sorted({target for p in crawled_pages.values() for target in (p.get("extracted") or {}).get("described_by") or []})[:10]
     ai_intel["markdownAlternatePages"] = len(markdown_by_url)
 
     audit["findings"] = (page_findings(internal_only) + audit["findings"] + list(browser_result.get("findings") or [])
-                         + t_findings + llms_txt.llms_findings(ai_intel, origin)
+                         + t_findings + llms_txt.llms_findings(ai_intel, origin) + llms_txt.markdown_findings(markdown_rows)
                          + security_txt_findings(ai_intel, origin, datetime.now(timezone.utc).date()) + drift_findings(drift))
     findings_by_url: dict[str, list] = {}
     for finding in audit["findings"]:
@@ -1647,7 +1663,9 @@ def _capture_to_staging(
                   "dns": email_dns.get("state") in ("ok", "warn", "fail"),
                   "headers": bool(home_headers), "robots": bool(sm_result.robots_text),
                   "llms": ((ai_intel.get("llmsProbe") or {}).get("llmsTxt") or {}).get("state") in ("found", "absent", "html"),
-                  "llmsUncheckedLinks": {r["url"] for r in ai_intel.get("llmsLinks") or [] if r["state"] == "unchecked"}}
+                  "llmsUncheckedLinks": {r["url"] for r in ai_intel.get("llmsLinks") or [] if r["state"] == "unchecked"},
+                  "markdownChecked": {r["page"] for r in (ai_intel.get("markdownAlternates") or {}).get("checked") or []
+                                      if r["state"] in ("ok", "broken", "unavailable", "html")}}
     if capture_warnings:
         capture_status = "partial"
     # --no-tasks: no _tasks.md (for a host app that keeps its own task list).

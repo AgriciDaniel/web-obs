@@ -33,8 +33,9 @@ bad.siteIntel.aiReadiness.endpoints.securityTxt = false;
 bad.sitemaps = [];
 bad.linkHealth.brokenLinks = [{}];
 ({ rows, score } = mod.buildDiscoveryChecklist(bad));
-assert.equal(rows.find((r) => r.id === 'llms').state, 'missing');
+assert.equal(rows.find((r) => r.id === 'llms').state, 'unknown', 'a missing llms.txt is optional, not a problem');
 assert.ok(rows.find((r) => r.id === 'llms').fix.startsWith('# '));
+assert.equal(score.find((s) => s.id === 'ai').state, 'pass', 'a missing llms.txt does not lower the AI readiness score');
 assert.equal(rows.find((r) => r.id === 'sitemap').state, 'missing');
 
 // llms.txt: the site's own draft is the fix, a check that got no answer is not called missing,
@@ -44,14 +45,15 @@ assert.equal(rows.find((r) => r.id === 'sitemap').state, 'missing');
   const row = (patch) => mod.llmsRow({ ...ai, ...patch }, patch.validation?.llmsTxt ?? ai.validation.llmsTxt);
   const draft = '# Brand\n\n> What Brand does.\n';
   let r = row({ endpoints: { ...ai.endpoints, llmsTxt: false }, llmsProbe: { llmsTxt: { state: 'absent', statusCode: 404 } }, llmsDraft: { text: draft, pages: 3, hasSummary: true, markdownLinks: 0 } });
-  assert.equal(r.state, 'missing');
+  assert.equal(r.state, 'unknown');
+  assert.match(r.detail, /Google Search ignores it/);
   assert.equal(r.fix, draft, 'the draft built from the capture is offered, not the generic template');
   assert.match(r.detail, /draft built from this capture/);
   r = row({ endpoints: { ...ai.endpoints, llmsTxt: false }, llmsProbe: { llmsTxt: { state: 'refused' } } });
   assert.equal(r.state, 'unknown');
   assert.equal(r.fix, undefined);
   r = row({ endpoints: { ...ai.endpoints, llmsTxt: false }, llmsProbe: { llmsTxt: { state: 'html', statusCode: 200 } } });
-  assert.equal(r.state, 'missing');
+  assert.equal(r.state, 'unknown');
   assert.match(r.detail, /serves a web page/);
   const checked = { valid: true, issues: [], notes: [], stats: { bytes: 400, approxTokens: 100, sections: 1, links: 2 }, hasOptional: false };
   r = row({ validation: { llmsTxt: checked }, llmsLinks: [{ url: 'https://a.test/', sameSite: true, state: 'ok', line: 5 }, { url: 'https://a.test/b', sameSite: true, state: 'ok', line: 6 }] });
@@ -68,6 +70,21 @@ assert.equal(rows.find((r) => r.id === 'sitemap').state, 'missing');
   assert.equal(r.state, 'ok', 'writing guidance alone is not a warning');
   r = row({ validation: { llmsTxt: { valid: true, issues: [] } } });
   assert.equal(r.detail, 'Found and matches the llmstxt.org format.', 'an older capture makes no claim about links');
+  r = row({ endpoints: { ...ai.endpoints, llmsTxt: false }, llmsProbe: { llmsTxt: { state: 'unavailable', statusCode: 503, detail: 'HTTP 503.' } } });
+  assert.equal(r.state, 'warn', 'a server error is the one missing case that is a problem');
+  assert.match(r.detail, /HTTP 503/);
+  r = row({ endpoints: { ...ai.endpoints, llmsTxt: false }, llmsProbe: { llmsTxt: { state: 'unavailable', statusCode: 403, detail: 'HTTP 403.' } } });
+  assert.equal(r.state, 'unknown');
+
+  assert.equal(mod.markdownRow({ ...ai }), null, 'older captures have no markdown row');
+  let m = mod.markdownRow({ ...ai, markdownAlternates: { declaredPages: 0, checked: [] } });
+  assert.equal(m.state, 'unknown');
+  m = mod.markdownRow({ ...ai, markdownAlternates: { declaredPages: 3, checked: [
+    { page: 'https://a.test/', url: 'https://a.test/index.md', state: 'ok', detail: '' },
+    { page: 'https://a.test/b', url: 'https://a.test/b.md', state: 'html', detail: '' },
+    { page: 'https://a.test/c', url: 'https://a.test/c.md', state: 'unchecked', detail: '' }] } });
+  assert.equal(m.state, 'warn');
+  assert.match(m.detail, /3 pages declare a markdown copy\. 1 of 2 checked do not load as markdown\./);
 }
 assert.equal(score.find((s) => s.id === 'links').state, 'fail');
 assert.equal(score.find((s) => s.id === 'crawlability').state, 'warn');

@@ -236,6 +236,8 @@ class Fixture(BaseHTTPRequestHandler):
                 return self.reply("", "text/plain", 404)
             if Fixture.llms_mode == "html":
                 return self.reply(page("Home", ""), "text/html; charset=utf-8")
+            if Fixture.llms_mode == "error":
+                return self.reply("Server error", "text/plain", 503)
             return self.reply("# Fixture Co\n\n> We make fixtures.\n\n## Main\n\n"
                               "- [Home](/): the home page\n"
                               f"- [About]({host}/about): about us\n"
@@ -250,10 +252,16 @@ class Fixture(BaseHTTPRequestHandler):
         if path == "/about":
             return self.reply(page("About", "<a href='/'>Home</a>", "<link rel='alternate' type='text/markdown' href='/about.md'>"
                                                                  "<link rel='describedby' href='/llms.txt'>"), "text/html; charset=utf-8")
-        if path == "/blog":
-            return self.reply(page("Blog", "<a href='/blog/one'>One</a> <a href='/blog/two'>Two</a>"), "text/html; charset=utf-8")
+        if path == "/about.md":
+            return self.reply("# About\n\nAbout us, in markdown.\n", "text/markdown; charset=utf-8")
+        if path == "/blog":  # the v2 pointer sent as an HTTP Link header; its copy is really an HTML page
+            return self.reply(page("Blog", "<a href='/blog/one'>One</a> <a href='/blog/two'>Two</a>"), "text/html; charset=utf-8",
+                              headers={"Link": '</blog.md>; rel="alternate"; type="text/markdown"'})
+        if path == "/blog.md":
+            return self.reply(page("Blog", ""), "text/html; charset=utf-8")
         if path == "/blog/one":
-            return self.reply(page("Post one", "<a href='/blog'>Blog</a>"), "text/html; charset=utf-8")
+            return self.reply(page("Post one", "<a href='/blog'>Blog</a>", "<link rel='alternate' type='text/markdown' href='/blog/one.md'>"),
+                              "text/html; charset=utf-8")
         if path == "/blog/two":
             return self.reply(page("Post two", "<a href='/blog'>Blog</a>", "<meta name=robots content=noindex>"), "text/html; charset=utf-8")
         if path == "/unlisted-page":
@@ -266,9 +274,11 @@ class Fixture(BaseHTTPRequestHandler):
             return None
         return self.reply("Not here", "text/plain", 404)
 
-    def reply(self, body, kind, status=200):
+    def reply(self, body, kind, status=200, headers=None):
         data = body.encode("utf-8")
         self.send_response(status)
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -320,7 +330,11 @@ class Capture(unittest.TestCase):
             self.assertTrue(any("reference parser reads only" in t["detail"] for t in findings["llmstxt-format"]["targets"]))
             self.assertIn("llmstxt-agents-blocked", findings, "ChatGPT-User is blocked while llms.txt is offered")
             self.assertEqual(ai["describedBy"], [f"{self.origin}/llms.txt"])
-            self.assertEqual(ai["markdownAlternatePages"], 1)
+            self.assertEqual(ai["markdownAlternatePages"], 3, "two <link> tags and one HTTP Link header")
+            copies = {r["url"].removeprefix(self.origin): r["state"] for r in ai["markdownAlternates"]["checked"]}
+            self.assertEqual(copies, {"/about.md": "ok", "/blog.md": "html", "/blog/one.md": "broken"})
+            broken = next(f for f in manifest["audit"]["findings"] if f["id"] == "markdown-alternate-broken")
+            self.assertEqual({t["url"].removeprefix(self.origin) for t in broken["targets"]}, {"/blog", "/blog/one"})
             report = (site / "_audit.md").read_text(encoding="utf-8")
             self.assertIn("## llms.txt", report)
             self.assertIn("**Title:** Fixture Co", report)
@@ -338,6 +352,10 @@ class Capture(unittest.TestCase):
             self.assertEqual(ai["llmsProbe"]["llmsTxt"]["state"], "absent")
             ids = {f["id"] for f in manifest["audit"]["findings"]}
             self.assertIn("llmstxt-missing", ids)
+            missing = next(f for f in manifest["audit"]["findings"] if f["id"] == "llmstxt-missing")
+            self.assertEqual(missing["tone"], "coverage", "optional, so information only")
+            self.assertIn("Google Search ignores it", missing["explanation"])
+            self.assertNotIn("No llms.txt", (site / "_tasks.md").read_text(encoding="utf-8"), "a missing llms.txt is not a task")
             self.assertFalse(ids & {"llmstxt-format", "llmstxt-dead-links"})
             draft = ai["llmsDraft"]["text"]
             result = llms_txt.validate_llms_txt(draft, base_url=f"{self.origin}/llms.txt")
@@ -379,6 +397,22 @@ class Links(unittest.TestCase):
         self.assertIn("_llms-txt-draft.md", llms_txt.llms_findings(ai, "https://a.test")[0]["explanation"])
 
 
+class ServerError(unittest.TestCase):
+    setUpClass = Capture.__dict__["setUpClass"]  # the same fixture site, without re-running Capture's tests
+    tearDownClass = Capture.__dict__["tearDownClass"]
+    capture = Capture.capture
+
+    def test_a_server_error_is_the_one_missing_case_that_is_a_problem(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manifest, site = self.capture(directory, "error")
+            ai = manifest["siteIntel"]["aiReadiness"]
+            self.assertEqual((ai["llmsProbe"]["llmsTxt"]["state"], ai["llmsProbe"]["llmsTxt"]["statusCode"]), ("unavailable", 503))
+            finding = next(f for f in manifest["audit"]["findings"] if f["id"] == "llmstxt-server-error")
+            self.assertEqual(finding["tone"], "attention")
+            self.assertNotIn("llmstxt-missing", {f["id"] for f in manifest["audit"]["findings"]})
+            self.assertIn("llms.txt returns a server error", (site / "_tasks.md").read_text(encoding="utf-8"))
+
+
 class Tasks(unittest.TestCase):
     def test_llms_tasks_close_only_when_the_llms_check_ran_again(self):
         ctx = {"complete": True, "okUrls": set(), "truncated": set(), "browserUrls": set(), "tls": True, "dns": True,
@@ -391,6 +425,8 @@ class Tasks(unittest.TestCase):
         self.assertTrue(audit_outputs._rechecked("llmstxt-format", "https://a.test/llms.txt", "", unreached))
         self.assertFalse(audit_outputs._rechecked("llmstxt-missing", "https://a.test/llms.txt", "", {**ctx, "llms": False}),
                          "a failed or refused probe never closes a task")
+        self.assertTrue(audit_outputs._rechecked("markdown-alternate-broken", "https://a.test/p", "", {**ctx, "markdownChecked": {"https://a.test/p"}}))
+        self.assertFalse(audit_outputs._rechecked("markdown-alternate-broken", "https://a.test/p", "", {**ctx, "markdownChecked": set()}))
 
     def test_a_validation_crash_is_not_a_clean_recheck(self):
         with patch("site_intel.validate_llms_txt", side_effect=RuntimeError("boom")):

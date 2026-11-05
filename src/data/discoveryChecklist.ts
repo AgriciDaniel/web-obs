@@ -57,14 +57,19 @@ export function llmsRow(ai: AiIntel, llms: LlmsTxtValidation | undefined): Disco
   const draft = ai.llmsDraft?.text;
   const fix = draft || LLMS_SNIPPET;
   if (!ai.endpoints.llmsTxt) {
-    const detail = probe?.state === 'html' ? 'The address serves a web page instead of a markdown file.'
+    // Optional: Google Search ignores it and Lighthouse marks a 404 as not applicable. Only a server error is a problem.
+    const serverError = probe?.state === 'unavailable' && (probe.statusCode ?? 0) >= 500;
+    const detail = serverError ? `The server fails with HTTP ${probe!.statusCode} when asked for it.`
+      : probe?.state === 'html' ? 'The address serves a web page instead of a markdown file.'
       : probe?.state === 'refused' ? 'Not checked: robots.txt does not allow fetching it.'
       : probe?.state === 'unavailable' ? `Not checked: the site answered ${probe.detail ?? 'with an error'}`
       : probe?.state === 'not-checked' ? `Not checked. ${probe.detail ?? ''}`.trim()
       : 'Not found.';
-    const checked = !probe || probe.state === 'absent' || probe.state === 'html';
-    return { id: 'llms', label: 'llms.txt', state: checked ? 'missing' : 'unknown',
-      detail: draft ? `${detail} A draft built from this capture is ready to copy.` : detail, fix: checked ? fix : undefined };
+    const answered = !probe || probe.state === 'absent' || probe.state === 'html';
+    const note = answered ? ' Optional: Google Search ignores it; coding tools and assistants given your site can use it.' : '';
+    return { id: 'llms', label: 'llms.txt', state: serverError ? 'warn' : 'unknown',
+      detail: detail + note + (draft && answered ? ' A draft built from this capture is ready to copy.' : ''),
+      fix: answered || serverError ? fix : undefined };
   }
   if (!llms?.notes) {  // captured before 0.2.0 checked the full format
     return { id: 'llms', label: 'llms.txt', state: llms?.issues.length ? 'warn' : 'ok',
@@ -94,6 +99,22 @@ export function llmsRow(ai: AiIntel, llms: LlmsTxtValidation | undefined): Disco
     fix: errors ? fix : undefined,
     badge: llms.stats ? `~${llms.stats.approxTokens.toLocaleString('en-US')} tokens` : undefined,
   };
+}
+
+/** llms.txt v2: pages that declare a markdown copy, and whether the copies checked load as markdown. */
+export function markdownRow(ai: AiIntel): DiscoveryRow | null {
+  const info = ai.markdownAlternates;
+  if (!info) return null;
+  const checked = info.checked.filter(r => r.state !== 'unchecked' && r.state !== 'blocked');
+  const bad = checked.filter(r => r.state !== 'ok');
+  if (!info.declaredPages) {
+    return { id: 'markdown-copies', label: 'Markdown page copies', state: 'unknown',
+      detail: 'No page declares a markdown copy. Optional (llms.txt v2): rel="alternate" type="text/markdown".' };
+  }
+  return { id: 'markdown-copies', label: 'Markdown page copies', state: bad.length ? 'warn' : 'ok',
+    detail: `${plural(info.declaredPages, 'page')} declare a markdown copy. ` + (checked.length
+      ? (bad.length ? `${bad.length} of ${checked.length} checked do not load as markdown.` : `All ${checked.length} checked load as markdown.`)
+      : 'None could be checked.') };
 }
 
 export function buildDiscoveryChecklist(manifest: SiteGraphManifest): { rows: DiscoveryRow[]; score: ScoreItem[] } {
@@ -130,6 +151,8 @@ export function buildDiscoveryChecklist(manifest: SiteGraphManifest): { rows: Di
 
   if (ai) {
     rows.push(llmsRow(ai, v('llmsTxt') as LlmsTxtValidation | undefined));
+    const markdown = markdownRow(ai);
+    if (markdown) rows.push(markdown);
     rows.push({
       id: 'llms-full',
       label: 'llms-full.txt',
@@ -216,7 +239,8 @@ export function buildDiscoveryChecklist(manifest: SiteGraphManifest): { rows: Di
     {
       id: 'ai',
       label: 'AI readiness',
-      state: !ai ? 'unknown' : !ai.endpoints.llmsTxt || blocked > 0 || (v('llmsTxt') && !v('llmsTxt')!.valid) ? 'warn' : 'pass',
+      // A missing llms.txt is optional and does not lower this score; an invalid one does.
+      state: !ai ? 'unknown' : blocked > 0 || (v('llmsTxt') && !v('llmsTxt')!.valid) ? 'warn' : 'pass',
       detail: !ai ? 'No data.' : `llms.txt ${ai.endpoints.llmsTxt ? 'present' : 'missing'}; ${blocked} AI bots blocked in robots.txt.`,
     },
     {
