@@ -145,6 +145,8 @@ export interface PageReadability {
 }
 
 export interface PageChecks {
+  /** False when the page is written without spaces between words (Chinese, Japanese, Thai...): no word count. */
+  wordsMeasured?: boolean;
   textRatio?: number;
   textChars?: number;
   htmlBytes?: number;

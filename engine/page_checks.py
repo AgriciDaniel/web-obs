@@ -332,11 +332,33 @@ def _validation_errors(html: str) -> Optional[dict]:
             "validator": "html5lib parse errors"}
 
 
+# Scripts written without spaces between words: Han, Hiragana, Katakana, Thai, Lao, Myanmar and Khmer.
+# Korean (Hangul) does use spaces, so it is counted normally.
+_UNSPACED_SCRIPT = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u0e00-\u0eff\u1000-\u109f\u1780-\u17ff]")
+_UNSPACED_LANGS = ("zh", "ja", "th", "lo", "km", "my")
+# Googlebot reads the first 2 MB of an HTML file for Google Search, measured before compression.
+GOOGLEBOT_HTML_LIMIT_BYTES = 2_000_000
+
+
+def words_measurable(text: str, lang: str = "") -> bool:
+    """Whether a whitespace word count means anything for this text.
+
+    Chinese, Japanese, Thai, Lao, Khmer and Burmese do not put spaces between words, so splitting on
+    spaces finds a handful of "words" in a long article. For those, word-based checks are not measured.
+    """
+    if (lang or "").lower().split("-")[0] in _UNSPACED_LANGS:
+        return False
+    letters = sum(1 for ch in text if ch.isalpha())
+    return not letters or len(_UNSPACED_SCRIPT.findall(text)) / letters < 0.3
+
+
 def _spelling(text: str, lang: str) -> Optional[dict]:
     global _SPELLER
     if SpellChecker is None or not _SETTINGS["spell_check"]:
         return None
-    if lang and not lang.lower().startswith("en"):
+    if not lang:  # an undeclared language is not evidence of English; missing-lang already reports it
+        return {"checkedWords": 0, "possibleMisspellings": [], "note": "Spell check skipped: the page does not declare its language."}
+    if not lang.lower().startswith("en"):
         return None
     if _SPELLER is None:
         _SPELLER = SpellChecker(language="en")
@@ -365,21 +387,23 @@ def run_page_checks(*, html: str, soup, page_url: str, headers: dict, lang: str,
     text_chars = len(visible_text)
     text_ratio = round(text_chars / raw_bytes, 4) if raw_bytes else 0.0
     word_total = len(visible_text.split())
+    measurable = words_measurable(visible_text, lang)
     if raw_bytes > 2048 and text_ratio < 0.10:
         issues.append("low-text-ratio")
-    if word_total < 200:
+    if measurable and word_total < 200:
         issues.append("thin-content")
 
     # Relevance of title and description to the body
     body_terms = set(significant_terms(visible_text))
     title_rel = _relevance(title, body_terms)
     desc_rel = _relevance(meta_description, body_terms)
-    if title_rel is not None and title_rel < 0.3 and word_total >= 50:
+    if measurable and title_rel is not None and title_rel < 0.3 and word_total >= 50:
         issues.append("title-not-reflected-in-content")
-    if desc_rel is not None and desc_rel < 0.2 and word_total >= 50:
+    if measurable and desc_rel is not None and desc_rel < 0.2 and word_total >= 50:
         issues.append("description-not-reflected-in-content")
     has_title_tag = bool(soup.title and soup.title.get_text(strip=True))
-    if has_title_tag and len(title) < 20:
+    # Twenty characters is a few English words but a full title in Chinese or Japanese.
+    if has_title_tag and len(title) < 20 and words_measurable(title, lang):
         issues.append("title-too-short")
 
     # Document hygiene
@@ -438,8 +462,8 @@ def run_page_checks(*, html: str, soup, page_url: str, headers: dict, lang: str,
     lorem = bool(_LOREM_RE.search(visible_text))
     if lorem:
         issues.append("placeholder-text")
-    if raw_bytes > 3 * 1024 * 1024:
-        issues.append("html-over-3mb")
+    if raw_bytes > GOOGLEBOT_HTML_LIMIT_BYTES:
+        issues.append("html-over-2mb")
     if not lang:
         issues.append("missing-lang")
 
@@ -555,6 +579,7 @@ def run_page_checks(*, html: str, soup, page_url: str, headers: dict, lang: str,
         issues.append(f"possible-misspellings ({len(spelling['possibleMisspellings'])})")
 
     checks = {
+        "wordsMeasured": measurable,  # False: word count and word-based checks not measured for this language
         "textRatio": text_ratio,
         "textChars": text_chars,
         "htmlBytes": raw_bytes,

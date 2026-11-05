@@ -88,7 +88,9 @@ function ChecksGroups({ checks, node }: { checks: PageChecks; node: SiteNode }) 
   return <>
     <Disclosure summary="Content">
       <KeyValueList rows={[
-        { label: 'Words', value: num(node.wordCount) },
+        checks.wordsMeasured === false
+          ? { label: 'Words', value: 'Not measured', title: 'This language is written without spaces between words, so a word count would be wrong' }
+          : { label: 'Words', value: num(node.wordCount) },
         { label: 'Text to HTML', value: pct(checks.textRatio), title: 'Visible text characters divided by HTML bytes' },
         { label: 'Reading ease / grade', value: rd ? `${rd.fleschReadingEase} / ${rd.fleschKincaidGrade}` : NO_DATA, title: 'Flesch reading ease and Flesch-Kincaid grade' },
         { label: 'Readability index', value: rd ? String(rd.automatedReadabilityIndex) : NO_DATA, title: 'Automated readability index' },
