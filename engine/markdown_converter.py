@@ -765,7 +765,10 @@ def _render_block_node(node: Tag | NavigableString, base_url: str, list_depth: i
         if not raw_code.strip():
             return ""
         lang = _guess_code_lang(node, raw_code)
-        return f"```{lang}\n{raw_code}\n```"
+        # CommonMark: the fence must be longer than any backtick run inside, or a fence shown in the
+        # code (a tutorial's "```js") would close the block early and turn the rest into page text.
+        fence = "`" * max(3, max((len(run) for run in re.findall(r"`+", raw_code)), default=0) + 1)
+        return f"{fence}{lang}\n{raw_code}\n{fence}"
 
     if name == "table":
         return _render_table(node, base_url)

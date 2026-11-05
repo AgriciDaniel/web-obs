@@ -185,7 +185,8 @@ def rewrite_markdown_for_obsidian(
         return ""
 
     # 1. Rewrite Markdown images ![alt](url) to local vault embeds ![[sites/<domain>/assets/file|alt]]
-    img_pattern = re.compile(r"!\[([^\]\n]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+    # Destinations may hold balanced parentheses (a_(1).png), as CommonMark allows.
+    img_pattern = re.compile(r"!\[([^\]\n]*)\]\(((?:[^\s()]|\([^\s()]*\))+)(?:\s+\"[^\"]*\")?\)")
 
     def _replace_img(match: re.Match) -> str:
         alt = match.group(1).strip().replace("|", "-").replace("\n", " ")
@@ -202,7 +203,7 @@ def rewrite_markdown_for_obsidian(
     rewritten = img_pattern.sub(_replace_img, md_text)
 
     # 2. Rewrite single-line inline Markdown links [text](url) when target is a crawled internal page note
-    link_pattern = re.compile(r"(?<!!)\[([^\]]+)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+    link_pattern = re.compile(r"(?<!!)\[([^\]]+)\]\(((?:[^\s()]|\([^\s()]*\))+)(?:\s+\"[^\"]*\")?\)")
 
     def _replace_link(match: re.Match) -> str:
         raw_label = re.sub(r"\s+", " ", match.group(1)).strip().replace("|", "-")

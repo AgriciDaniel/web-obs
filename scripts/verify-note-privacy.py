@@ -24,6 +24,8 @@ ENGINE = Path(os.environ.get("WEBOBS_ENGINE_DIR") or Path(__file__).resolve().pa
 sys.path.insert(0, str(ENGINE))
 import crawl_site  # noqa: E402
 
+ZW = "\u200b"  # the zero-width space the sanitizer puts in code, so it looks the same and loads nothing
+
 CDN = "https://cdn.thirdparty.invalid"
 PNG = bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8cfc0f01f0005000201"
                     "e5279c1e0000000049454e44ae426082")
@@ -48,6 +50,11 @@ PAGE = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <p>Markdown text ![shown]({CDN}/text-markdown.png) and ![[{CDN}/text-wikilink.png]] and ![ref][r1].</p>
 <p>[r1]: {CDN}/reference.png</p>
 <pre><code>&lt;img src="{CDN}/code.png"&gt;</code></pre>
+<pre><code>Install:
+```js
+npm install
+```
+&lt;img src="{CDN}/after-inner-fence.gif"&gt;</code></pre>
 <p>Reach us at <a href="https://example.org/contact">the contact page</a>.</p>
 </main></body></html>"""
 
@@ -155,7 +162,9 @@ class Evidence(Capture):
             self.assertIn(f"[Image not saved: Team photo]({CDN}/team.jpg)", home)
             self.assertIn("[Image not saved: Cup](", home)
             self.assertIn(f'&lt;img src="{CDN}/escaped.gif"', home, "escaped HTML is shown as text")
-            self.assertIn(f'<img src="{CDN}/code.png">', home, "code keeps its exact text")
+            self.assertIn(f'<img src="{CDN}/code.png">', home.replace(ZW, ""), "code keeps its visible text")
+            self.assertIn(f'<img src="{CDN}/after-inner-fence.gif">', home.replace(ZW, ""))
+            self.assertRegex(home, r"(?m)^````[a-z]*\nInstall:", "a fence shown in <pre> gets a longer fence")
             self.assertIn(f"[Image not saved: shown]({CDN}/text-markdown.png)", home)
             self.assertIn(f"({CDN}/text-wikilink.png)", home)
 
@@ -175,7 +184,7 @@ class Sanitizer(unittest.TestCase):
             f'<img src="{CDN}/i.png">': f'&lt;img src="{CDN}/i.png">',
             f"<video poster='{CDN}/p.jpg'></video>": f"&lt;video poster='{CDN}/p.jpg'>&lt;/video>",
             f'<div style="background:url({CDN}/s.png)">': f'&lt;div style="background:url({CDN}/s.png)">',
-            "![ref][r]": "\\![ref][r]",
+            "![ref][r]": "!" + ZW + "[ref][r]",
         }
         for raw, expected in cases.items():
             with self.subTest(raw=raw):
@@ -184,11 +193,19 @@ class Sanitizer(unittest.TestCase):
 
     def test_kept_as_is(self):
         kept = ["![[sites/x/assets/logo.png|Logo]]", "![local](assets/logo.png)", "See <https://example.com/a> now.",
-                "Mail <team@example.com>.", "`<img src=x>` stays code", "```html\n<iframe src=x></iframe>\n```\n",
-                "> ```\n> <img src=x>\n> ```\n", "a < b and 3<4", "---\ntitle: \"<b>\"\n---\nbody\n", "[link](https://example.com)"]
+                "Mail <team@example.com>.", "a < b and 3<4", "[link](https://example.com)"]
         for text in kept:
             with self.subTest(text=text):
                 self.assertEqual(self.clean(text), text)
+
+    def test_code_and_frontmatter_look_the_same(self):
+        shown = ["`<img src=x>` stays code", "```html\n<iframe src=x></iframe>\n```\n", "> ```\n> <img src=x>\n> ```\n",
+                 "    <img src=x> indented code\n", "---\ntitle: \"<b> ![t](https://x.test/t.png)\"\n---\nbody\n"]
+        for text in shown:
+            with self.subTest(text=text):
+                clean = self.clean(text)
+                self.assertEqual(clean.replace(ZW, ""), text)
+                self.assertIn(ZW, clean)
 
     def test_idempotent(self):
         once = self.clean(PAGE)
