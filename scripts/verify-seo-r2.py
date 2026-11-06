@@ -18,6 +18,8 @@ from unittest.mock import patch
 # WEBOBS_ENGINE_DIR=<dir> runs these tests against another engine checkout.
 sys.path.insert(0, str(Path(os.environ.get("WEBOBS_ENGINE_DIR") or Path(__file__).resolve().parents[1] / "engine")))
 import crawl_site  # noqa: E402
+import evidence_export  # noqa: E402
+import site_audit  # noqa: E402
 import extractor  # noqa: E402
 import issue_catalog  # noqa: E402
 import page_checks  # noqa: E402
@@ -60,7 +62,7 @@ class RobotsPrecedence(unittest.TestCase):
     def test_an_invalid_user_agent_token_still_starts_its_own_group(self):
         # RFC 9309: a group ends at the next user-agent line after rules. "80legs", "008", "360Spider" and "*bot"
         # are not valid product tokens, so their group matches no crawler, and its rules must not join the one above.
-        for value in ("80legs", "008", "360Spider", "*bot"):
+        for value in ("", "80legs", "008", "360Spider", "*bot"):
             with self.subTest(value=value):
                 self.assertEqual(decide(f"User-agent: *\nDisallow: /\n\nUser-agent: {value}\nAllow: /\n", "https://x.test/a"), "disallowed")
                 self.assertEqual(decide(f"User-agent: GPTBot\nDisallow: /\n\nUser-agent: {value}\nAllow: /\n", "https://x.test/a", "GPTBot"),
@@ -69,6 +71,19 @@ class RobotsPrecedence(unittest.TestCase):
         self.assertEqual(policy["rules"], [["disallow", "/"]], "*bot is not the global group")
         # Members of one group may sit beside an invalid value; the valid ones keep the group's rules.
         self.assertEqual(decide("User-agent: GPTBot\nUser-agent: 80legs\nDisallow: /\n", "https://x.test/a", "GPTBot"), "disallowed")
+
+    def test_an_empty_user_agent_value_starts_a_group_for_no_crawler(self):
+        self.assertEqual(decide("User-agent: *\nDisallow: /\n\nUser-agent:\nAllow: /\n", "https://x.test/a"), "disallowed")
+        self.assertEqual(decide("User-agent: GPTBot\nDisallow: /a\n\nUser-agent:\nDisallow: /\n", "https://x.test/z", "GPTBot"), "allowed")
+        policy = site_intel.build_robots_policy("User-agent: *\nDisallow: /x\n\nUser-agent:\nCrawl-delay: 30\n", 200, user_agent="WebObs/1.0")
+        self.assertIsNone(policy["crawlDelaySec"])
+        # Between two valid groups: neither gains the empty group's rules, and the group after it is still read.
+        robots = "User-agent: GPTBot\nDisallow: /a\n\nUser-agent:\nDisallow: /\n\nUser-agent: *\nDisallow: /x\nCrawl-delay: 4\n"
+        self.assertEqual(decide(robots, "https://x.test/z", "GPTBot"), "allowed")
+        self.assertEqual(decide(robots, "https://x.test/a", "GPTBot"), "disallowed")
+        self.assertEqual(decide(robots, "https://x.test/z"), "allowed")
+        self.assertEqual(decide(robots, "https://x.test/x"), "disallowed")
+        self.assertEqual(site_intel.build_robots_policy(robots, 200, user_agent="WebObs/1.0")["crawlDelaySec"], 4.0)
 
     def test_crawl_delay_groups_match_the_rule_groups(self):
         for value, delay in (("WebObs/1.0", 10.0), ("WebObs*", 7.0), ("webobs", 3.0)):
@@ -205,6 +220,36 @@ class UnspacedLanguageNotes(unittest.TestCase):
         self.assertIn("note.words_measured != false", bases, "the Thin Pages view leaves such pages out")
         home = next(n for n in manifest["nodes"] if n.get("pageChecks"))
         self.assertIs(home["pageChecks"]["wordsMeasured"], False)
+
+
+def audit_node(url, measured, **extra):
+    node = {"url": url, "statusCode": 200, "health": "ok", "wordCount": 400, "contentHash": "same", "simhash": 12345,
+            "outlinksTotal": 1, "outlinksBody": 0, "inlinksTotal": 2, "pageChecks": {"wordsMeasured": measured}}
+    node.update(extra)
+    return node
+
+
+class UnmeasuredWordsInAudits(unittest.TestCase):
+    """Checks gated on a word count leave out pages whose words are not measured; measured twins are the control."""
+
+    def test_duplicates_and_dead_ends(self):
+        zh = [audit_node("https://x.test/zh-a", False), audit_node("https://x.test/zh-b", False)]
+        en = [audit_node("https://x.test/en-a", True, contentHash="en", simhash=999),
+              audit_node("https://x.test/en-b", True, contentHash="en", simhash=999)]
+        duplicates = str(site_audit.find_duplicates(zh + en))
+        self.assertIn("en-a", duplicates)
+        self.assertNotIn("zh-a", duplicates)
+        weak = site_audit.weak_pages(zh + en, {}, "https://x.test/")
+        self.assertEqual(weak["noBodyOutlinks"], ["https://x.test/en-a", "https://x.test/en-b"])
+
+    def test_no_word_change_between_captures(self):
+        prev = {"schemaVersion": "1.3.0", "capturedAt": "2026-11-01T00:00:00Z", "captureStatus": "complete",
+                "nodes": [audit_node("https://x.test/zh", False, wordCount=80), audit_node("https://x.test/en", True, wordCount=80)]}
+        cur = [audit_node("https://x.test/zh", False, wordCount=95), audit_node("https://x.test/en", True, wordCount=95)]
+        with tempfile.TemporaryDirectory() as new, redirect_stdout(io.StringIO()):
+            drift = evidence_export.compute_and_write_site_drift(new, "x.test", "2026-11-02T00:00:00Z", prev, cur, [],
+                                                                  capture_status="complete")
+        self.assertEqual(drift["wordDeltas"], [{"url": "https://x.test/en", "delta": 15}])
 
 
 class Wording(unittest.TestCase):

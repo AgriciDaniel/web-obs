@@ -382,7 +382,7 @@ def detect_funnel_platforms(all_external_urls: list[str]) -> list[dict]:
 def _robots_agent_token(value: str) -> str:
     """RFC 9309 product token: "*" alone, or the leading run of letters, "_" and "-".
 
-    "GPTBot/1.1" and "GPTBot*" are gptbot. A value with no valid token ("80legs", "008", "*bot") gives "",
+    "GPTBot/1.1" and "GPTBot*" are gptbot. An empty value or one with no valid token ("80legs", "008", "*bot") gives "",
     which still starts a group, one that matches no crawler: its rules must not join the group above.
     """
     if re.fullmatch(r"\*\s*", value or ""):
@@ -406,8 +406,7 @@ def _parse_robots_groups(robots_text: str) -> tuple[dict[str, list[tuple[str, st
         v_clean = val.strip()
 
         if f_low == "user-agent":
-            if not v_clean:
-                continue
+            # An empty or invalid value still starts a group, one that matches no crawler ("" from the helper).
             agent_token = _robots_agent_token(v_clean)
             if seen_rule_in_group:
                 current_agents, seen_rule_in_group = [], False
@@ -439,9 +438,7 @@ def _parse_crawl_delays(robots_text: str) -> dict[str, float]:
         field, val = line.split(":", 1)
         f_low, v_clean = field.strip().lower(), val.strip()
         if f_low == "user-agent":
-            if not v_clean:
-                continue
-            agent_token = _robots_agent_token(v_clean)  # the same groups as the rules
+            agent_token = _robots_agent_token(v_clean)  # the same groups as the rules, empty values included
             if seen_rule_in_group:
                 current_agents, seen_rule_in_group = [], False
             if agent_token:

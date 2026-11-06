@@ -14,6 +14,18 @@ const { buildSiteAudit } = await load('src/data/siteAudit.ts');
 const clone = () => structuredClone(fixture);
 let count = 0;
 function check(name, fn) { fn(); count++; console.log('[PASS] ' + name); }
+check('the reading hint names no word count for pages whose words are not measured', () => {
+  const manifest = clone();
+  const pages = manifest.nodes.filter(node => node.kind !== 'external-domain');
+  const reading = buildDiscoveryStops(pages).find(stop => /words were retained/.test(stop.description));
+  assert.ok(reading, 'a measured page gets the hint');
+  for (const node of pages) node.pageChecks = { ...(node.pageChecks ?? {}), wordsMeasured: node.id === reading.node.id };
+  assert.ok(buildDiscoveryStops(pages).some(stop => stop.node.id === reading.node.id && /words were retained/.test(stop.description)),
+    'the measured page keeps it among unmeasured ones');
+  for (const node of pages) node.pageChecks.wordsMeasured = false;
+  assert.ok(pages.some(node => node.wordCount > 0), 'the fixture keeps its stored counts');
+  assert.ok(!buildDiscoveryStops(pages).some(stop => /words were retained/.test(stop.description)), 'no "words were retained" hint');
+});
 check('highlights are unique, drawn from visible nodes, and do not mutate the capture', () => {
   const manifest = clone();
   const before = JSON.stringify(manifest);

@@ -268,7 +268,9 @@ def compute_and_write_site_drift(site_root: str, clean_domain: str, captured_iso
         if (old.get("statusCode"), old.get("health")) != (new.get("statusCode"), new.get("health")):
             changes["healthChanges"].append({"url": url, "oldStatus": old.get("statusCode"), "newStatus": new.get("statusCode")})
         delta = int(new.get("wordCount") or 0) - int(old.get("wordCount") or 0)
-        if body_observed and delta:
+        # No word change where either capture did not measure words (languages written without spaces).
+        measured = all((node.get("pageChecks") or {}).get("wordsMeasured") is not False for node in (old, new))
+        if body_observed and measured and delta:
             changes["wordDeltas"].append({"url": url, "delta": delta})
         if body_observed and old.get("contentHash") and new.get("contentHash") and old["contentHash"] != new["contentHash"]:
             changes["contentChanges"].append({"url": url, "oldHash": old["contentHash"], "newHash": new["contentHash"]})

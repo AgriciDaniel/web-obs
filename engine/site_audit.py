@@ -119,6 +119,13 @@ def _self_canonical(n: dict) -> bool:
     return not canon or _key(canon) == _key(n["url"])
 
 
+def _words(n: dict) -> int:
+    """The page's word count, or 0 where words are not measured (languages written without spaces)."""
+    if (n.get("pageChecks") or {}).get("wordsMeasured") is False:
+        return 0
+    return n.get("wordCount") or 0
+
+
 def find_duplicates(nodes: list[dict]) -> dict:
     # Pages that canonicalize elsewhere already name their preferred URL; the conflict checks cover them.
     ok = [n for n in nodes if _page_ok(n) and not _noindex(n) and _self_canonical(n)]
@@ -136,14 +143,14 @@ def find_duplicates(nodes: list[dict]) -> dict:
 
     exact = defaultdict(list)
     for n in ok:
-        if n.get("contentHash") and (n.get("wordCount") or 0) >= 30:
+        if n.get("contentHash") and _words(n) >= 30:
             exact[n["contentHash"]].append(n["url"])
     exact_groups = [sorted(urls) for urls in exact.values() if len(urls) > 1]
     exact_members = {u for g in exact_groups for u in g}
 
     near = []
     hashed = [(n["url"], n["simhash"]) for n in ok
-              if n.get("simhash") and (n.get("wordCount") or 0) >= 80 and n["url"] not in exact_members]
+              if n.get("simhash") and _words(n) >= 80 and n["url"] not in exact_members]
     # All pairs: at most a few hundred thousand popcounts for the largest capture.
     for i, (url_a, value_a) in enumerate(hashed):
         for url_b, value_b in hashed[i + 1:]:
@@ -277,7 +284,7 @@ def weak_pages(nodes: list[dict], internal_pair_meta: dict, home_url: str) -> di
             single.append(n["url"])
         if (n.get("outlinksTotal") or 0) == 0:
             dead.append(n["url"])
-        elif (n.get("outlinksBody") or 0) == 0 and (n.get("wordCount") or 0) >= 300:
+        elif (n.get("outlinksBody") or 0) == 0 and _words(n) >= 300:
             no_body.append(n["url"])
         if isinstance(n.get("clickDepth"), int) and n["clickDepth"] > 3:
             deep.append({"url": n["url"], "clickDepth": n["clickDepth"]})
