@@ -8,16 +8,19 @@ __pycache__/
 .pytest_cache/
 .obsidian/*.bak
 
-# Private or local-only material, never commit
+# Captures and vault settings stay on your machine
 sites/
 .web-obs/
 .obsidian/
-SESSION-HANDOFF*
-WEB-OBS-BRAIN-HANDOFF.md
-Web-Obs-Brain/dist/
+
+# Secrets and keys
+.env
+.env.*
+*.pem
+*.key
+*.p12
+id_rsa*
+id_ed25519*
 
 # Local release output
 release/
-
-# Separate local-review package, not part of this repository
-Web-Obs-Brain/

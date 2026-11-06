@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 - 2026-11-03
+## 0.2.0 - 2026-11-06
 
 A much deeper audit. Every check still runs on your computer and talks only to the site you capture, with two stated exceptions below.
 
