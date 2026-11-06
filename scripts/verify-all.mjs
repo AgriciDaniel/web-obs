@@ -600,7 +600,9 @@ async function main() {
   // so 60 s timed out with no fault in the code.
   execFileSync(pythonCommand(ROOT), ['scripts/verify-no-api.py'], { stdio: 'inherit', timeout: 180_000 });
   for (const script of ['scripts/verify-browser-runtime.py', 'scripts/verify-link-policy.py', 'scripts/verify-evidence.py', 'scripts/verify-recapture.py', 'scripts/verify-system.py', 'scripts/verify-resources.py', 'scripts/verify-workers.py', 'scripts/verify-pipeline.py', 'scripts/verify-canvas-export.py', 'scripts/verify-link-continuation.py', 'scripts/verify-failure-paths.py', 'scripts/verify-trailing-slash.py', 'scripts/verify-render-on-demand.py', 'scripts/verify-transport-checks.py', 'scripts/verify-audit-expansion.py', 'scripts/verify-browser-audit.py', 'scripts/verify-crawler-identity.py', 'scripts/verify-note-structure.py', 'scripts/verify-brand-logo.py', 'scripts/verify-page-snapshots.py', 'scripts/verify-capture-switches.py', 'scripts/verify-llms-txt.py', 'scripts/verify-seo-r2.py', 'scripts/verify-note-privacy.py', 'scripts/verify-note-render.py', 'scripts/verify-manifest-switches.py']) {
-    execFileSync(pythonCommand(ROOT), [script, ...(script.endsWith('verify-pipeline.py') ? ['--benchmark'] : [])], { stdio: 'inherit', timeout: 90_000 });
+    // A guard against a hung suite, not a speed test: on GitHub's macOS runners the switch suite took 84 s of the
+    // old 90 s when it passed, and a slower runner timed out with no test failing.
+    execFileSync(pythonCommand(ROOT), [script, ...(script.endsWith('verify-pipeline.py') ? ['--benchmark'] : [])], { stdio: 'inherit', timeout: 300_000 });
   }
   await runEndToEndMockCrawlTest();
   checkBuildAndVaultParity();
