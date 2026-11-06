@@ -197,8 +197,9 @@ def rewrite_markdown_for_obsidian(
             return f"![[{asset_rel}|{alt}]]" if alt else f"![[{asset_rel}]]"
         if raw_target.startswith("inline-svg://"):
             return ""
-        # Not saved: keep the evidence as a plain link, so opening the note fetches nothing.
-        return f"[Image not saved: {alt or 'image'}]({raw_target})"
+        # Not saved: left as written. The final sweep (note_safety) makes it a plain link outside code and
+        # inert inside code, so code keeps its text and opening the note fetches nothing.
+        return match.group(0)
 
     rewritten = img_pattern.sub(_replace_img, md_text)
 
@@ -974,6 +975,8 @@ def _capture_to_staging(
         schema_types = ext["schema_types"] if ext else []
         word_count = ext["word_count"] if ext else 0
         reading_min = ext.get("reading_time_min", 0) if ext else 0
+        # Chinese, Japanese, Thai and other languages written without spaces: a space count is not a word count.
+        words_measured = ((ext or {}).get("page_checks") or {}).get("wordsMeasured", True) is not False
         content_hash = ext.get("content_hash", "") if ext else ""
         images_count = len(ext["images"]) + len(ext.get("inline_svgs") or []) if ext else 0
         images_missing_alt = ext.get("images_missing_alt", 0) if ext else 0
@@ -1042,8 +1045,8 @@ def _capture_to_staging(
             f"in_sitemap: {'true' if in_sm else 'false'}",
             f"url_depth: {u_depth}",
             f"click_depth: {c_depth if c_depth is not None else 'null'}",
-            f"word_count: {word_count}",
-            f"reading_time_min: {reading_min}",
+            *([f"word_count: {word_count}", f"reading_time_min: {reading_min}"] if words_measured
+              else ["words_measured: false"]),
             f"lang: {yaml_quote(lang)}",
             f"author: {yaml_quote(author)}",
             f"published_date: {yaml_quote(pub_date)}",
@@ -1113,7 +1116,8 @@ def _capture_to_staging(
             ("Health", health_word),
             ("Click depth", str(c_depth) if c_depth is not None else "Not linked from home"),
             ("In sitemap", "Yes" if in_sm else "No"),
-            ("Words", f"{word_count:,} (about {reading_min} min read)"),
+            ("Words", f"{word_count:,} (about {reading_min} min read)" if words_measured
+             else "Not measured for this language (written without spaces between words)"),
         ]))
         note_sections.append("")
 

@@ -1,6 +1,7 @@
 import React from 'react';
 import { ExternalLink, FileText, Globe, Mail, Phone, X } from 'lucide-react';
 import type { SiteGraphManifest } from '../types/site';
+import { aiCrawlerRows } from '../data/aiCrawlers';
 import { pendingLinkChecks } from '../data/linkCoverage';
 import { captureDate } from '../data/sitePresentation';
 import { DiscoveryFilesList, SiteHealthList } from './DiscoveryPanel';
@@ -78,8 +79,7 @@ function FilesTab({ manifest }: { manifest: SiteGraphManifest }) {
     hygiene.hreflangNonReciprocal?.length && `${hygiene.hreflangNonReciprocal.length} hreflang not reciprocal`,
   ].filter(Boolean) as string[] : [];
   const crawlerRows: KeyValue[] = ai ? [
-    { label: 'AI bots allowed at /', value: `${ai.allowedAiBotsCount} of ${Object.keys(ai.aiBotsPolicy).length}` },
-    { label: 'Blocked in robots.txt', value: listOr(ai.blockedAiBots, 'None') },
+    ...aiCrawlerRows(ai),
     ...(hygiene ? [{ label: 'Sitemap URLs', value: hygieneParts.length ? hygieneParts.join(', ') : 'No issues found', status: hygieneParts.length ? 'warning' as const : 'good' as const }] : []),
   ] : [];
   return <>

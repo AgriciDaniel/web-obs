@@ -1,4 +1,5 @@
 /** Side-by-side comparison of two saved captures. Pure: reads two manifests, returns Markdown. */
+import { botsUnknown } from '../data/aiCrawlers';
 
 type Json = Record<string, any>;
 
@@ -27,8 +28,10 @@ export interface SiteMetrics {
 export function siteMetrics(m: Json): SiteMetrics {
   const pages = pagesOf(m);
   const good = pages.filter(ok);
-  const words = good.map((n) => Number(n.wordCount) || 0);
-  const thin = good.filter((n) => (Number(n.wordCount) || 0) < 200).length;
+  // Pages in languages written without spaces have no word count (pageChecks.wordsMeasured false).
+  const counted = good.filter((n) => n.pageChecks?.wordsMeasured !== false);
+  const words = counted.map((n) => Number(n.wordCount) || 0);
+  const thin = counted.filter((n) => (Number(n.wordCount) || 0) < 200).length;
   const withSchema = good.filter((n) => Array.isArray(n.schemaTypes) && n.schemaTypes.length).length;
   const ratios = good.map((n) => Number(n.pageChecks?.textRatio)).filter(Number.isFinite).map((v) => Math.round(v * 1000) / 10);
   const flesch = good.map((n) => Number(n.pageChecks?.readability?.fleschReadingEase)).filter(Number.isFinite);
@@ -53,7 +56,7 @@ export function siteMetrics(m: Json): SiteMetrics {
     'Pages captured': String(pages.length),
     'Pages answering 2xx': String(good.length),
     'Median words per page': show(median(words)),
-    'Thin pages (under 200 words)': `${thin} (${pct(thin, good.length)})`,
+    'Thin pages (under 200 words)': good.length && !counted.length ? 'Not measured' : `${thin} (${pct(thin, counted.length)})`,
     'Median text to HTML ratio': ratios.length ? `${median(ratios)}%` : 'No data',
     'Median Flesch reading ease': show(median(flesch)),
     'Pages with structured data': `${withSchema} (${pct(withSchema, good.length)})`,
@@ -61,7 +64,8 @@ export function siteMetrics(m: Json): SiteMetrics {
     'Security headers present': Array.isArray(headers.present) ? String(headers.present.length) : 'No data',
     'TLS days remaining': show(tls.daysRemaining),
     'llms.txt': ai.endpoints ? (ai.endpoints.llmsTxt ? 'Present' : 'Missing') : 'No data',
-    'AI crawlers allowed': ai.aiBotsPolicy ? `${ai.allowedAiBotsCount ?? 0} of ${Object.keys(ai.aiBotsPolicy).length}` : 'No data',
+    'AI crawlers allowed': !ai.aiBotsPolicy || botsUnknown(ai.aiBotsPolicy) ? 'No data'
+      : `${ai.allowedAiBotsCount ?? 0} of ${Object.keys(ai.aiBotsPolicy).length}`,
     'Orphan pages': show(m.stats?.orphanPages),
     'Duplicate groups': audit.duplicates ? String(dupGroups) : 'No data',
     'Internal link opportunities': Array.isArray(audit.linkOpportunities) ? String(audit.linkOpportunities.length) : 'No data',

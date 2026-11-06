@@ -4,12 +4,19 @@ Robots rule precedence uses Google's own worked examples. Page checks cover Goog
 cutoff, languages written without spaces, and wording that must not present engine conventions
 as Google ranking rules. Offline.
 """
+from contextlib import redirect_stdout
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import io
+import os
 from pathlib import Path
 import sys
+import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "engine"))
+# WEBOBS_ENGINE_DIR=<dir> runs these tests against another engine checkout.
+sys.path.insert(0, str(Path(os.environ.get("WEBOBS_ENGINE_DIR") or Path(__file__).resolve().parents[1] / "engine")))
 import crawl_site  # noqa: E402
 import extractor  # noqa: E402
 import issue_catalog  # noqa: E402
@@ -49,6 +56,30 @@ class RobotsPrecedence(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertEqual(decide(f"User-agent: {line}\nDisallow: /\n", "https://x.test/a", "GPTBot"), "disallowed")
         self.assertEqual(decide("User-agent: Claude\nDisallow: /\n", "https://x.test/a", "ClaudeBot"), "allowed", "no prefix matching")
+
+    def test_an_invalid_user_agent_token_still_starts_its_own_group(self):
+        # RFC 9309: a group ends at the next user-agent line after rules. "80legs", "008", "360Spider" and "*bot"
+        # are not valid product tokens, so their group matches no crawler, and its rules must not join the one above.
+        for value in ("80legs", "008", "360Spider", "*bot"):
+            with self.subTest(value=value):
+                self.assertEqual(decide(f"User-agent: *\nDisallow: /\n\nUser-agent: {value}\nAllow: /\n", "https://x.test/a"), "disallowed")
+                self.assertEqual(decide(f"User-agent: GPTBot\nDisallow: /\n\nUser-agent: {value}\nAllow: /\n", "https://x.test/a", "GPTBot"),
+                                 "disallowed")
+        policy = site_intel.build_robots_policy("User-agent: *\nDisallow: /\n\nUser-agent: *bot\nAllow: /\n", 200, user_agent="WebObs/1.0")
+        self.assertEqual(policy["rules"], [["disallow", "/"]], "*bot is not the global group")
+        # Members of one group may sit beside an invalid value; the valid ones keep the group's rules.
+        self.assertEqual(decide("User-agent: GPTBot\nUser-agent: 80legs\nDisallow: /\n", "https://x.test/a", "GPTBot"), "disallowed")
+
+    def test_crawl_delay_groups_match_the_rule_groups(self):
+        for value, delay in (("WebObs/1.0", 10.0), ("WebObs*", 7.0), ("webobs", 3.0)):
+            with self.subTest(value=value):
+                policy = site_intel.build_robots_policy(f"User-agent: {value}\nCrawl-delay: {delay:g}\nDisallow: /x\n", 200,
+                                                        user_agent="WebObs/1.0")
+                self.assertEqual(policy["matchedAgents"], ["webobs"])
+                self.assertEqual(policy["crawlDelaySec"], delay)
+        policy = site_intel.build_robots_policy("User-agent: *\nCrawl-delay: 5\n\nUser-agent: 80legs\nCrawl-delay: 30\n", 200,
+                                                user_agent="WebObs/1.0")
+        self.assertEqual(policy["crawlDelaySec"], 5.0, "an invalid group's delay does not join the * group")
 
     def test_path_parameters_are_part_of_the_path(self):
         self.assertEqual(decide("User-agent: *\nDisallow: /a;jsessionid\n", "https://x.test/a;jsessionid=1?q"), "disallowed")
@@ -129,6 +160,51 @@ class PageChecks(unittest.TestCase):
             self.assertIn("does not declare its language", skipped["note"])
             self.assertIsNone(page_checks._spelling("Eine Tasse Kaffee", "de"))
             self.assertTrue(page_checks._spelling("Wordz misspeled", "en")["possibleMisspellings"])
+
+
+ZH = "<p>" + "我们的云南手工烘焙咖啡豆来自高山农场，每一批都在清晨慢慢烘焙。" * 40 + "</p>"
+
+
+class UnspacedLanguageNotes(unittest.TestCase):
+    """A Chinese page: no word count in its note, its front matter, the Thin Pages view or the comparison."""
+
+    def test_a_chinese_page_is_not_counted_anywhere(self):
+        page_html = page(ZH, lang="zh-CN", title="云南手工烘焙咖啡豆")
+
+        class Site(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = page_html.encode() if self.path == "/" else b"not found"
+                self.send_response(200 if self.path == "/" else 404)
+                self.send_header("Content-Type", "text/html; charset=utf-8" if self.path == "/" else "text/plain")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Site)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            env = {"WEB_OBS_LOCAL_TARGETS": f"127.0.0.1:{server.server_port}", "CLAUDE_SEO_LOCAL_TARGETS": ""}
+            with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, env), redirect_stdout(io.StringIO()):
+                manifest = crawl_site.crawl_website_to_vault(
+                    f"http://127.0.0.1:{server.server_port}", directory, max_pages=1, render_mode="never", download_images=False,
+                    delay_sec=0, check_external=False, parallel=False, browser_audit=False, snapshot_limit=0, dns_checks=False,
+                    tls_check=False)
+                site = Path(directory) / "sites" / manifest["siteId"]
+                note = next(p for p in site.rglob("*.md") if "云南" in p.read_text(encoding="utf-8") and p.parent.name == "pages")
+                text = note.read_text(encoding="utf-8")
+                front = text.split("\n---\n", 1)[0]
+                bases = "".join(p.read_text(encoding="utf-8") for p in Path(directory).rglob("*.base"))
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertIn("words_measured: false", front)
+        self.assertNotIn("word_count:", front)
+        self.assertIn("| Words | Not measured for this language", text)
+        self.assertIn("note.words_measured != false", bases, "the Thin Pages view leaves such pages out")
+        home = next(n for n in manifest["nodes"] if n.get("pageChecks"))
+        self.assertIs(home["pageChecks"]["wordsMeasured"], False)
 
 
 class Wording(unittest.TestCase):

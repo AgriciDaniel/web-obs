@@ -209,7 +209,9 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
         </Disclosure>}
       </> : <>
         <StatRow label="Page numbers">
-          <StatTile label="Words" value={formatCount(node.wordCount)} hint={node.readingTimeMin ? `${node.readingTimeMin} min read` : undefined} />
+          {node.pageChecks?.wordsMeasured === false
+            ? <StatTile label="Words" value="Not measured" hint="Written without spaces between words" />
+            : <StatTile label="Words" value={formatCount(node.wordCount)} hint={node.readingTimeMin ? `${node.readingTimeMin} min read` : undefined} />}
           <StatTile label="Click depth" value={node.clickDepth !== null ? String(node.clickDepth) : 'None'} hint={node.clickDepth === null ? 'Not reached by links' : node.clickDepth === 0 ? 'Homepage' : 'Clicks from home'} />
           <StatTile label="Inlinks" value={formatCount(incoming.length)} hint={node.authorityScore !== undefined ? `Link score ${node.authorityScore}` : undefined} />
           <StatTile label="Issues" value={formatCount(issueTotal)} hint={attention ? `${attention} need attention` : undefined} status={attention ? 'critical' : undefined} />

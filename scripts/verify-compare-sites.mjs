@@ -41,4 +41,30 @@ assert.equal(comparisonNotePath('a.com', 'b.com'), 'sites/_compare/a.com-vs-b.co
   assert.ok(!/<img|(?<!\\)!\[/.test(body), 'no raw HTML or image embed in the comparison note');
   assert.match(body, /&lt;img src="https:\/\/cdn\.thirdparty\.invalid\/t\.gif">/);
 }
-console.log('[PASS] Site comparison note builds from new and legacy captures, with site text kept as text.');
+{
+  // A page in a language written without spaces has no word count: not thin, not in the median.
+  const cjk = structuredClone(a);
+  cjk.nodes = [page('https://a.com/', 80, [], { pageChecks: { wordsMeasured: false } }), page('https://a.com/en', 500)];
+  const metrics = siteMetrics(cjk);
+  assert.equal(metrics.rows['Thin pages (under 200 words)'], '0 (0%)');
+  assert.equal(metrics.rows['Median words per page'], '500');
+  cjk.nodes = [page('https://a.com/', 80, [], { pageChecks: { wordsMeasured: false } })];
+  assert.equal(siteMetrics(cjk).rows['Thin pages (under 200 words)'], 'Not measured');
+}
+{
+  // An unreadable robots.txt leaves every bot unknown: no data, not "0 of 16".
+  const unread = structuredClone(a);
+  unread.siteIntel = { ...(unread.siteIntel ?? {}), aiReadiness: { ...((unread.siteIntel ?? {}).aiReadiness ?? {}),
+    aiBotsPolicy: { GPTBot: 'unknown (robots fetch incomplete)', ClaudeBot: 'unknown (robots fetch incomplete)' }, allowedAiBotsCount: 0, blockedAiBots: [] } };
+  assert.equal(siteMetrics(unread).rows['AI crawlers allowed'], 'No data');
+  const crawlers = await build({ entryPoints: ['src/data/aiCrawlers.ts'], bundle: true, write: false, format: 'esm', platform: 'node', logLevel: 'silent' });
+  const { aiCrawlerRows, botsUnknown } = await import('data:text/javascript;base64,' + Buffer.from(crawlers.outputFiles[0].contents).toString('base64'));
+  const policy = unread.siteIntel.aiReadiness.aiBotsPolicy;
+  assert.equal(botsUnknown(policy), true);
+  assert.deepEqual(aiCrawlerRows({ aiBotsPolicy: policy, allowedAiBotsCount: 0, blockedAiBots: [] }),
+    [{ label: 'AI bots allowed at /', value: 'No data (robots.txt could not be read)' }]);
+  assert.deepEqual(aiCrawlerRows({ aiBotsPolicy: { GPTBot: 'blocked', ClaudeBot: 'allowed' }, allowedAiBotsCount: 1, blockedAiBots: ['GPTBot'] }),
+    [{ label: 'AI bots allowed at /', value: '1 of 2' }, { label: 'Blocked in robots.txt', value: 'GPTBot' }]);
+  assert.equal(botsUnknown({ GPTBot: 'unknown (robots fetch incomplete)', ClaudeBot: 'allowed' }), false, 'a mix is still a count');
+}
+console.log('[PASS] Site comparison note builds from new and legacy captures, with site text kept as text, unmeasured words left out and unread robots.txt shown as no data.');

@@ -50,6 +50,7 @@ PAGE = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <p>Markdown text ![shown]({CDN}/text-markdown.png) and ![[{CDN}/text-wikilink.png]] and ![ref][r1].</p>
 <p>[r1]: {CDN}/reference.png</p>
 <pre><code>&lt;img src="{CDN}/code.png"&gt;</code></pre>
+<pre><code>![x]({CDN}/code-md.png)</code></pre>
 <pre><code>Install:
 ```js
 npm install
@@ -164,6 +165,10 @@ class Evidence(Capture):
             self.assertIn(f'&lt;img src="{CDN}/escaped.gif"', home, "escaped HTML is shown as text")
             self.assertIn(f'<img src="{CDN}/code.png">', home.replace(ZW, ""), "code keeps its visible text")
             self.assertIn(f'<img src="{CDN}/after-inner-fence.gif">', home.replace(ZW, ""))
+            # Image syntax shown in code keeps its text in its fence; the same syntax in prose becomes a link.
+            self.assertRegex(home.replace(ZW, ""), r"(?m)^```[a-z]*\n!\[x\]\(" + re.escape(CDN) + r"/code-md\.png\)\n```$")
+            self.assertNotIn(f"[Image not saved: x]({CDN}/code-md.png)", home)
+            self.assertIn(f"[Image not saved: shown]({CDN}/text-markdown.png)", home)
             self.assertRegex(home, r"(?m)^````[a-z]*\nInstall:", "a fence shown in <pre> gets a longer fence")
             self.assertIn(f"[Image not saved: shown]({CDN}/text-markdown.png)", home)
             self.assertIn(f"({CDN}/text-wikilink.png)", home)

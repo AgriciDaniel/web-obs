@@ -379,6 +379,18 @@ def detect_funnel_platforms(all_external_urls: list[str]) -> list[dict]:
     return list(found.values())
 
 
+def _robots_agent_token(value: str) -> str:
+    """RFC 9309 product token: "*" alone, or the leading run of letters, "_" and "-".
+
+    "GPTBot/1.1" and "GPTBot*" are gptbot. A value with no valid token ("80legs", "008", "*bot") gives "",
+    which still starts a group, one that matches no crawler: its rules must not join the group above.
+    """
+    if re.fullmatch(r"\*\s*", value or ""):
+        return "*"
+    token = re.match(r"[A-Za-z_-]+", value or "")
+    return token.group(0).lower() if token else ""
+
+
 def _parse_robots_groups(robots_text: str) -> tuple[dict[str, list[tuple[str, str]]], Optional[str]]:
     groups: dict[str, list[tuple[str, str]]] = {}
     current_agents: list[str] = []
@@ -394,19 +406,15 @@ def _parse_robots_groups(robots_text: str) -> tuple[dict[str, list[tuple[str, st
         v_clean = val.strip()
 
         if f_low == "user-agent":
-            # RFC 9309: the product token is letters, "_" and "-" only, and Google ignores the rest
-            # ("googlebot/1.2" and "googlebot*" both mean googlebot).
-            token = re.match(r"\*|[A-Za-z_-]+", v_clean)
-            agent_token = token.group(0).lower() if token else ""
-            if not agent_token:
+            if not v_clean:
                 continue
+            agent_token = _robots_agent_token(v_clean)
             if seen_rule_in_group:
-                current_agents = [agent_token]
-                seen_rule_in_group = False
-            else:
+                current_agents, seen_rule_in_group = [], False
+            if agent_token:  # an invalid token still starts a group, one that matches no crawler
                 current_agents.append(agent_token)
-            groups.setdefault(agent_token, [])
-        elif f_low in ("allow", "disallow") and current_agents:
+                groups.setdefault(agent_token, [])
+        elif f_low in ("allow", "disallow"):
             seen_rule_in_group = True
             for ag in current_agents:
                 groups.setdefault(ag, []).append((f_low, v_clean))
@@ -433,10 +441,11 @@ def _parse_crawl_delays(robots_text: str) -> dict[str, float]:
         if f_low == "user-agent":
             if not v_clean:
                 continue
+            agent_token = _robots_agent_token(v_clean)  # the same groups as the rules
             if seen_rule_in_group:
-                current_agents, seen_rule_in_group = [v_clean.lower()], False
-            else:
-                current_agents.append(v_clean.lower())
+                current_agents, seen_rule_in_group = [], False
+            if agent_token:
+                current_agents.append(agent_token)
         elif f_low in ("allow", "disallow"):
             seen_rule_in_group = True
         elif f_low == "crawl-delay" and current_agents:

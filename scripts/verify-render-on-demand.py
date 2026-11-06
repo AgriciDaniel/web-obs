@@ -38,7 +38,11 @@ def free_port():
 
 def main():
     port = free_port()
-    server = subprocess.Popen(['npx', 'vite', '--host', '127.0.0.1', '--port', str(port), '--strictPort'], cwd=ROOT,
+    # The project's own Vite, never npx: npx may resolve or download a package through the npm cache.
+    vite = ROOT / 'node_modules' / '.bin' / 'vite'
+    if not vite.exists():
+        raise SystemExit(f'Vite is not installed at {vite}. Run npm ci first.')
+    server = subprocess.Popen([str(vite), '--host', '127.0.0.1', '--port', str(port), '--strictPort'], cwd=ROOT,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         for _ in range(60):
