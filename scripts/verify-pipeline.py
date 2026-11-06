@@ -204,8 +204,8 @@ class PipelineTests(unittest.TestCase):
                 lambda url: urlparse(url).hostname in ('127.0.0.1', 'localhost'),
                 lambda event, **data: events.append(json.loads(json.dumps({'event': event, **data}))),
                 parallel=parallel, check_external=check_external, image_mode=image_mode, extract_fn=extract)
-            retained = sorted(str(path.relative_to(folder)) for path in Path(folder).rglob('*') if path.is_file())
-            artifacts = {str(path.relative_to(folder)): path.read_bytes() for path in Path(folder).rglob('*') if path.is_file()}
+            retained = sorted(path.relative_to(folder).as_posix() for path in Path(folder).rglob('*') if path.is_file())
+            artifacts = {path.relative_to(folder).as_posix(): path.read_bytes() for path in Path(folder).rglob('*') if path.is_file()}
         return result, events, list(Website.hits), Website.peak, extracted_urls, retained, artifacts
 
     def test_media_are_associated_resources_and_html_audio_is_a_page(self):
@@ -463,6 +463,31 @@ class PipelineTests(unittest.TestCase):
         if BENCHMARK_OUTPUT:
             Path(BENCHMARK_OUTPUT).write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
 
+
+class TrailingContent(unittest.TestCase):
+    """Content after </html> is part of the page, as in a browser, whichever libxml2 lxml bundles (2.11 on Windows)."""
+
+    def test_content_after_the_closing_tags_is_moved_into_the_body(self):
+        from html_tail import keep_trailing_content
+        normal = '<html><body><p>x</p></body></html>\n'
+        self.assertIs(keep_trailing_content(normal), normal, 'a page without trailing content is left as sent')
+        for page in ('<html><body><p>x</p></body></html><img src="/after.png"><a href="/late">late</a>',
+                     '<html><body><p>x</p></body><img src="/after.png"><a href="/late">late</a></html>',
+                     '<HTML><BODY><p>x</p></BODY></HTML> <img src="/after.png"><a href="/late">late</a>'):
+            fixed = keep_trailing_content(page)
+            self.assertEqual(keep_trailing_content(fixed), fixed)
+            self.assertTrue(fixed.endswith('</body></html>'))
+            before = fixed[:-len('</body></html>')].lower()
+            self.assertNotIn('</body>', before)
+            self.assertNotIn('</html>', before)
+
+    def test_the_extractor_sees_links_and_images_after_the_closing_tags(self):
+        page = ('<html><head><title>Tail</title></head><body><h1>Tail</h1><p>Body text for the page.</p></body></html>'
+                '<a href="/late-link">Late link</a><img src="/late.png" alt="Late image">')
+        data = extract_page_data(page, 'https://tail.test/', 'tail.test', {})
+        links = [link['url'] for link in data['internal_links']]
+        self.assertIn('https://tail.test/late-link', links)
+        self.assertIn('https://tail.test/late.png', [image['url'] for image in data['images']])
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)

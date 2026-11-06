@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1 - 2026-11-06
+
+Windows captures now see the whole page.
+
+### Fixed
+- **Content after a page's closing `</html>` tag is captured on every system.** Browsers show links, images and text that a page places after `</body>` or `</html>`, and so does Web-Obs now. On Windows they were lost, because the lxml package there bundles an older libxml2 that drops them. This was the known Windows image problem.
+
+### Changed
+- **Windows setup steps in the README.** The install guide now shows the PowerShell commands and the `Scripts\python.exe` path.
+
 ## 0.2.0 - 2026-11-06
 
 A much deeper audit. Every check still runs on your computer and talks only to the site you capture, with two stated exceptions below.

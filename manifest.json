@@ -1,7 +1,7 @@
 {
   "id": "web-obs",
   "name": "Web-Obs Site Globe",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "minAppVersion": "1.5.0",
   "description": "Capture a website into your vault as clean Markdown notes, then explore its structure on an interactive 3D site globe.",
   "author": "Daniel Agrici",

@@ -15,6 +15,7 @@ import re
 from typing import Callable, Optional
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
+from html_tail import keep_trailing_content
 from bs4 import BeautifulSoup, Tag
 
 from url_safety import (
@@ -254,7 +255,7 @@ def extract_observed_brand_kit(
     if not home_html:
         return result
 
-    soup = BeautifulSoup(home_html, _HTML_PARSER)
+    soup = BeautifulSoup(keep_trailing_content(home_html), _HTML_PARSER)
 
     # 1. Theme color meta
     for meta in soup.find_all("meta"):
