@@ -800,10 +800,17 @@ def _render_block_node(node: Tag | NavigableString, base_url: str, list_depth: i
             pad = " " * (len(indent) + len(prefix))
             codes = [_render_block_node(pre, base_url, list_depth) for pre in code_blocks]
             codes = ["\n".join((pad + row) if row else row for row in code.split("\n")) for code in codes if code]
-            if codes:
-                line = "\n".join(([line or f"{indent}{prefix}".rstrip()]) + codes)
-            sub_rendered = [_render_block_node(nl, base_url, list_depth + 1) for nl in nested_lists]
-            sub_rendered = [s for s in sub_rendered if s]
+            if codes and not line:
+                # Only code: open the fence on the marker line. An empty marker cannot interrupt a paragraph,
+                # so "1." on its own line would fold into the line above it.
+                codes[0] = f"{indent}{prefix}" + codes[0][len(pad):]
+                line = "\n".join(codes)
+            elif codes:
+                line = "\n".join([line] + codes)
+            # A nested list starts at this item's content column ("1. " is 3 wide, "10. " is 4), not at a fixed two
+            # spaces, which in CommonMark would make "  1." a sibling of "1. item" instead of its child.
+            sub_rendered = [_render_block_node(nl, base_url, 0) for nl in nested_lists]
+            sub_rendered = ["\n".join((pad + row) if row else row for row in s.split("\n")) for s in sub_rendered if s]
             if line and sub_rendered:
                 items.append(line + "\n" + "\n".join(sub_rendered))
             elif line:

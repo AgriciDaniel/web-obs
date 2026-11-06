@@ -5,7 +5,8 @@ embeds, no raw HTML that loads media, frames or styles. The capture stays on the
 to read; this keeps viewing the result from contacting the site or any third party.
 
 Only two Markdown constructs can load anything: an image or embed (`![`) and raw HTML (`<` followed
-by a letter, `/`, `!` or `?`). Every one of them is made inert, so safety does not depend on knowing
+by a letter, `/`, `!` or `?`). A third can run code: a Templater command (`<%`), which is treated the
+same way as a tag opener. Every one of them is made inert, so safety does not depend on knowing
 which lines are code:
 
 - In prose, a remote `![alt](url)` becomes `[Image not saved: alt](url)`, a remote `![[https://...]]`
@@ -38,7 +39,8 @@ _IMAGE = re.compile(r"!\[(?P<alt>" + _ALT + r")\]\(\s*(?P<dest>" + _DEST + r")(?
 _EMBED = re.compile(r"!\[\[(?P<target>[^\]|\n]+)(?:\|(?P<alias>[^\]\n]*))?\]\]")
 _CODE_SPAN = re.compile(r"(?<!`)(?P<ticks>`+)(?!`)(?:[^`\n]|`+(?!(?P=ticks)(?!`))|\n(?![ \t>]*\n))+?(?<!`)(?P=ticks)(?!`)")
 _AUTOLINK = re.compile(r"<(?:[A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+)>")
-_TAG_OPEN = re.compile(r"<(?=[A-Za-z!?/])")
+# "<%" too: Templater runs <% %> and <%* %> commands (JavaScript) wherever they appear in a note's text.
+_TAG_OPEN = re.compile(r"<(?=[A-Za-z!?/%])")
 
 # Code fence languages kept in notes: plain programming, data and markup names that Obsidian shows as code.
 # Any other info string is dropped, because a vault plugin can register it as a live renderer (mermaid,

@@ -7,7 +7,8 @@ Obsidian plugin and the standalone app run before showing a capture. A link rech
 capture is checked the same way.
 
 A switch that cannot run here is reported as not exercisable, with the reason, and is not counted
-as passed: the browser cases need a Chromium that starts, the TLS case needs openssl for a test
+as passed: the browser cases need a Chromium that starts (required: the suite fails without one unless
+WEBOBS_ALLOW_NO_BROWSER=1 is set), the TLS case needs openssl for a test
 certificate authority, email DNS needs dnspython and a dotted domain name (loopback has none), and
 --spell-check needs pyspellchecker. Offline: every server is on 127.0.0.1.
 """
@@ -33,6 +34,7 @@ sys.path.insert(0, str(REPO / "engine"))
 import crawl_site  # noqa: E402
 import link_recheck  # noqa: E402
 import page_checks  # noqa: E402
+import url_safety  # noqa: E402
 
 PNG = bytes.fromhex("89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d4944415478da63f8cfc0f01f0005000201"
                     "e5279c1e0000000049454e44ae426082")
@@ -178,8 +180,12 @@ def browser_problem():
                 return resolved.get("error") or "no compatible Chromium was found"
             driver.chromium.launch(headless=True, executable_path=resolved["executablePath"], timeout=30000).close()
         return None
-    except Exception as exc:  # any failure to start is a reason, not a test failure
-        return f"Chromium did not start ({type(exc).__name__}: {str(exc).splitlines()[0][:120]})"
+    except Exception as exc:  # the caller decides whether a browser that does not start fails the suite
+        noise = ("temporary directories cleanup", "gracefully close", "Call log", "launching", "<launched>")
+        lines = [line.strip() for line in str(exc).splitlines()
+                 if line.strip() and not line.strip().startswith("=") and not any(n in line for n in noise)]
+        # Playwright appends the browser's own log; its last lines name the real cause (a signal, a missing library).
+        return f"Chromium did not start ({type(exc).__name__}): " + " | ".join(lines[-4:])[:500]
 
 
 def make_test_ca(folder: Path):
@@ -254,15 +260,24 @@ class ManifestSwitches(unittest.TestCase):
             starts.append(process.name)
             return real_start(process)
         trust = {"SSL_CERT_FILE": self.ca, "REQUESTS_CA_BUNDLE": self.ca} if https else {}
+        # The pinned HTTP client ignores the environment (trust_env is off), so it is given the test CA directly.
+        real_init = url_safety._SafeSession.__init__
+
+        def trusting_init(session):
+            real_init(session)
+            session.verify = self.ca if https else True
         try:
             with redirect_stdout(io.StringIO()), patch.object(multiprocessing.process.BaseProcess, "start", counting_start), \
-                    patch.dict(os.environ, trust):
+                    patch.dict(os.environ, trust), patch.object(url_safety._SafeSession, "__init__", trusting_init):
                 manifest = crawl_site.crawl_website_to_vault(self.https_origin if https else self.origin, str(vault), **settings)
         finally:
             Site.slow_sec = 0.0
         return vault, manifest, len(starts)
 
     def test_every_switch_takes_effect_and_opens(self):
+        if self.unavailable["browser"] and os.environ.get("WEBOBS_ALLOW_NO_BROWSER") != "1":
+            self.fail("The browser cases need Chromium, and it did not start. Set WEBOBS_ALLOW_NO_BROWSER=1 to report "
+                      f"them as not exercisable instead. {self.unavailable['browser']}")
         paths, shapes, effects, skipped = {}, {}, {}, {}
         for name, (options, needs, expected) in CASES.items():
             reasons = [self.unavailable[need] for need in sorted(needs) if self.unavailable.get(need)]
@@ -273,7 +288,8 @@ class ManifestSwitches(unittest.TestCase):
             ev = evidence(manifest, processes)
             paths[name] = str(vault / "sites" / manifest["siteId"] / "_site-graph.json")
             shapes[name] = ev
-            effects[name] = bool(expected(ev))
+            # Every capture must also have saved pages: a switch that "took effect" on an empty capture proves nothing.
+            effects[name] = bool(expected(ev)) and (ev["pages"] or 0) > 0
             if name == "quiet baseline":
                 # Keep the capture's own manifest, then recheck links, which rewrites it in place.
                 before = Path(self.tmp.name) / "baseline-before-recheck.json"

@@ -35,10 +35,13 @@ assert.equal(comparisonNotePath('a.com', 'b.com'), 'sites/_compare/a.com-vs-b.co
 {
   // Site text is shown as text: a schema type or label cannot become HTML or an image embed.
   const hostile = structuredClone(b);
-  hostile.nodes[0].schemaTypes = ['<img src="https://cdn.thirdparty.invalid/t.gif">', '![x](https://cdn.thirdparty.invalid/x.png)'];
+  // A backslash the site wrote before "![" must not cancel the escape, and Templater commands stay text.
+  hostile.nodes[0].schemaTypes = ['<img src="https://cdn.thirdparty.invalid/t.gif">', '![x](https://cdn.thirdparty.invalid/x.png)',
+    '\\![y](https://cdn.thirdparty.invalid/y.png)', '<%* await fetch("https://cdn.thirdparty.invalid/t") %>', '<%_ tp.file.title _%>'];
   const note = buildComparisonMarkdown(a, hostile, '2026-11-03T00:00:00Z');
   const body = note.slice(note.indexOf('---', 3) + 3);
-  assert.ok(!/<img|(?<!\\)!\[/.test(body), 'no raw HTML or image embed in the comparison note');
+  assert.ok(!/<img|!\[|<%/.test(body), 'no raw HTML, image embed or Templater command in the comparison note');
+  assert.ok(body.includes('&lt;%* await fetch('), 'a Templater command is shown as text');
   assert.match(body, /&lt;img src="https:\/\/cdn\.thirdparty\.invalid\/t\.gif">/);
 }
 {

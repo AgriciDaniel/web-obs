@@ -15,6 +15,7 @@ Run against another engine checkout with WEBOBS_ENGINE_DIR=<dir>.
 import importlib.util
 import itertools
 import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -76,7 +77,7 @@ for doc in json.load(sys.stdin):
     c = Check(); c.feed(html); c.close()
     prose = "".join(c.prose)
     c.loads += [m.group(0) for m in re.finditer(r"!\[\[\s*(?:[A-Za-z][A-Za-z0-9+.-]*:|//)[^\]]*", prose)]
-    out.append({"loads": c.loads, "code": c.code, "prose": prose, "infos": infos, "inline": inline})
+    out.append({"loads": c.loads, "code": c.code, "prose": prose, "infos": infos, "inline": inline, "html": html})
 json.dump(out, sys.stdout)
 """
 
@@ -154,6 +155,26 @@ RENDERER_DIRECT = {
     "dataview inline": f"Run `$= dv.el('img', '', {{attr: {{src: '{R}/d.png'}}}})` and `= this.file.name` and ` $=x`.\n",
 }
 
+# Templater runs <% %> commands (and <%* %> JavaScript) wherever they appear in a note's raw text, so these are
+# checked on the sanitized text, not the rendered HTML. "<%+" is an older dynamic form; "<%-" and "<%_" trim space.
+TEMPLATER_TAGS = ("<%", "<%*", "<%+", "<%-", "<%_")
+TEMPLATER_DIRECT = {}
+for _tag in TEMPLATER_TAGS:
+    _cmd = f'{_tag} await fetch("{R}/t") %>'
+    TEMPLATER_DIRECT.update({
+        f"templater {_tag} in prose": f"Text {_cmd} end.\n",
+        f"templater {_tag} in inline code": f"Run `{_cmd}` here.\n",
+        f"templater {_tag} in a fence": f"```js\n{_cmd}\n```\n",
+        f"templater {_tag} in indented code": f"Intro.\n\n    {_cmd}\n",
+        f"templater {_tag} in a quote and list": f"> - {_cmd}\n",
+        f"templater {_tag} in frontmatter": f'---\ntitle: "{_cmd}"\n---\nBody.\n',
+    })
+TEMPLATER_PAGE = ('<html><body><main><h1>Templates</h1>' + RENDERER_HTML
+                  + "".join(f'<p>Use {t.replace("<", "&lt;")} tp.file.title %&gt; in a template.</p>'
+                            f'<pre><code>{t.replace("<", "&lt;")} await fetch("{R}/c") %&gt;</code></pre>'
+                            f'<ul><li><code>{t.replace("<", "&lt;")} tp.date.now() %&gt;</code></li></ul>' for t in TEMPLATER_TAGS)
+                  + RENDERER_HTML + '</main></body></html>')
+
 CONTAINERS = [("", ""), ("> ", "> "), ("- ", "  "), ("1. ", "   "), ("  ", "  "), ("    ", "    "),
               ("> - ", ">   "), ("- ", "- "), ("> ", "")]
 TAILS = [["", f"![x]({R}/t1.png)", f'<img src="{R}/t2.png">', "![a", f"b]({R}/t3.png)", f"![p]({R}/a_(1).png)"],
@@ -201,6 +222,11 @@ class Render(unittest.TestCase):
                 markdown_converter.convert_html_to_markdown(page, "https://docs.example/"), "https://docs.example/", {}, {}, {}, "docs.example")
         for key, text in RENDERER_DIRECT.items():
             originals[f"renderer: {key}"] = text
+        for key, text in TEMPLATER_DIRECT.items():
+            originals[key] = text
+        originals["templater: converter page"] = crawl_site.rewrite_markdown_for_obsidian(
+            markdown_converter.convert_html_to_markdown(TEMPLATER_PAGE, "https://docs.example/"), "https://docs.example/", {}, {}, {},
+            "docs.example")
         originals["converter: fence shown in <pre>"] = crawl_site.rewrite_markdown_for_obsidian(
             md, "https://site.example/", {}, {}, {}, "site.example")
         for i, note in enumerate(fixture_notes()):
@@ -248,9 +274,37 @@ class Render(unittest.TestCase):
         kept = [i for n, r in self.rendered.items() if n.startswith("renderer page: language-python") for i in r["infos"]]
         self.assertEqual(kept, ["python"], "a plain language keeps its name")
 
+    def test_no_templater_command_survives(self):
+        cases = [name for name in self.originals if name.startswith("templater")]
+        self.assertEqual(len(cases), 6 * len(TEMPLATER_TAGS) + 1)
+        self.assertIn("<%*", self.originals["templater: converter page"], "the converter path really carries the commands")
+        live = {name: text.count("<%") for name, text in self.corpus.items() if "<%" in text}
+        print(f"\n  Templater commands left in notes: {len(live)} of {len(self.corpus)} "
+              f"({len(cases)} Templater cases)", file=sys.stderr)
+        for name in list(live)[:4]:
+            print(f"    {name}: {live[name]}", file=sys.stderr)
+        self.assertEqual(live, {})
+
     def test_code_shown_in_pre_stays_one_code_block_with_its_text(self):
         code = self.rendered["converter: fence shown in <pre>"]["code"]
         self.assertEqual([c.replace(ZW, "") for c in code], [PRE_TEXT + "\n"])
+
+    def test_a_list_item_holding_only_code_keeps_its_marker(self):
+        # An empty "1." cannot interrupt a paragraph, so it would fold into the line above and move the code out.
+        page = ('<html><body><main><h1>Steps</h1>' + RENDERER_HTML + '<ol><li>item<ol><li><pre><code>only code</code></pre></li>'
+                '</ol></li><li><pre><code>first only</code></pre></li></ol>'
+                + RENDERER_HTML + '<ol><li>step<ol><li>sub step</li></ol></li></ol>' + RENDERER_HTML + '<ul><li>bullet<ul><li>sub bullet</li></ul></li></ul>'
+                + RENDERER_HTML + '</main></body></html>')
+        note = note_safety.network_free_markdown(crawl_site.rewrite_markdown_for_obsidian(
+            markdown_converter.convert_html_to_markdown(page, "https://docs.example/"), "https://docs.example/", {}, {}, {}, "docs.example"))
+        (r,) = render([note])
+        html = re.sub(r"\s+", " ", r["html"])
+        self.assertRegex(html, r"<li> ?(?:<p>)?item(?:</p>)? <ol> <li> <pre><code>only code\s*</code></pre> </li> </ol> </li>", note)
+        self.assertRegex(html, r"<li> <pre><code>first only\s*</code></pre> </li>", note)
+        self.assertNotRegex(r["prose"], r"item\s*1\.", "no empty marker folded into the paragraph")
+        # A nested ordered list starts at its parent's content column, so it nests instead of becoming a sibling.
+        self.assertRegex(html, r"<li> ?(?:<p>)?step(?:</p>)? <ol> <li>sub step</li> </ol> </li>", note)
+        self.assertRegex(html, r"<li>bullet <ul> <li>sub bullet</li> </ul> </li>", note)
 
     def test_prose_images_become_labelled_links(self):
         self.assertIn(f"[Image not saved: a]({R}/a_(1).png)", self.corpus["review: parentheses in the URL"])

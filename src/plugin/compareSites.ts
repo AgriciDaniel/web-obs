@@ -15,7 +15,9 @@ const pct = (part: number, whole: number) => (whole ? `${Math.round((part / whol
 const show = (value: unknown) => (value === null || value === undefined || value === '' ? 'No data' : String(value));
 const cell = (value: unknown) => show(value).replace(/\|/g, '\\|').replace(/\n/g, ' ');
 /** Site text (labels, schema types) shown as text: no raw HTML or image embed that Obsidian would load. */
-const plain = (text: string) => text.replace(/<(?=[A-Za-z!?/])/g, '&lt;').replace(/!\[/g, '\\![');
+// "<%" is a Templater command. A zero-width space after "!" keeps "![" from being an image even when the site
+// text already has a backslash before it ("\\![" would be an escaped backslash and then a live image).
+const plain = (text: string) => text.replace(/<(?=[A-Za-z!?/%])/g, '&lt;').replace(/!\[/g, '!\u200b[');
 
 export interface SiteMetrics {
   label: string;
