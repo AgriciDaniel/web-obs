@@ -32,11 +32,18 @@ python3.14 -m venv ~/web-obs-python
 ~/web-obs-python/bin/pip install requests beautifulsoup4 lxml
 ```
 
+On Windows, in PowerShell:
+
+```powershell
+py -3.14 -m venv $HOME\web-obs-python
+& $HOME\web-obs-python\Scripts\pip install requests beautifulsoup4 lxml
+```
+
 Three optional packages unlock extra checks: `dnspython` (email DNS), `pyspellchecker` (spell check) and `html5lib` (HTML validation). Install any of them the same way. Web-Obs works without them and says which checks were skipped.
 
-Pages that need JavaScript to show anything are handled by an optional browser step. The same browser runs the browser sample. To turn it on, also run `~/web-obs-python/bin/pip install playwright` and then `~/web-obs-python/bin/playwright install chromium`. You can skip this and still capture most sites.
+Pages that need JavaScript to show anything are handled by an optional browser step. The same browser runs the browser sample. To turn it on, also run `~/web-obs-python/bin/pip install playwright` and then `~/web-obs-python/bin/playwright install chromium` (on Windows, the same two programs are in `web-obs-python\Scripts\`). You can skip this and still capture most sites.
 
-Web-Obs is built for Obsidian on desktop and does not work on mobile. It is tested on Linux, and its automated checks also pass on macOS. Windows is not fully tested yet: captures run, but image discovery has a known problem there. If something misbehaves on your system, please [open an issue](https://github.com/AgriciDaniel/web-obs/issues/new/choose).
+Web-Obs is built for Obsidian on desktop and does not work on mobile. It is tested on Linux, and its automated checks also pass on macOS. Windows support is newer: captures, links and images work there, but a few of its automated checks still fail. If something misbehaves on your system, please [open an issue](https://github.com/AgriciDaniel/web-obs/issues/new/choose).
 
 ## Install
 
@@ -45,7 +52,7 @@ Web-Obs is not in the Obsidian community list yet, so for now you install it by 
 1. Download `main.js`, `manifest.json` and `styles.css` from the latest [release](../../releases).
 2. Put them in a folder named `web-obs` inside `YOUR-VAULT/.obsidian/plugins/`.
 3. In Obsidian, open **Settings, Community plugins**, and turn on **Web-Obs Site Globe**. On first start Web-Obs unpacks its capture engine next to these files. You do not need to copy anything else.
-4. Open the Web-Obs settings and set **Python executable** to the one you just made, for example `~/web-obs-python/bin/python3`.
+4. Open the Web-Obs settings and set **Python executable** to the one you just made, for example `~/web-obs-python/bin/python3`, or on Windows `C:\Users\YOU\web-obs-python\Scripts\python.exe`.
 
 ## Your first capture
 

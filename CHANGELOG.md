@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1 - 2026-11-06
+
+Windows captures now see the whole page.
+
+### Fixed
+- **Content after a page's closing `</html>` tag is captured on every system.** Browsers show links, images and text that a page places after `</body>` or `</html>`, and so does Web-Obs now. On Windows they were lost, because the lxml package there bundles an older libxml2 that drops them. This was the known Windows image problem.
+
+### Changed
+- **Windows setup steps in the README.** The install guide now shows the PowerShell commands and the `Scripts\python.exe` path.
+
 ## 0.2.0 - 2026-11-06
 
 A much deeper audit. Every check still runs on your computer and talks only to the site you capture, with two stated exceptions below.
@@ -88,7 +98,6 @@ For apps that run captures on a fixed plan. Each one is also a plugin setting, a
 - **The site's own mark at the centre:** the home node shows the site's logo on a round badge that always faces you, ringed in the brand colour. It uses what the capture already saved (the logo, then the sharpest favicon), so older captures get it without recapturing. A logo is placed on a light or dark backing so it stays visible, and the ring is adjusted to at least 3:1 contrast on both map themes. Without a usable logo the badge shows the brand's initials. The domain label stays beside it, since the logo choice is not visually checked.
 
 ### Fixed
-- **Content after a page's closing `</html>` tag is captured on every system.** Browsers show links, images and text that a page places after `</body>` or `</html>`, and so does Web-Obs now. On Windows they were lost, because the lxml package there bundles an older libxml2 that drops them. This was the known Windows image problem.
 - **A capture made with the task list off opens again.** With Task list off (`--no-tasks`), the app refused the capture as invalid, because the manifest records no task counts. That is now accepted, and malformed counts are still refused. A new check captures a local site once per engine switch and opens each result with the app's own manifest check.
 - **A page cannot plant a live code block in your vault.** Code blocks keep their language only when it is a plain language such as `python` or `json`. Names that Obsidian or a vault plugin renders as live content (`mermaid`, `chartsview`, `dataviewjs`, or a name any installed plugin registers) are dropped, so the block shows as plain code. Inline code that starts with `=` or `$=` no longer runs as a Dataview query.
 - **A page cannot plant a Templater command in your vault.** Templater runs `<% %>` and `<%* %>` commands wherever they appear in a new note, so page text holding one could run JavaScript when a capture lands. Every `<%` is now shown as text in prose (`&lt;%`), and carries the same invisible mark as other code after its `<` in code and properties. The site comparison note does the same.
