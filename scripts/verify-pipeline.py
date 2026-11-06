@@ -204,8 +204,8 @@ class PipelineTests(unittest.TestCase):
                 lambda url: urlparse(url).hostname in ('127.0.0.1', 'localhost'),
                 lambda event, **data: events.append(json.loads(json.dumps({'event': event, **data}))),
                 parallel=parallel, check_external=check_external, image_mode=image_mode, extract_fn=extract)
-            retained = sorted(str(path.relative_to(folder)) for path in Path(folder).rglob('*') if path.is_file())
-            artifacts = {str(path.relative_to(folder)): path.read_bytes() for path in Path(folder).rglob('*') if path.is_file()}
+            retained = sorted(path.relative_to(folder).as_posix() for path in Path(folder).rglob('*') if path.is_file())
+            artifacts = {path.relative_to(folder).as_posix(): path.read_bytes() for path in Path(folder).rglob('*') if path.is_file()}
         return result, events, list(Website.hits), Website.peak, extracted_urls, retained, artifacts
 
     def test_media_are_associated_resources_and_html_audio_is_a_page(self):
