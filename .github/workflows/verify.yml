@@ -27,7 +27,9 @@ jobs:
         with:
           python-version: '3.14'
       - name: Install Python packages
-        run: python -m pip install requests beautifulsoup4 lxml playwright
+        # markdown-it-py is the CommonMark renderer that scripts/verify-note-render.py judges notes with;
+        # pinned so the check gives the same answers as in review.
+        run: python -m pip install requests beautifulsoup4 lxml playwright markdown-it-py==4.2.0
       - name: Install a browser for the render tests
         run: python -m playwright install chromium
       - run: npm ci
