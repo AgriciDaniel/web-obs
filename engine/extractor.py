@@ -24,6 +24,7 @@ from site_intel import canonicalize_external_domain
 from sitemap import canonicalize_crawl_url, is_same_site_host, url_match_key
 from page_fetch import fetch_page_html
 from page_checks import run_page_checks
+from html_tail import keep_trailing_content
 
 
 try:
@@ -372,6 +373,8 @@ def extract_page_data(
     full-fidelity Markdown, local asset inventory, internal/external links, and
     deterministic technical SEO audit flags.
     """
+    source_html = html  # as sent: page size and markup validation describe these bytes
+    html = keep_trailing_content(html)  # content after </html> is part of the page, as in a browser
     soup = BeautifulSoup(html, _HTML_PARSER)
     hdrs_low = {k.lower(): str(v) for k, v in (response_headers or {}).items()}
     x_robots_tag = hdrs_low.get("x-robots-tag", "").strip()
@@ -896,7 +899,7 @@ def extract_page_data(
         seo_issues.append(f"images-missing-dimensions ({images_missing_dimensions})")
 
     page_check_result = run_page_checks(
-        html=html, soup=soup, page_url=page_url, headers=hdrs_low, lang=html_lang, title=title,
+        html=source_html, soup=soup, page_url=page_url, headers=hdrs_low, lang=html_lang, title=title,
         meta_description=meta_description, visible_text=visible_text, h1=headings["h1"],
         meta_tags=meta_tags, canonical=canonical, images=images,
         internal_links=internal_links, external_links=external_links)

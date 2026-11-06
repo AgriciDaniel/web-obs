@@ -22,6 +22,7 @@ from typing import Optional
 from urllib.parse import urljoin, urlparse
 
 from note_safety import plain_language
+from html_tail import keep_trailing_content
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
 INLINE_TAGS = {
@@ -964,7 +965,7 @@ def convert_html_to_markdown(
     """
     if not html or not html.strip():
         return ""
-    soup = BeautifulSoup(html, parser)
+    soup = BeautifulSoup(keep_trailing_content(html), parser)
     root = _prepare_content_root(soup, page_url, inline_svgs_out=inline_svgs_out, regions_out=regions_out)
     md = _render_block_children(root, page_url)
     # Collapse 3+ consecutive newlines down to 2
