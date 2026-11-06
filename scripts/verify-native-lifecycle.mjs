@@ -28,6 +28,7 @@ const jsonl = loadSource('src/data/jsonl.ts');
 const validation = loadSource('src/data/validateManifest.ts');
 const pipelineProgress = loadSource('src/data/crawlProgress.ts');
 const crawlErrors = loadSource('src/plugin/crawlErrors.ts');
+const vaultResync = loadSource('src/plugin/vaultResync.ts');
 const fixture = {
   schemaVersion: '1.0.0', siteId: 'example.test', domain: 'example.test', origin: 'https://example.test',
   capturedAt: '2026-11-01T00:00:00Z', elapsedSec: 0,
@@ -91,6 +92,7 @@ async function hostHarness({ deferred = false, manifest = fixture, spawnError = 
     '../data/jsonl': jsonl, '../data/validateManifest': validation,
     '../data/crawlProgress': pipelineProgress,
     './crawlErrors': crawlErrors,
+    './vaultResync': vaultResync,
   };
   const { SiteGlobeView } = loadSource('src/plugin/SiteGlobeView.ts', stubs);
   const view = new SiteGlobeView({}, { manifest: { dir: 'synthetic-plugin' }, settings: {

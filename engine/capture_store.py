@@ -11,6 +11,7 @@ import time
 import signal
 import tempfile
 import uuid
+from note_safety import make_notes_network_free
 
 
 def safe_parent(file, boundary):
@@ -190,7 +191,8 @@ class CaptureTransaction:
         generated = {name: file_hash(file) for name, file in fresh.items()}
         preserved = []
         retained = []
-        metadata = {'_site-graph.json', '_site-summary.json', '_generated-files.json', '_recapture-report.md'}
+        # _tasks.md is regenerated from the active file, keeping the member's ticks, so it always replaces.
+        metadata = {'_site-graph.json', '_site-summary.json', '_generated-files.json', '_recapture-report.md', '_tasks.md'}
         for name, old_file in previous.items():
             if name in metadata:
                 continue
@@ -257,6 +259,9 @@ class CaptureTransaction:
         lines += ['', '## Retained files outside this generated inventory', '']
         lines += [f'- `{name}`' for name in retained] or ['None.']
         (staged / '_recapture-report.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+        # Preserved, legacy and retained notes were copied back unchanged: make the final tree network free
+        # before its hashes are recorded.
+        make_notes_network_free(str(staged))
         inventory_out = {name: {'generatedSha256': digest, 'installedSha256': file_hash(staged / name)} for name, digest in generated.items() if name != '_generated-files.json'}
         if generated_paths is not None:
             # A metadata refresh must not adopt copied member files as generated.

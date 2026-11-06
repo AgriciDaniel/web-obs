@@ -4,3 +4,7 @@ lxml>=5.0.0
 trafilatura>=1.12.0
 htmldate>=1.8.0
 playwright>=1.48.0
+# Optional. Each feature is skipped with a clear note when its package is missing.
+# dnspython>=2.6.0        # email DNS checks (MX, SPF, DMARC, DKIM, CAA) through the system resolver
+# pyspellchecker>=0.8.0   # opt-in spell check of page text
+# html5lib>=1.1           # HTML parse error counts

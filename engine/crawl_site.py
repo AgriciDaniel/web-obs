@@ -49,9 +49,15 @@ if _ENGINE_DIR not in sys.path:
     sys.path.insert(0, _ENGINE_DIR)
 
 from capture_store import CaptureTransaction
+from note_safety import make_notes_network_free
 from evidence_export import (build_pages_base_yaml, compute_internal_pagerank,
     write_fetch_log, compute_and_write_site_drift, write_evidence_pack)
 from brand_and_dns import extract_observed_brand_kit
+from audit_outputs import (drift_findings, page_audit_section, page_findings, security_txt_findings,
+    write_audit_report, write_findings_csv, write_tasks)
+from issue_catalog import catalog_for_manifest
+import page_checks
+from site_audit import build_site_audit
 
 from extractor import (  # noqa: E402
     LocalAssetDownloader,
@@ -68,6 +74,7 @@ from site_intel import (  # noqa: E402
     detect_funnel_platforms,
     is_clean_social_profile_url,
     probe_ai_and_discovery_endpoints,
+    _check_direct_external_url,
 )
 from sitemap import (  # noqa: E402
     SitemapUrlEntry,
@@ -123,11 +130,30 @@ def url_to_vault_rel_note(url: str, domain_folder: str) -> tuple[str, str]:
     return f"sites/{domain_folder}/pages/{joined}", section
 
 
+def _ai_crawler_line(ai_intel: dict) -> str:
+    """AI crawler access from robots.txt. Unknown is not allowed: an unreadable robots.txt means no data."""
+    policy = ai_intel.get("aiBotsPolicy") or {}
+    unknown = [bot for bot, status in policy.items() if str(status).startswith("unknown")]
+    if policy and len(unknown) == len(policy):
+        return "- **AI Crawlers Allowed in robots.txt:** No data: robots.txt could not be read, so AI crawler access is unknown."
+    line = f"- **AI Crawlers Allowed in robots.txt:** `{ai_intel['allowedAiBotsCount']}/{len(policy)}`"
+    if ai_intel.get("blockedAiBots"):
+        line += f" (Blocked: `{', '.join(ai_intel['blockedAiBots'])}`)"
+    if unknown:
+        line += f" (Unknown: `{', '.join(unknown)}`)"
+    if not ai_intel.get("blockedAiBots") and not unknown and ai_intel["allowedAiBotsCount"] == len(policy):
+        line += " (All listed AI crawlers allowed)"
+    return line
+
+
 def _validation_summary(ai_intel: dict) -> str:
     parts = []
     for key, label in (("llmsTxt", "llms.txt"), ("securityTxt", "security.txt")):
         row = (ai_intel.get("validation") or {}).get(key)
-        if row:
+        if row and row.get("notes") is not None:  # llms.txt notes carry levels; info notes are guidance, not problems
+            problems = [n["code"] for n in row["notes"] if n["level"] in ("error", "warn")]
+            parts.append(f"{label} {'valid' if row['valid'] else 'not valid'}" + (f" with notes ({', '.join(dict.fromkeys(problems))})" if problems else ""))
+        elif row:
             parts.append(f"{label} {'valid' if row['valid'] else 'needs attention (' + ', '.join(row['issues']) + ')'}")
         elif ai_intel["endpoints"].get(key):
             parts.append(f"{label} not validated")
@@ -159,7 +185,8 @@ def rewrite_markdown_for_obsidian(
         return ""
 
     # 1. Rewrite Markdown images ![alt](url) to local vault embeds ![[sites/<domain>/assets/file|alt]]
-    img_pattern = re.compile(r"!\[([^\]\n]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+    # Destinations may hold balanced parentheses (a_(1).png), as CommonMark allows.
+    img_pattern = re.compile(r"!\[([^\]\n]*)\]\(((?:[^\s()]|\([^\s()]*\))+)(?:\s+\"[^\"]*\")?\)")
 
     def _replace_img(match: re.Match) -> str:
         alt = match.group(1).strip().replace("|", "-").replace("\n", " ")
@@ -170,12 +197,14 @@ def rewrite_markdown_for_obsidian(
             return f"![[{asset_rel}|{alt}]]" if alt else f"![[{asset_rel}]]"
         if raw_target.startswith("inline-svg://"):
             return ""
+        # Not saved: left as written. The final sweep (note_safety) makes it a plain link outside code and
+        # inert inside code, so code keeps its text and opening the note fetches nothing.
         return match.group(0)
 
     rewritten = img_pattern.sub(_replace_img, md_text)
 
     # 2. Rewrite single-line inline Markdown links [text](url) when target is a crawled internal page note
-    link_pattern = re.compile(r"(?<!!)\[([^\]]+)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+    link_pattern = re.compile(r"(?<!!)\[([^\]]+)\]\(((?:[^\s()]|\([^\s()]*\))+)(?:\s+\"[^\"]*\")?\)")
 
     def _replace_link(match: re.Match) -> str:
         raw_label = re.sub(r"\s+", " ", match.group(1)).strip().replace("|", "-")
@@ -189,6 +218,115 @@ def rewrite_markdown_for_obsidian(
         return f"[{raw_label}]({raw_href})"
 
     return link_pattern.sub(_replace_link, rewritten)
+
+
+_MD_LINK_RE = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)\s]+)\)")
+_MD_IMAGE_RE = re.compile(r"!\[([^\]\n]*)\]\([^)\s]+\)")
+
+
+def _md_label(text: str, limit: int = 90) -> str:
+    """One-line link text that cannot break Markdown or a wikilink alias."""
+    clean = re.sub(r"\s+", " ", str(text or "")).strip()
+    clean = re.sub(r"\s*[\u2190-\u21ff\u2b00-\u2bff]+\s*$", "", clean)  # trailing arrows such as the external-link mark
+    clean = clean.replace("[", "(").replace("]", ")").replace("|", "/")
+    return clean[:limit].rstrip() + ("..." if len(clean) > limit else "")
+
+
+def _human_bytes(size) -> str:
+    if not isinstance(size, (int, float)) or size <= 0:
+        return ""
+    for unit, step in (("MB", 1024 * 1024), ("KB", 1024)):
+        if size >= step:
+            return f"{size / step:.1f} {unit}"
+    return f"{int(size)} B"
+
+
+def region_callout(region: dict, max_lines: int = 60) -> list[str]:
+    """A site region (header, navigation, sidebar, footer) as a collapsed Obsidian callout.
+
+    Remote images become their alt text, headings become bold lines so they stay out of the
+    note outline, and lines that only repeat links already shown are dropped.
+    """
+    body = _MD_IMAGE_RE.sub(lambda m: m.group(1).strip(), region.get("markdown") or "")
+    lines: list[str] = []
+    seen: set[str] = set()
+    for raw in body.splitlines():
+        line = raw.rstrip()
+        if not line.strip():
+            if lines and lines[-1] != "":
+                lines.append("")
+            continue
+        if line.lstrip().startswith("#"):
+            line = "**" + line.lstrip().lstrip("#").strip() + "**"
+        urls = [m.group(2) for m in _MD_LINK_RE.finditer(line)]
+        rest = re.sub(r"^\s*(?:[-*]|\d+\.)\s*", "", _MD_LINK_RE.sub("", line))
+        if urls and all(u in seen for u in urls) and not re.search(r"[A-Za-z]{3,}", rest):
+            continue
+        seen.update(urls)
+        lines.append(line)
+    while lines and lines[-1] == "":
+        lines.pop()
+    if not lines:
+        return []
+    if len(lines) > max_lines:
+        lines = lines[:max_lines] + ["..."]
+    return [f"> [!info]- {_md_label(region.get('label') or 'Site region', 60)}"] + [f"> {line}" if line else ">" for line in lines]
+
+
+_RESOURCE_GROUPS = [("image", "Images"), ("video", "Video"), ("audio", "Audio"), ("transcript", "Captions and transcripts"),
+                    ("document", "Documents"), ("stylesheet", "Stylesheets"), ("script", "Scripts"), ("font", "Fonts")]
+
+
+def resource_label(resource: dict, page_url: str) -> str:
+    """Alt text or link text when the page gave one, otherwise the file name, otherwise host and path."""
+    refs = [r for r in resource.get("references") or [] if r.get("pageUrl") == page_url]
+    generic = {"", resource.get("type") or "", "image", "font", "script", "stylesheet", "other", "document", "cover"}
+    for ref in refs:
+        label = _md_label(ref.get("label") or "")
+        if label and label.lower() not in generic:
+            return label
+    parsed = urlparse(resource.get("url") or "")
+    name = os.path.basename(parsed.path.rstrip("/"))
+    if name:
+        return _md_label(name, 70)
+    return _md_label(f"{parsed.hostname or ''}{parsed.path or ''}", 70) or "resource"
+
+
+def media_section(page_resources: list[dict], page_url: str) -> list[str]:
+    groups: dict[str, list[dict]] = {}
+    for resource in page_resources:
+        groups.setdefault(resource.get("type") or "other", []).append(resource)
+    order = [key for key, _ in _RESOURCE_GROUPS] + sorted(k for k in groups if k not in dict(_RESOURCE_GROUPS))
+    titles = dict(_RESOURCE_GROUPS)
+    lines = ["## Media and Resources", ""]
+    for key in order:
+        rows = groups.get(key)
+        if not rows:
+            continue
+        lines.append(f"**{titles.get(key, key.replace('-', ' ').capitalize())}** ({len(rows)})")
+        for resource in rows:
+            label = resource_label(resource, page_url)
+            target = f"[[{resource['localPath']}|{label}]]" if resource.get("localPath") else f"[{label}]({resource['url']})"
+            extras = [_human_bytes(resource.get("bytes") or resource.get("sourceBytes"))]
+            status = resource.get("checkStatus")
+            if status and status not in ("ok", "unchecked"):
+                extras.append(status)
+            host = urlparse(resource.get("url") or "").hostname or ""
+            page_host = urlparse(page_url).hostname or ""
+            if host and host != page_host:
+                extras.append(host)
+            suffix = " · ".join(x for x in extras if x)
+            lines.append(f"- {target}" + (f" · {suffix}" if suffix else ""))
+        lines.append("")
+    return lines
+
+
+def property_table(rows: list[tuple[str, str]]) -> list[str]:
+    out = ["| Property | Value |", "| :--- | :--- |"]
+    for label, value in rows:
+        if value not in (None, ""):
+            out.append(f"| {label} | {str(value).replace('|', '/')} |")
+    return out
 
 
 def infer_brand_name(home_ext: Optional[dict], clean_domain: str) -> str:
@@ -326,12 +464,24 @@ def _capture_to_staging(
     check_external: bool = True,
     parallel: bool = True,
     image_mode: str = "preferred",
+    browser_audit: bool = True,
+    spell_check: bool = False,
+    dns_checks: bool = True,
+    snapshot_limit: int = 25,
+    snapshot_html: bool = False,
+    tls_check: bool = True,
+    tasks: bool = True,
+    deadline_sec: Optional[float] = None,
 ) -> dict:
     started_at = time.time()
+    page_checks.configure(spell_check=spell_check)
     from provenance import capture_provenance, assert_engine_unchanged
     provenance = capture_provenance({"maxPages": max_pages, "downloadImages": download_images,
         "imageMode": image_mode, "renderMode": render_mode, "delaySec": delay_sec,
         "checkExternal": check_external, "parallel": parallel,
+        "browserAudit": browser_audit, "spellCheck": spell_check, "dnsChecks": dns_checks,
+        "snapshotLimit": snapshot_limit, "snapshotHtml": snapshot_html,
+        "tlsCheck": tls_check, "tasks": tasks, "deadlineSec": deadline_sec,
         "limits": {"assets": 500, "assetBytes": 128 * 1024 * 1024, "linkChecks": 1000, "linkDrainSeconds": 30}})
     emit_event("start", target=target_url, maxPages=max_pages)
 
@@ -389,6 +539,8 @@ def _capture_to_staging(
             raw = evidence.get("content") or b""
             policy = build_robots_policy(raw.decode("utf-8-sig", errors="replace"), evidence.get("status_code"), evidence.get("error"), evidence.get("too_large", False))
             robots_policies[resource_origin] = policy
+            from url_safety import apply_robots_pacing
+            apply_robots_pacing(resource_origin, policy)
             digest = hashlib.sha256(raw).hexdigest()
             with open(os.path.join(raw_dir, f"robots-{digest}.txt"), "wb") as f:
                 f.write(raw)
@@ -763,6 +915,7 @@ def _capture_to_staging(
     authority_scores = compute_internal_pagerank(list(crawled_pages), internal_pair_meta, home_url)
 
     # Write internal page notes & build page graph nodes
+    deferred_notes: list[tuple[str, str, list[str], list[str]]] = []
     for u, pdata in crawled_pages.items():
         nid = node_id_by_url[u]
         rel_note = note_by_url[u]
@@ -822,6 +975,8 @@ def _capture_to_staging(
         schema_types = ext["schema_types"] if ext else []
         word_count = ext["word_count"] if ext else 0
         reading_min = ext.get("reading_time_min", 0) if ext else 0
+        # Chinese, Japanese, Thai and other languages written without spaces: a space count is not a word count.
+        words_measured = ((ext or {}).get("page_checks") or {}).get("wordsMeasured", True) is not False
         content_hash = ext.get("content_hash", "") if ext else ""
         images_count = len(ext["images"]) + len(ext.get("inline_svgs") or []) if ext else 0
         images_missing_alt = ext.get("images_missing_alt", 0) if ext else 0
@@ -834,6 +989,9 @@ def _capture_to_staging(
         downloads_list = ext.get("downloads") or [] if ext else []
         page_resources = [r for r in resources if any(ref['pageUrl'] == u for ref in r['references'])]
         page_issues = list(ext.get("seo_issues") or []) if ext else []
+        if pdata.get("render_used"):
+            # The browser proxy drops Content-Encoding, so compression is unknown for rendered pages.
+            page_issues = [i for i in page_issues if i != "no-compression"]
         if health in ("broken", "unavailable"):
             page_issues.append("page-" + health)
         # Independent flags: a page can be a redirect and also missing from the sitemap, so the
@@ -887,8 +1045,8 @@ def _capture_to_staging(
             f"in_sitemap: {'true' if in_sm else 'false'}",
             f"url_depth: {u_depth}",
             f"click_depth: {c_depth if c_depth is not None else 'null'}",
-            f"word_count: {word_count}",
-            f"reading_time_min: {reading_min}",
+            *([f"word_count: {word_count}", f"reading_time_min: {reading_min}"] if words_measured
+              else ["words_measured: false"]),
             f"lang: {yaml_quote(lang)}",
             f"author: {yaml_quote(author)}",
             f"published_date: {yaml_quote(pub_date)}",
@@ -921,7 +1079,7 @@ def _capture_to_staging(
                 frontmatter_lines.append(f"  - {yaml_quote(st)}")
         if page_issues:
             frontmatter_lines.append("seo_issues:")
-            for iss in page_issues[:10]:
+            for iss in page_issues[:40]:
                 frontmatter_lines.append(f"  - {yaml_quote(iss)}")
         frontmatter_lines.append("---")
 
@@ -947,22 +1105,41 @@ def _capture_to_staging(
             note_sections.append(f"> {meta_desc}")
             note_sections.append("")
 
-        note_sections.append(
-            f"**URL:** {u} | **Status:** `{status}` (`{resp_ms} ms`) | **Health:** `{health}` | "
-            f"**Click Depth:** `{c_depth if c_depth is not None else 'orphan'}` | "
-            f"**In Sitemap:** `{'Yes' if in_sm else 'No'}` | **Words:** `{word_count}` (`~{reading_min} min read`)"
-        )
+        hops = pdata["redirect_chain"] or []
+        reached_via = ", ".join(f"{hop.get('status_code')} from {hop.get('url')}" for hop in hops[:3]) if hops else ""
+        health_word = {"healthy": "Healthy", "hub": "Section hub", "home": "Home", "orphan": "Orphan (no internal links in)",
+                       "unlisted": "Not in the sitemap", "redirect": "Redirects", "broken": "Broken", "unavailable": "Unavailable"}.get(health, health)
+        note_sections.extend(property_table([
+            ("URL", f"[{_md_label(urlparse(u).path or '/', 80)}]({u})"),
+            ("Status", f"{status} · {resp_ms} ms" if status else "No response"),
+            ("Reached via redirect", reached_via),
+            ("Health", health_word),
+            ("Click depth", str(c_depth) if c_depth is not None else "Not linked from home"),
+            ("In sitemap", "Yes" if in_sm else "No"),
+            ("Words", f"{word_count:,} (about {reading_min} min read)" if words_measured
+             else "Not measured for this language (written without spaces between words)"),
+        ]))
         note_sections.append("")
 
         if pdata["error"]:
             note_sections.append(f"> [!WARNING] Crawl Error\n> {pdata['error']}")
             note_sections.append("")
 
-        if md_body:
+        regions = (ext or {}).get("site_regions") or []
+        if md_body or regions:
             note_sections.append("## Page Content")
             note_sections.append("")
-            note_sections.append(md_body)
-            note_sections.append("")
+            for region in (r for r in regions if r.get("position") == "before"):
+                callout = region_callout(region)
+                if callout:
+                    note_sections.extend(callout + [""])
+            if md_body:
+                note_sections.append(md_body)
+                note_sections.append("")
+            for region in (r for r in regions if r.get("position") != "before"):
+                callout = region_callout(region)
+                if callout:
+                    note_sections.extend(callout + [""])
 
         if videos_list:
             note_sections.append("## Embedded & Linked Videos")
@@ -979,14 +1156,7 @@ def _capture_to_staging(
             note_sections.append("")
 
         if page_resources:
-            note_sections.extend(["## Media and Resources", ""])
-            for resource in page_resources:
-                refs = [r for r in resource['references'] if r['pageUrl'] == u]
-                label = next((r['label'] for r in refs if r.get('label')), resource['type'])
-                label = re.sub(r"[\[\]\r\n|]", " ", label)
-                target = ('[[' + resource['localPath'] + '|' + label + ']]') if resource.get('localPath') else ('[' + label + '](' + resource['url'] + ')')
-                note_sections.append(f"- {resource['type']}: {target} ({resource.get('checkStatus', 'unchecked')})")
-            note_sections.append("")
+            note_sections.extend(media_section(page_resources, u))
 
         body_targets: list[tuple[str, list[str]]] = []
         chrome_targets: list[tuple[str, list[str]]] = []
@@ -1011,27 +1181,51 @@ def _capture_to_staging(
             note_sections.append("## Outgoing External Links")
             note_sections.append("")
             for edom, elist in sorted(page_ext_domains.items()):
-                if edom in ext_note_by_domain:
-                    ext_no_ext = ext_note_by_domain[edom][:-3]
-                    hub_wikilink = f"[[{ext_no_ext}|{edom}]]"
-                else:
-                    hub_wikilink = f"`{edom}`"
-                sample_urls = ", ".join(sorted({item["url"] for item in elist})[:4])
-                note_sections.append(f"- {hub_wikilink}: {sample_urls}")
+                hub = f"[[{ext_note_by_domain[edom][:-3]}|{edom}]]" if edom in ext_note_by_domain else edom
+                links: dict[str, str] = {}
+                for item in elist:
+                    links.setdefault(item["url"], item.get("anchor") or "")
+                if len(links) == 1:
+                    link_url, anchor = next(iter(links.items()))
+                    note_sections.append(f"- [{_md_label(anchor) or _md_label(urlparse(link_url).path or link_url, 70)}]({link_url}) · {hub}")
+                    continue
+                note_sections.append(f"- {hub}")
+                for link_url, anchor in sorted(links.items())[:12]:
+                    note_sections.append(f"  - [{_md_label(anchor) or _md_label(urlparse(link_url).path or link_url, 70)}]({link_url})")
+                if len(links) > 12:
+                    note_sections.append(f"  - and {len(links) - 12} more")
             note_sections.append("")
 
         if chrome_targets:
             note_sections.append("## Navigation & Footer Links (Site Chrome)")
             note_sections.append("")
-            for dst_u, anchors in chrome_targets[:25]:
-                dst_title = (crawled_pages[dst_u].get("extracted") or {}).get("title") or dst_u
-                note_sections.append(f"- `{dst_title}` ({dst_u})")
-            note_sections.append("")
+            chrome_urls = {dst_u: anchors for dst_u, anchors in chrome_targets}
+            def _key(link_url):
+                norm = canonicalize_crawl_url(link_url) or link_url
+                return url_aliases.get(norm, norm)
+            groups = [("Header", (ext or {}).get("header_nav") or []), ("Footer", (ext or {}).get("footer_links") or [])]
+            placed: set[str] = set()
+            for group_title, group_links in groups:
+                rows = []
+                for link in group_links:
+                    key = _key(link.get("url") or "")
+                    if key in chrome_urls and key not in placed:
+                        placed.add(key)
+                        rows.append((key, link.get("label") or ""))
+                if rows:
+                    note_sections.append(f"**{group_title}**")
+                    note_sections.extend(f"- [{_md_label(label) or _md_label((crawled_pages[key].get('extracted') or {}).get('title') or key)}]({key})" for key, label in rows[:25])
+                    note_sections.append("")
+            other = [(dst_u, anchors) for dst_u, anchors in chrome_targets if dst_u not in placed]
+            if other:
+                note_sections.append("**Other site navigation**" if placed else "**Site navigation**")
+                for dst_u, anchors in other[:25]:
+                    label = anchors[0] if anchors else (crawled_pages[dst_u].get("extracted") or {}).get("title") or dst_u
+                    note_sections.append(f"- [{_md_label(label)}]({dst_u})")
+                note_sections.append("")
 
-        full_note_disk = os.path.join(vault_dir, rel_note)
-        os.makedirs(os.path.dirname(full_note_disk), exist_ok=True)
-        with open(full_note_disk, "w", encoding="utf-8") as f:
-            f.write("\n".join(note_sections).rstrip() + "\n")
+        # Notes are written after the site audit so each one can carry its own findings.
+        deferred_notes.append((u, os.path.join(vault_dir, rel_note), frontmatter_lines, note_sections[1:]))
 
         path_display = urlparse(u).path or "/"
         if urlparse(u).query:
@@ -1088,7 +1282,10 @@ def _capture_to_staging(
                 "codeBlocksCount": code_blocks_count,
                 "formsCount": forms_count,
                 "videosCount": len(videos_list),
-                "seoIssues": page_issues[:10],
+                "seoIssues": page_issues[:40],
+                "pageChecks": (ext or {}).get("page_checks"),
+                "simhash": (ext or {}).get("simhash", ""),
+                "keywords": {k: v[:5] for k, v in ((ext or {}).get("keywords") or {}).items() if isinstance(v, list)},
                 "coverAsset": local_imgs[0] if local_imgs else None,
                 "inlinksBody": inlinks_body_count.get(u, 0),
                 "inlinksTotal": inlinks_total_count.get(u, 0),
@@ -1274,7 +1471,10 @@ def _capture_to_staging(
             home_html = home_source.read()
     brand_kit = extract_observed_brand_kit(home_html, home_url, (home_ext or {}).get("schema_blocks"), downloader, domain_folder, allow_url=allow_resource, source_artifacts=source_artifacts, site_root=site_root)
     write_fetch_log(site_root, clean_domain, origin, captured_iso, fetch_rows)
-    drift = compute_and_write_site_drift(site_root, clean_domain, captured_iso, previous_manifest, internal_only, sorted(external_domains), new_edges=graph_edges, capture_status=capture_status)
+    previous_site_root = os.path.join(previous_vault_dir, "sites", domain_folder) if previous_vault_dir else None
+    drift = compute_and_write_site_drift(site_root, clean_domain, captured_iso, previous_manifest, internal_only, sorted(external_domains), new_edges=graph_edges, capture_status=capture_status,
+        previous_site_root=previous_site_root, home_url=home_url,
+        security_headers_present=stack_intel["securityHeaders"]["present"] if home_headers else None)
     site_intel_bundle = {
         "brandName": brand_name,
         "languages": sorted(all_languages),
@@ -1296,8 +1496,217 @@ def _capture_to_staging(
         },
     }
 
+    # Site audit, browser sample and transport checks
+    emit_event("phase", phase="compile", message="Auditing duplicates, link graph, schema, certificate and a browser sample...")
+    extracted_by_url = {u: p["extracted"] for u, p in crawled_pages.items() if p.get("extracted")}
+    try:
+        audit = build_site_audit(nodes=internal_only, extracted_by_url=extracted_by_url, internal_pair_meta=internal_pair_meta,
+            redirects=fetch_redirects, home_url=home_url, origin=origin, brand=brand_name, resources=resources,
+            sitemaps_found=sm_result.sitemaps_found, sitemap_urls=list(sitemap_urls), robots_text=sm_result.robots_text,
+            captured_iso=captured_iso, brand_kit=brand_kit)
+    except Exception as exc:  # An unusual page must never cost the member the whole capture.
+        capture_warnings.append(f"The site audit could not finish ({type(exc).__name__}: {exc}). Page notes and the map were still saved.")
+        capture_status = "partial"
+        audit = build_site_audit(nodes=[], extracted_by_url={}, internal_pair_meta={}, redirects={}, home_url=home_url, origin=origin,
+            brand=brand_name, resources=[], sitemaps_found=[], sitemap_urls=[], robots_text="", captured_iso=captured_iso)
+        audit["error"] = f"{type(exc).__name__}: {exc}"
+    from url_safety import capture_out_of_time, capture_time_left, within_capture_deadline
+
+    def out_of_time(what: str, need_sec: float) -> bool:
+        """A phase with too little time left is skipped and said so, rather than run into a timeout."""
+        if capture_out_of_time(need_sec):
+            capture_warnings.append(f"The capture deadline was reached before {what}.")
+            return True
+        return False
+
+    browser_result = {"state": "skipped", "detail": "Browser audit turned off for this capture.", "pages": [], "findings": []}
+    if browser_audit and out_of_time("the browser sample", 15):
+        browser_result = {"state": "skipped", "detail": "The capture deadline was reached before the browser sample.", "pages": [], "findings": []}
+    elif browser_audit:
+        from browser_audit import run_browser_audit
+        ranked = sorted((n for n in internal_only if n["statusCode"] == 200 and n["health"] in ("home", "hub", "healthy", "unlisted")),
+                        key=lambda n: (n["url"] != home_url, -(n.get("authorityScore") or 0), n["url"]))
+        sample_urls = [n["url"] for n in ranked[:5]]
+        raw_html_by_url = {}
+        for record in page_records:
+            if record["url"] in sample_urls and record.get("rawKind") == "http-response-decoded" and not crawled_pages[record["url"]].get("render_used"):
+                source = record.get("textPath") or record.get("rawPath")
+                if source:
+                    with open(os.path.join(site_root, source), "rb") as raw_file:
+                        raw_html_by_url[record["url"]] = raw_file.read().decode("utf-8", errors="replace")
+        browser_result = run_browser_audit(sample_urls, site_root=site_root, domain_folder=domain_folder,
+            allow_url=allow_page, allow_resource_url=allow_resource, raw_html_by_url=raw_html_by_url, render_mode=render_mode,
+            time_budget_sec=within_capture_deadline(90))
+    snapshot_result = {"state": "skipped", "detail": "Page snapshots are turned off for this capture.", "pages": {}, "limit": 0}
+    if snapshot_limit > 0 and out_of_time("the page snapshots", 15):
+        snapshot_result = {"state": "skipped", "detail": "The capture deadline was reached before the page snapshots.", "pages": {}, "limit": snapshot_limit}
+    elif snapshot_limit > 0:
+        from page_snapshots import run_page_snapshots
+        emit_event("phase", phase="snapshots", message="Saving full-page snapshots...")
+        snapshot_order = [n["url"] for n in sorted((n for n in internal_only if n["statusCode"] == 200 and n["health"] in ("home", "hub", "healthy", "unlisted", "orphan")),
+                          key=lambda n: (n["url"] != home_url, -(n.get("authorityScore") or 0), n["url"]))]
+        snapshot_result = run_page_snapshots(snapshot_order, site_root=site_root, limit=snapshot_limit, save_html=snapshot_html,
+            allow_url=allow_page, allow_resource_url=allow_resource, render_mode=render_mode,
+            time_budget_sec=within_capture_deadline(max(60, min(900, 15 * snapshot_limit))))  # about 15 s for a load plus a 24,000 px scroll
+        nodes_by_snapshot_url = {n["url"]: n for n in internal_only}
+        for snap_url, snap in (snapshot_result.get("pages") or {}).items():
+            if snap.get("screenshot") and snap_url in nodes_by_snapshot_url:
+                nodes_by_snapshot_url[snap_url]["snapshot"] = {k: snap.get(k) for k in ("screenshot", "html", "heightPx", "truncated", "capPx", "hiddenOverlays")}
+    from transport_checks import analyze_header_quality, check_email_dns, check_tls_certificate, set_cookie_values, transport_findings
+    if not tls_check:
+        tls_result = {"state": "skipped", "detail": "The certificate check is turned off for this capture."}
+    elif out_of_time("the certificate check", 2):
+        tls_result = {"state": "skipped", "detail": "The capture deadline was reached before the certificate check."}
+    else:
+        tls_result = check_tls_certificate(origin, timeout=within_capture_deadline(6.0))
+    header_quality = analyze_header_quality(home_headers or {}, set_cookie_values(home_headers or {}), https=parsed_origin.scheme == "https")
+    host_is_ip = bool(re.fullmatch(r"[0-9.]+|.*:.*", target_host))
+    if dns_checks and not host_is_ip and out_of_time("the email DNS checks", 2):
+        email_dns = {"state": "skipped", "detail": "The capture deadline was reached before the email DNS checks."}
+    elif dns_checks and not host_is_ip:
+        email_dns = check_email_dns(clean_domain, budget_sec=capture_time_left())
+    else:
+        email_dns = {"state": "skipped", "detail": "DNS checks are turned off or the site is addressed by IP."}
+    transport = {"tls": tls_result, "headerQuality": header_quality, "emailDns": email_dns}
+    alternate = ((ai_intel.get("siteChecks") or {}).get("alternateHost") or {}).get("state")
+    t_findings = [f for f in transport_findings(tls_result, header_quality, email_dns, home_url)
+                  if not (f["id"] == "tls-alternate-host" and alternate != "unreachable")]
+    site_intel_bundle["browserAudit"] = browser_result
+    site_intel_bundle["snapshots"] = {k: v for k, v in snapshot_result.items() if k != "pages"}
+    site_intel_bundle["transport"] = transport
+    site_intel_bundle["pageCheckFeatures"] = page_checks.optional_feature_states()
+
+    # llms.txt: check its links against the capture, then write a draft built from the captured pages.
+    import llms_txt
+    markdown_by_url = {u: (p.get("extracted") or {}).get("markdown_alternates") or [] for u, p in crawled_pages.items()}
+    markdown_by_url = {u: alts for u, alts in markdown_by_url.items() if alts}
+    llms_validation = (ai_intel.get("validation") or {}).get("llmsTxt")
+    if llms_validation:
+        def llms_robots_allowed(url):
+            parsed = urlparse(url)
+            if f"{parsed.scheme}://{parsed.netloc}" not in robots_policies and capture_out_of_time(2):
+                return True  # robots.txt for that host was not read in time; leave the link unchecked, not blamed
+            return allow_page(url)
+        rows = llms_txt.link_report(llms_validation, internal_only, url_aliases, llms_robots_allowed)
+        to_check = llms_txt.links_to_check(rows)
+        checked = {}
+        if to_check and capture_out_of_time(2):
+            rows = llms_txt.link_report(llms_validation, internal_only, url_aliases, llms_robots_allowed,
+                                        unchecked_detail="Not captured, and the capture deadline was reached before it could be checked.")
+        elif to_check:
+            check_until = time.monotonic() + within_capture_deadline(llms_txt.DIRECT_CHECK_SECONDS)
+            for link_url in to_check:
+                if time.monotonic() >= check_until:
+                    break
+                checked[link_url] = _check_direct_external_url(link_url, check_until, 3)
+            rows = llms_txt.link_report(llms_validation, internal_only, url_aliases, llms_robots_allowed, checked)
+        ai_intel["llmsLinks"] = rows
+    llms_draft = llms_txt.draft_llms_txt(brand_name, home_url, internal_only, markdown_by_url)
+    if llms_draft["pages"]:
+        listed = {canonicalize_crawl_url(link["url"]) or link["url"] for link in (llms_validation or {}).get("links") or []}
+
+        def is_listed(n):  # a page counts as listed when llms.txt links it or the markdown version it declares
+            return any((canonicalize_crawl_url(u) or u) in listed for u in [n["url"], *markdown_by_url.get(n["url"], [])])
+        strong_unlisted = [n for n in sorted(internal_only, key=lambda n: (-(n.get("authorityScore") or 0), n["url"]))
+                           if n.get("statusCode") == 200 and not n.get("redirectChain")
+                           and "noindex" not in (n.get("metaRobots") or "").lower()
+                           and not llms_txt.is_secondary_page(n["url"]) and not is_listed(n)][:10]
+        llms_draft["path"] = llms_txt.write_draft_note(site_root, domain_folder, captured_iso, llms_draft, llms_validation, strong_unlisted)
+        ai_intel["llmsDraft"] = {**{k: v for k, v in llms_draft.items() if k != "text"}, "text": llms_draft["text"][:20000]}
+    # llms.txt v2: pages may declare a markdown copy. Check that the strongest few load as markdown.
+    markdown_rows = []
+    by_strength = sorted(internal_only, key=lambda n: (n["url"] != home_url, -(n.get("authorityScore") or 0), n["url"]))
+    candidates = [(n["url"], markdown_by_url[n["url"]][0]) for n in by_strength if n["url"] in markdown_by_url][:llms_txt.MARKDOWN_CHECK_PAGES]
+    if candidates and not capture_out_of_time(2):
+        check_until = time.monotonic() + within_capture_deadline(llms_txt.MARKDOWN_CHECK_SECONDS)
+        for page_url, copy_url in candidates:
+            left = check_until - time.monotonic()
+            if left < 0.5:
+                break
+            if not allow_page(copy_url):
+                markdown_rows.append({"page": page_url, "url": copy_url, "state": "blocked", "statusCode": None,
+                                      "detail": "robots.txt does not allow fetching it."})
+                continue
+            markdown_rows.append({"page": page_url, "url": copy_url, **llms_txt.check_markdown_copy(copy_url, min(5.0, left))})
+    ai_intel["markdownAlternates"] = {"declaredPages": len(markdown_by_url), "checked": markdown_rows}
+    ai_intel["describedBy"] = sorted({target for p in crawled_pages.values() for target in (p.get("extracted") or {}).get("described_by") or []})[:10]
+    ai_intel["markdownAlternatePages"] = len(markdown_by_url)
+
+    audit["findings"] = (page_findings(internal_only) + audit["findings"] + list(browser_result.get("findings") or [])
+                         + t_findings + llms_txt.llms_findings(ai_intel, origin) + llms_txt.markdown_findings(markdown_rows)
+                         + security_txt_findings(ai_intel, origin, datetime.now(timezone.utc).date()) + drift_findings(drift))
+    findings_by_url: dict[str, list] = {}
+    for finding in audit["findings"]:
+        if finding["id"].startswith("seo:"):
+            continue
+        for target in finding["targets"]:
+            for key in {target.get("url"), target.get("sourceUrl")}:
+                if key in note_by_url:
+                    findings_by_url.setdefault(key, []).append((finding, target))
+    browser_by_url = {p["url"]: p for p in browser_result.get("pages") or []}
+    node_by_url = {n["url"]: n for n in internal_only}
+    opportunities_by_source = {}
+    for row in audit["linkOpportunities"]:
+        opportunities_by_source[row["sourceUrl"]] = opportunities_by_source.get(row["sourceUrl"], 0) + 1
+    duplicate_urls = {u for key in ("titles", "descriptions") for g in audit["duplicates"][key] for u in g["urls"]}
+    duplicate_urls |= {u for key in ("exactContent", "nearContent") for g in audit["duplicates"][key] for u in g["urls"]}
+    for u, note_path, frontmatter, body in deferred_notes:
+        node = node_by_url[u]
+        checks = node.get("pageChecks") or {}
+        extra = [f"findings_count: {len(node.get('seoIssues') or []) + len(findings_by_url.get(u, []))}",
+                 f"text_ratio: {round((checks.get('textRatio') or 0) * 100, 1)}",
+                 f"readability: {((checks.get('readability') or {}).get('fleschReadingEase')) if checks.get('readability') else 'null'}",
+                 f"dom_nodes: {(checks.get('dom') or {}).get('nodes', 0)}",
+                 f"duplicate: {'true' if u in duplicate_urls else 'false'}",
+                 f"link_opportunities: {opportunities_by_source.get(u, 0)}"]
+        fm = frontmatter[:-1] + extra + [frontmatter[-1]]
+        audit_lines = page_audit_section(u, node, findings_by_url, checks or None, browser_by_url.get(u), domain_folder)
+        snap = node.get("snapshot") or {}
+        if snap.get("screenshot"):
+            callout = [f"> [!example]- Page snapshot", f"> ![[sites/{domain_folder}/{snap['screenshot']}|Full-page snapshot]]"]
+            note_bits = ["rendered once at 1280 px wide"]
+            if snap.get("truncated"):
+                note_bits.append(f"cut at {snap.get('capPx') or 12000:,} px of {snap.get('heightPx'):,}")
+            if snap.get("hiddenOverlays"):
+                note_bits.append("pinned banners such as cookie notices hidden")
+            if snap.get("html"):
+                note_bits.append(f"[[sites/{domain_folder}/{snap['html']}|rendered HTML]]")
+            caption = "; ".join(note_bits)
+            callout.append(f"> *{caption[:1].upper() + caption[1:]}.*")
+            title_at = next((i for i, line in enumerate(body) if line.startswith("# ")), None)
+            insert_at = (title_at + 1) if title_at is not None else 0
+            body = body[:insert_at] + ["", *callout] + body[insert_at:]
+        os.makedirs(os.path.dirname(note_path), exist_ok=True)
+        with open(note_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(["\n".join(fm), *body, *audit_lines]).rstrip() + "\n")
+    write_findings_csv(site_root, audit["findings"])
+    ok_page_urls = {u for u, p in crawled_pages.items() if p.get("extracted") and isinstance(p.get("status_code"), int) and 200 <= p["status_code"] < 300}
+    checks_ran = {"browserUrls": {p["url"] for p in browser_result.get("pages") or [] if not p.get("error")},
+                  "tls": tls_result.get("state") in ("ok", "warn", "fail"),
+                  "dns": email_dns.get("state") in ("ok", "warn", "fail"),
+                  "headers": bool(home_headers), "robots": bool(sm_result.robots_text),
+                  "llms": ((ai_intel.get("llmsProbe") or {}).get("llmsTxt") or {}).get("state") in ("found", "absent", "html"),
+                  "llmsUncheckedLinks": {r["url"] for r in ai_intel.get("llmsLinks") or [] if r["state"] == "unchecked"},
+                  "markdownChecked": {r["page"] for r in (ai_intel.get("markdownAlternates") or {}).get("checked") or []
+                                      if r["state"] in ("ok", "broken", "unavailable", "html")}}
+    if capture_warnings:
+        capture_status = "partial"
+    # --no-tasks: no _tasks.md (for a host app that keeps its own task list).
+    task_counts = write_tasks(site_root, previous_site_root, audit["findings"], captured_iso,
+        set(crawled_pages), capture_status == "complete", note_by_url, ok_urls=ok_page_urls, checks_ran=checks_ran) if tasks else None
+    audit["tasks"] = task_counts
+    write_audit_report(site_root, domain_folder, clean_domain, captured_iso, audit, note_by_url, transport, browser_result, task_counts,
+                       llms={"probe": (ai_intel.get("llmsProbe") or {}).get("llmsTxt"), "validation": (ai_intel.get("validation") or {}).get("llmsTxt"),
+                             "links": ai_intel.get("llmsLinks"), "draftPath": (ai_intel.get("llmsDraft") or {}).get("path")})
+    audit_summary = {"findings": len(audit["findings"]), "findingItems": sum(f.get("targetCount", len(f["targets"])) for f in audit["findings"]),
+                     "linkOpportunities": len(audit["linkOpportunities"]), "linkFixes": len(audit["linkFixes"]),
+                     "duplicateGroups": sum(len(audit["duplicates"][k]) for k in ("titles", "descriptions", "exactContent", "nearContent")),
+                     "tasks": task_counts}
+
     manifest = {
-        "schemaVersion": "1.2.0",
+        "schemaVersion": "1.3.0",
+        "audit": audit,
+        "issueCatalog": catalog_for_manifest(),
         "resources": resources,
         "pipelineMetrics": collected["metrics"],
         "captureProvenance": provenance,
@@ -1326,6 +1735,8 @@ def _capture_to_staging(
             "avgResponseTimeMs": avg_ttfb_ms,
             "medianResponseTimeMs": median_response_ms,
             "avgFetchDurationMs": avg_fetch_ms,
+            "auditFindings": audit_summary["findings"],
+            "auditFindingItems": audit_summary["findingItems"],
         },
         "siteIntel": site_intel_bundle,
         "linkHealth": link_health,
@@ -1355,6 +1766,11 @@ def _capture_to_staging(
         "origin": origin,
         "capturedAt": captured_iso,
         "stats": manifest["stats"],
+        "auditSummary": audit_summary,
+        "audit": {k: v for k, v in audit.items() if k != "findings"},
+        "findings": audit["findings"],
+        "browserAudit": browser_result,
+        "transport": transport,
         "linkHealth": link_health,
         "brandKit": brand_kit,
         "drift": drift,
@@ -1467,6 +1883,8 @@ def _capture_to_staging(
         f"- [[sites/{domain_folder}/_link-health|Link and resource checks]]: {link_health['checkedCount']}/{link_health['totalCount']} attempted; {link_health['uncheckedCount']} unchecked; {len(link_health['brokenLinks'])} confirmed 404/410 targets.",
         f"- Internal authority is a relative weighted link heuristic, not search-engine authority.",
         *([f"- [[sites/{domain_folder}/_drift-report|Changes since previous capture]]"] if drift else []),
+        f"- [[sites/{domain_folder}/_audit|Site audit]]: {audit_summary['findings']} findings over {audit_summary['findingItems']} items, {audit_summary['linkOpportunities']} internal link opportunities, {audit_summary['linkFixes']} internal links to fix.",
+        *([f"- [[sites/{domain_folder}/_tasks|Task list]]: {task_counts['open']} open, {task_counts['resolvedNow']} resolved in this capture."] if task_counts else []),
         "",
         "## Collection Coverage",
         "",
@@ -1498,10 +1916,10 @@ def _capture_to_staging(
             "## AI Search & Agent Readiness (GEO)",
             "",
             f"- **llms.txt:** `{'Present (saved locally)' if ai_intel['endpoints']['llmsTxt'] else 'Missing'}` | **llms-full.txt:** `{'Present (saved locally)' if ai_intel['endpoints']['llmsFullTxt'] else 'Missing'}` | **ai-catalog.json:** `{'Present' if ai_intel['endpoints']['aiCatalogJson'] else 'Not found'}`",
+            *([f"- **llms.txt draft:** [[{ai_intel['llmsDraft']['path'].removesuffix('.md')}|Built from this capture, ready to review]]"] if (ai_intel.get("llmsDraft") or {}).get("path") else []),
             f"- **Validation:** {_validation_summary(ai_intel)}",
             f"- **Sitemap hygiene:** {_hygiene_summary(ai_intel.get('sitemapHygiene') or {})}",
-            f"- **AI Crawlers Allowed in robots.txt:** `{ai_intel['allowedAiBotsCount']}/{len(ai_intel['aiBotsPolicy'])}`"
-            + (f" (Blocked: `{', '.join(ai_intel['blockedAiBots'])}`)" if ai_intel["blockedAiBots"] else " (All major AI search & training bots allowed)"),
+            _ai_crawler_line(ai_intel),
             "",
         ]
     )
@@ -1566,6 +1984,8 @@ def _capture_to_staging(
     manifest["elapsedSec"] = round(time.time() - started_at, 2)
     manifest["pipelineMetrics"]["captureBeforePromotionSec"] = manifest["elapsedSec"]
     site_summary["pipelineMetrics"] = manifest["pipelineMetrics"]
+    # Last step for notes: nothing in them may load from the network when the member opens them.
+    make_notes_network_free(site_root)
     for name, value in (("_site-graph.json", manifest), ("_site-summary.json", site_summary)):
         with open(os.path.join(site_root, name), "w", encoding="utf-8") as f:
             json.dump(value, f, indent=2, ensure_ascii=False)
@@ -1584,15 +2004,32 @@ def crawl_website_to_vault(
     check_external: bool = True,
     parallel: bool = True,
     image_mode: str = "preferred",
+    browser_audit: bool = True,
+    spell_check: bool = False,
+    dns_checks: bool = True,
+    snapshot_limit: int = 25,
+    snapshot_html: bool = False,
+    tls_check: bool = True,
+    tasks: bool = True,
+    deadline_sec: Optional[float] = None,
 ) -> dict:
-    with CaptureTransaction(vault_dir) as transaction:
-        manifest = _capture_to_staging(
-            target_url, str(transaction.stage), max_pages, download_images,
-            render_mode, delay_sec, previous_vault_dir=vault_dir,
-            check_external=check_external, parallel=parallel, image_mode=image_mode,
-        )
-        emit_event("phase", phase="compile", message="Validating and saving notes, media inventory and map...")
-        manifest = transaction.commit(manifest)
+    from url_safety import set_capture_deadline
+    # One deadline for every network phase. Writing the notes and saving the capture still finish.
+    set_capture_deadline(time.monotonic() + deadline_sec if deadline_sec else None)
+    try:
+        with CaptureTransaction(vault_dir) as transaction:
+            manifest = _capture_to_staging(
+                target_url, str(transaction.stage), max_pages, download_images,
+                render_mode, delay_sec, previous_vault_dir=vault_dir,
+                check_external=check_external, parallel=parallel, image_mode=image_mode,
+                browser_audit=browser_audit, spell_check=spell_check, dns_checks=dns_checks,
+                snapshot_limit=snapshot_limit, snapshot_html=snapshot_html,
+                tls_check=tls_check, tasks=tasks, deadline_sec=deadline_sec,
+            )
+            emit_event("phase", phase="compile", message="Validating and saving notes, media inventory and map...")
+            manifest = transaction.commit(manifest)
+    finally:
+        set_capture_deadline(None)
     emit_event(
         "complete", captureStatus=manifest.get("captureStatus", "partial"),
         siteId=manifest["siteId"], domain=manifest["domain"],
@@ -1619,6 +2056,16 @@ def main() -> int:
     parser.add_argument("--image-mode", choices=("preferred", "all"), default="preferred", help="Download primary images or all observed variants")
     parser.add_argument("--serial", action="store_true", help="Use sequential workers for reproducible comparisons")
     parser.add_argument("--no-check-external", action="store_true", help="Record external URLs without requesting their destinations")
+    parser.add_argument("--no-browser-audit", action="store_true", help="Skip the sampled browser audit (lab timings, axe, screenshots)")
+    parser.add_argument("--spell-check", action="store_true", help="Check English spelling (needs pyspellchecker)")
+    parser.add_argument("--no-dns-checks", action="store_true", help="Skip email DNS checks through the system resolver")
+    parser.add_argument("--no-snapshots", action="store_true", help="Skip full-page snapshots")
+    parser.add_argument("--snapshot-limit", type=int, default=25, help="Most pages to snapshot, most important first (default: 25)")
+    parser.add_argument("--snapshot-html", action="store_true", help="Also save the rendered HTML next to each snapshot")
+    parser.add_argument("--no-tls-check", action="store_true", help="Skip the TLS certificate check (one handshake with the site)")
+    parser.add_argument("--no-tasks", action="store_true", help="Do not write _tasks.md")
+    parser.add_argument("--deadline", type=float, default=None, metavar="SECONDS",
+                        help="One time limit for every network phase of the capture; phases that hit it are marked partial")
     parser.add_argument("--max-pages", type=int, default=250, help="Maximum pages to crawl (default: 250)")
     parser.add_argument(
         "--no-images",
@@ -1639,6 +2086,9 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.deadline is not None and not (1 <= args.deadline <= 86400):
+        emit_event("error", message="--deadline must be between 1 and 86400 seconds.")
+        return 2
     vault_dir = os.path.abspath(args.vault)
     if not os.path.isdir(vault_dir):
         emit_event("error", message=f"Vault directory does not exist: {vault_dir}")
@@ -1656,7 +2106,10 @@ def main() -> int:
             download_images=not args.no_images, image_mode=args.image_mode,
             render_mode=args.render,
             check_external=not args.no_check_external, parallel=not args.serial,
+            browser_audit=not args.no_browser_audit, spell_check=args.spell_check, dns_checks=not args.no_dns_checks,
+            snapshot_limit=0 if args.no_snapshots else max(0, min(500, args.snapshot_limit)), snapshot_html=args.snapshot_html,
             delay_sec=max(0.0, min(10.0, args.delay)),
+            tls_check=not args.no_tls_check, tasks=not args.no_tasks, deadline_sec=args.deadline,
         )
         return 0
     except KeyboardInterrupt:

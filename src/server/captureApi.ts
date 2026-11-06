@@ -6,6 +6,29 @@ import type { PluginOption } from 'vite';
 import { JsonlDecoder } from '../data/jsonl';
 import { isSafeSiteId, parseSiteManifest } from '../data/validateManifest';
 
+const SITE_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.ico', '.avif']);
+export const MAX_SITE_IMAGE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Resolves `sites/<siteId>/...` to a real image file inside that site's folder, or null. Rejects
+ * traversal, other file types, oversized files and symlinks that lead outside the capture.
+ */
+export function resolveSiteImage(sitesRoot: string, requested: string | null): string | null {
+  if (typeof requested !== 'string' || requested.length > 300 || /[\x00-\x1f\x7f\\]/.test(requested)) return null;
+  const parts = requested.split('/');
+  if (parts.length < 3 || parts[0] !== 'sites' || !isSafeSiteId(parts[1]) || parts.some((part) => !part || part === '.' || part === '..')) return null;
+  if (!SITE_IMAGE_EXTENSIONS.has(path.extname(requested).toLowerCase())) return null;
+  try {
+    const siteRoot = fs.realpathSync(path.join(sitesRoot, parts[1]));
+    const file = fs.realpathSync(path.join(sitesRoot, ...parts.slice(1)));
+    if (!file.startsWith(siteRoot + path.sep)) return null;
+    const stat = fs.statSync(file);
+    return stat.isFile() && stat.size <= MAX_SITE_IMAGE_BYTES ? file : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Local development transport for the same crawler used by the Obsidian view. */
 export function webObsDevApiPlugin(): PluginOption {
   const vaultRoot = process.cwd();
@@ -46,6 +69,17 @@ export function webObsDevApiPlugin(): PluginOption {
           try { return json(200, parseSiteManifest(JSON.parse(fs.readFileSync(file, 'utf8')))); }
           catch (error) { return json(422, { error: error instanceof Error ? error.message : 'Invalid capture.' }); }
         }
+        if (req.method === 'GET' && url.pathname === '/__web_obs/asset') {
+          // Read-only: a saved image inside one site's capture folder, for the map's brand badge.
+          if (req.headers['sec-fetch-site'] === 'cross-site') return json(403, { error: 'Assets require a same-origin request.' });
+          const asset = resolveSiteImage(sitesRoot, url.searchParams.get('path'));
+          if (!asset) return json(404, { error: 'Asset not found.' });
+          res.statusCode = 200;
+          res.setHeader('Content-Type', 'application/octet-stream');
+          res.setHeader('X-Content-Type-Options', 'nosniff');
+          res.setHeader('Cache-Control', 'no-store');
+          return res.end(fs.readFileSync(asset));
+        }
         if (req.method !== 'POST' || !['/__web_obs/crawl', '/__web_obs/continue-links'].includes(url.pathname)) return json(404, { error: 'Unknown capture endpoint.' });
         if (req.headers['sec-fetch-site'] === 'cross-site') return json(403, { error: 'Capture requires a same-origin request.' });
         try {
@@ -65,7 +99,7 @@ export function webObsDevApiPlugin(): PluginOption {
           if (oversized || res.destroyed || req.aborted) return;
           body += bodyDecoder.end();
           const continuing = url.pathname === '/__web_obs/continue-links';
-          let options: { url: string; maxPages: number; renderMode: 'auto' | 'always' | 'never'; downloadImages: boolean; imageMode: 'preferred' | 'all'; continueLinksSiteId?: string };
+          let options: { url: string; maxPages: number; renderMode: 'auto' | 'always' | 'never'; downloadImages: boolean; imageMode: 'preferred' | 'all'; continueLinksSiteId?: string; browserAudit: boolean; spellCheck: boolean; dnsChecks: boolean; pageSnapshots: boolean; snapshotLimit: number; snapshotHtml: boolean; tlsCheck: boolean; taskList: boolean; deadlineSec: number | null };
           try {
             const data = JSON.parse(body || '{}');
             if (!data || typeof data !== 'object' || Array.isArray(data) || typeof data.url !== 'string' || !data.url.trim() || data.url.length > 2048) throw new Error('Enter a website URL.');
@@ -76,7 +110,12 @@ export function webObsDevApiPlugin(): PluginOption {
             const imageMode = data.imageMode ?? 'preferred';
             if (!['preferred', 'all'].includes(imageMode)) throw new Error('Invalid image variant mode.');
             if (continuing && !isSafeSiteId(data.continueLinksSiteId)) throw new Error('Invalid saved site ID.');
-            options = { url: data.url.trim(), maxPages, renderMode, imageMode, downloadImages: data.downloadImages !== false, continueLinksSiteId: continuing ? data.continueLinksSiteId : undefined };
+            const deadlineSec = data.deadlineSec ?? null;
+            if (deadlineSec !== null && (typeof deadlineSec !== 'number' || !Number.isFinite(deadlineSec) || deadlineSec < 0 || deadlineSec > 86400)) throw new Error('Capture time limit must be between 0 and 86400 seconds.');
+            options = { url: data.url.trim(), maxPages, renderMode, imageMode, downloadImages: data.downloadImages !== false, continueLinksSiteId: continuing ? data.continueLinksSiteId : undefined,
+              browserAudit: data.browserAudit !== false, spellCheck: data.spellCheck === true, dnsChecks: data.dnsChecks !== false,
+              pageSnapshots: data.pageSnapshots !== false, snapshotLimit: Number.isInteger(data.snapshotLimit) ? Math.max(1, Math.min(500, data.snapshotLimit)) : 25, snapshotHtml: data.snapshotHtml === true,
+              tlsCheck: data.tlsCheck !== false, taskList: data.taskList !== false, deadlineSec: deadlineSec ? Math.max(1, Math.round(deadlineSec)) : null };
           } catch (error) { return json(400, { error: error instanceof Error ? error.message : 'Invalid capture request.' }); }
 
           res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
@@ -88,6 +127,17 @@ export function webObsDevApiPlugin(): PluginOption {
             ? [script, options.continueLinksSiteId!, '--vault', vaultRoot, '--continue-links']
             : [script, options.url, '--vault', vaultRoot, '--max-pages', String(options.maxPages), '--render', options.renderMode, '--image-mode', options.imageMode];
           if (!options.downloadImages) args.push('--no-images');
+          if (!options.continueLinksSiteId) {
+            if (!options.browserAudit) args.push('--no-browser-audit');
+            if (options.spellCheck) args.push('--spell-check');
+            if (!options.dnsChecks) args.push('--no-dns-checks');
+            if (!options.pageSnapshots) args.push('--no-snapshots');
+            else args.push('--snapshot-limit', String(options.snapshotLimit));
+            if (options.snapshotHtml) args.push('--snapshot-html');
+            if (!options.tlsCheck) args.push('--no-tls-check');
+            if (!options.taskList) args.push('--no-tasks');
+            if (options.deadlineSec) args.push('--deadline', String(options.deadlineSec));
+          }
           const child = spawn(fs.existsSync(venv) ? venv : (process.env.WEB_OBS_PYTHON_BIN || (process.platform === 'win32' ? 'python' : 'python3')), args, { cwd: vaultRoot });
           children.add(child);
           let terminal = false;

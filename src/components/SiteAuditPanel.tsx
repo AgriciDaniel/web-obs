@@ -1,10 +1,11 @@
 import { useMemo, useState } from 'react';
-import type { CSSProperties } from 'react';
-import { ArrowUpRight, BarChart3, ChevronDown, FileText, Image as ImageIcon, Layers, Link2, Search, Shield, X } from 'lucide-react';
+import { AlertTriangle, ArrowUpRight, CheckSquare, ChevronDown, FileSpreadsheet, FileText, Link2, Search, X, XCircle } from 'lucide-react';
 import type { SiteGraphManifest } from '../types/site';
 import { captureDate } from '../data/sitePresentation';
 import { AUDIT_CATEGORIES, buildSiteAudit, filterAuditFindings } from '../data/siteAudit';
 import type { AuditBucket, AuditCategory, AuditFinding } from '../data/siteAudit';
+import { Disclosure, KeyValueList, RankedBars, SegmentedBar, StatRow, StatTile, StatusPill, formatCount } from './ui';
+import type { Part, Status } from './ui';
 import '../styles/audit.css';
 
 export interface SiteAuditPanelProps {
@@ -16,110 +17,284 @@ export interface SiteAuditPanelProps {
   onOpenExternalUrl: (url: string) => void;
 }
 
-const bucketColor = (bucket: AuditBucket) => {
-  if (bucket.id === 'unchecked' || bucket.id === 'reference') return 'var(--ink-muted)';
-  if (bucket.id === 'intentional' || bucket.id === 'unrecorded') return 'var(--border-strong)';
-  return ({ good: 'var(--hub)', attention: 'var(--broken)', review: 'var(--orphan)', coverage: 'var(--ext)', neutral: 'var(--accent-bright)' })[bucket.tone];
-};
-const colorStyle = (bucket: AuditBucket): CSSProperties => ({ '--audit-color': bucketColor(bucket) } as CSSProperties);
-const displayCount = (count: number) => count.toLocaleString();
+type FindingTone = AuditFinding['tone'];
+const TONES: Array<{ id: FindingTone; title: string }> = [
+  { id: 'attention', title: 'Needs attention' },
+  { id: 'review', title: 'Worth reviewing' },
+  { id: 'coverage', title: 'Coverage gaps' },
+];
+/** Rows shown per severity group before a "show more" button. */
+const GROUP_ROW_LIMIT = 8;
+const categoryLabel = (id: AuditCategory) => AUDIT_CATEGORIES.find(item => item.id === id)?.label ?? id;
+const size = (group: AuditFinding) => group.totalTargets ?? group.targets.length;
+const plural = (count: number, word: string) => `${formatCount(count)} ${word}${count === 1 ? '' : 's'}`;
 
-function Distribution({ title, buckets, total }: { title: string; buckets: AuditBucket[]; total: number }) {
-  let offset = 0;
-  return <div className="wo-audit-distribution">
-    <svg className="wo-audit-ring" viewBox="0 0 132 132" role="img" aria-label={`${title}: ${total ? buckets.filter(bucket => bucket.count > 0).map(bucket => `${bucket.label} ${bucket.count}`).join(', ') : 'no data'}`}>
-      <circle className="wo-audit-ring-track" cx="66" cy="66" r="51" />
-      {total > 0 && buckets.filter(bucket => bucket.count > 0).map(bucket => {
-        const length = bucket.count / total * 320.44;
-        const previous = offset;
-        offset += length;
-        return <circle key={bucket.id} className="wo-audit-ring-segment" cx="66" cy="66" r="51" stroke={bucketColor(bucket)} strokeDasharray={`${Math.max(0, length - 2)} ${320.44 - Math.max(0, length - 2)}`} strokeDashoffset={-previous} />;
-      })}
-      <text className="wo-audit-ring-number" x="66" y="65" textAnchor="middle">{total ? displayCount(total) : 'No data'}</text>
-      {total > 0 && <text className="wo-audit-ring-caption" x="66" y="83" textAnchor="middle">observed</text>}
-    </svg>
-    <ul className="wo-audit-legend">
-      {buckets.map(bucket => <li key={bucket.id} style={colorStyle(bucket)}><span className="wo-audit-swatch" aria-hidden="true" /><span>{bucket.label}</span><strong>{displayCount(bucket.count)}</strong></li>)}
-    </ul>
-  </div>;
-}
+/** Status colours only where the bucket is a status; "not looked at" buckets stay grey. */
+const bucketStatus: Record<AuditBucket['tone'], Status> = { good: 'good', attention: 'critical', review: 'warning', coverage: 'info', neutral: 'neutral' };
+const toParts = (buckets: AuditBucket[]): Part[] => buckets.map(bucket => ({
+  id: bucket.id, label: bucket.label, value: bucket.count, status: bucketStatus[bucket.tone],
+  color: bucket.id === 'unchecked' || bucket.id === 'reference' ? 'var(--ink-muted)' : undefined,
+}));
 
-function FindingGroup({ group, onInspectPage, onOpenNote, onOpenExternalUrl }: Pick<SiteAuditPanelProps, 'onInspectPage' | 'onOpenNote' | 'onOpenExternalUrl'> & { group: AuditFinding }) {
-  const [limit, setLimit] = useState(12);
-  const severity = { attention: 'Recorded error', review: 'Review context', coverage: 'Coverage gap' }[group.tone];
-  const category = AUDIT_CATEGORIES.find(item => item.id === group.category)?.label;
-  return <details className={`wo-audit-finding wo-audit-finding-${group.tone}`}>
+function FindingRow({ group, siteId, onInspectPage, onOpenNote, onOpenExternalUrl }: Pick<SiteAuditPanelProps, 'onInspectPage' | 'onOpenNote' | 'onOpenExternalUrl'> & { group: AuditFinding; siteId: string }) {
+  const [limit, setLimit] = useState(8);
+  return <details className={`wo-audit-finding is-${group.tone}`}>
     <summary className="wo-audit-finding-summary">
-      <span className="wo-audit-finding-marker" aria-hidden="true" />
-      <span className="wo-audit-finding-heading"><strong>{group.title}</strong><span>{category} · {severity}</span></span>
-      <span className="wo-audit-finding-count">{displayCount(group.targets.length)} <span>affected</span></span>
-      <ChevronDown size={16} className="wo-audit-chevron" aria-hidden="true" />
+      {group.tone === 'attention' ? <XCircle size={14} className="wo-audit-finding-icon" aria-hidden="true" /> : <span className="wo-audit-finding-icon" aria-hidden="true" />}
+      <span className="wo-audit-finding-title">{group.title}</span>
+      <span className="wo-audit-chip">{categoryLabel(group.category)}</span>
+      <span className="wo-audit-finding-count" title={`${plural(size(group), 'affected item')}`}>{formatCount(size(group))}</span>
+      <ChevronDown size={14} className="wo-audit-chevron" aria-hidden="true" />
     </summary>
     <div className="wo-audit-finding-content">
       <p>{group.explanation}</p>
       <ul className="wo-audit-targets">
         {group.targets.slice(0, limit).map(target => <li key={target.id}>
-          <div className="wo-audit-target-text"><strong>{target.label}</strong><span>{target.url}</span>{target.detail && <small>{target.detail}</small>}</div>
+          <div className="wo-audit-target-text">
+            <span className="wo-audit-target-label">{target.label}</span>
+            {target.url !== target.label && <span className="wo-audit-target-url">{target.url}</span>}
+            {target.detail && <span className="wo-audit-target-detail">{target.detail}</span>}
+          </div>
           <div className="wo-audit-target-actions">
-            {target.pageId && <button type="button" className="wo-audit-text-button" onClick={() => onInspectPage(target.pageId!)}>Inspect page</button>}
-            {!target.pageId && target.sourcePageId && <button type="button" className="wo-audit-text-button" onClick={() => onInspectPage(target.sourcePageId!)}>Inspect source</button>}
-            {target.notePath && <button type="button" className="wo-audit-text-button" onClick={() => onOpenNote(target.notePath!)}>Open note</button>}
-            <button type="button" className="wo-audit-text-button" onClick={() => onOpenExternalUrl(target.url)}>Open URL <ArrowUpRight size={12} aria-hidden="true" /></button>
+            {target.pageId && <button type="button" className="wo-audit-link" onClick={() => onInspectPage(target.pageId!)}>Inspect page</button>}
+            {!target.pageId && target.sourcePageId && <button type="button" className="wo-audit-link" onClick={() => onInspectPage(target.sourcePageId!)}>Inspect source</button>}
+            {target.notePath && <button type="button" className="wo-audit-icon-button" onClick={() => onOpenNote(target.notePath!)} aria-label="Open note" title="Open note"><FileText size={13} aria-hidden="true" /></button>}
+            <button type="button" className="wo-audit-icon-button" onClick={() => onOpenExternalUrl(target.url)} aria-label="Open URL" title="Open URL"><ArrowUpRight size={13} aria-hidden="true" /></button>
           </div>
         </li>)}
       </ul>
-      {group.targets.length > limit && <button type="button" className="wo-audit-button wo-audit-button-subtle" onClick={() => setLimit(current => current + 24)}>Show {Math.min(24, group.targets.length - limit)} more of {displayCount(group.targets.length)} affected items</button>}
+      {group.targets.length > limit && <button type="button" className="wo-audit-link" onClick={() => setLimit(current => current + 24)}>Show {Math.min(24, group.targets.length - limit)} more of {formatCount(group.targets.length)}</button>}
+      {group.totalTargets !== undefined && group.totalTargets > group.targets.length && <p className="wo-audit-note">The capture stored the first {formatCount(group.targets.length)} of {formatCount(group.totalTargets)} items. Every row is in <button type="button" className="wo-audit-link" onClick={() => onOpenNote(`sites/${siteId}/_findings.csv`)}>_findings.csv</button>.</p>}
     </div>
   </details>;
+}
+
+function ContentAndBrowser({ manifest }: { manifest: SiteGraphManifest }) {
+  const audit = manifest.audit;
+  const browser = manifest.siteIntel?.browserAudit;
+  const dup = audit?.duplicates;
+  const fresh = audit?.freshness;
+  const trust = audit?.trust;
+  const phrases = audit?.keywords?.bigrams?.slice(0, 8) ?? [];
+  const pages = (browser?.pages ?? []).filter(page => !page.error);
+  const lcp = pages.map(page => page.lab?.lcpMs).filter((value): value is number => typeof value === 'number');
+  const jsPages = pages.filter(page => (page.jsGap?.wordsAddedByJsPct ?? 0) >= 20).length;
+  const hosts = new Map<string, number>();
+  pages.forEach(page => page.thirdParty?.hosts.forEach(host => hosts.set(host.host, (hosts.get(host.host) ?? 0) + host.requests)));
+  const rules = new Map<string, number>();
+  pages.forEach(page => page.a11y?.violations?.forEach(rule => rules.set(rule.help, (rules.get(rule.help) ?? 0) + 1)));
+  const found = (value: string | null | undefined): { value: string; status: Status } => value ? { value: 'Found', status: 'good' } : { value: 'Not found', status: 'warning' };
+  return <>
+    {audit && (dup || fresh || trust) && <Disclosure summary="Content summary">
+      <KeyValueList rows={[
+        ...(dup ? [{ label: 'Duplicate titles / descriptions', value: `${dup.titles.length} / ${dup.descriptions.length}` },
+          { label: 'Identical / near identical content', value: `${dup.exactContent.length} / ${dup.nearContent.length}` }] : []),
+        { label: 'Pages competing for one topic', value: formatCount(audit.cannibalization?.length ?? 0) },
+        ...(fresh ? [{ label: 'Dated / undated / stale pages', value: `${fresh.datedCount} / ${fresh.undatedCount} / ${fresh.stale.length}` },
+          { label: 'Newest date', value: fresh.newest?.date ?? 'No data' }] : []),
+        ...(trust ? [
+          { label: 'About page', ...found(trust.about) }, { label: 'Contact page', ...found(trust.contact) },
+          { label: 'Privacy page', ...found(trust.privacy) }, { label: 'Terms page', ...found(trust.terms) },
+          { label: 'Pages with an author byline', value: `${trust.pagesWithAuthor} of ${trust.pagesChecked}` }] : []),
+      ]} />
+      {phrases.length > 0 && <><h4>Top phrases across the site</h4>
+        <RankedBars label="Top phrases across the site" bars={phrases.map(row => ({ id: row.term, label: row.term, value: row.count, hint: row.pages ? `on ${row.pages} pages` : undefined }))} /></>}
+    </Disclosure>}
+    {browser && <Disclosure summary="Browser sample" count={pages.length}>
+      {pages.length ? <>
+        <KeyValueList rows={[
+          { label: 'Pages sampled', value: `${pages.length} of ${browser.sampledUrls?.length ?? pages.length}` },
+          { label: 'Largest paint (lab)', value: lcp.length ? `${Math.min(...lcp)} to ${Math.max(...lcp)} ms` : 'No data' },
+          { label: 'Pages relying on JavaScript', value: formatCount(jsPages), title: 'At least 20% of words added by JavaScript' },
+          { label: 'Third-party hosts on first load', value: formatCount(hosts.size) },
+          { label: 'Automated accessibility rules failed', value: formatCount(rules.size) },
+        ]} />
+        {rules.size > 0 && <><h4>Accessibility rules failed</h4>
+          <RankedBars label="Accessibility rules failed, by pages" bars={[...rules].map(([help, count]) => ({ id: help, label: help, value: count, hint: 'pages' }))} /></>}
+        {hosts.size > 0 && <><h4>Third-party requests</h4>
+          <RankedBars label="Third-party requests by host" bars={[...hosts].map(([host, count]) => ({ id: host, label: host, value: count, hint: 'requests' }))} /></>}
+      </> : <p className="wo-audit-note">{browser.detail ?? 'No pages were sampled in a browser.'}</p>}
+    </Disclosure>}
+  </>;
 }
 
 export function SiteAuditPanel({ manifest, onClose, onInspectPage, onOpenNote, onContinueLinks, onOpenExternalUrl }: SiteAuditPanelProps) {
   const audit = useMemo(() => buildSiteAudit(manifest), [manifest]);
   const [category, setCategory] = useState<AuditCategory | 'all'>('all');
   const [query, setQuery] = useState('');
+  const [expandedTones, setExpandedTones] = useState<Set<FindingTone>>(() => new Set());
   const filtered = useMemo(() => filterAuditFindings(audit.findings, category, query), [audit, category, query]);
-  const groupCount = (value: AuditCategory) => audit.findings.filter(group => group.category === value).length;
-  const maxSection = Math.max(1, ...audit.pageSections.map(section => section.count));
+  const notePath = (name: string) => `sites/${manifest.siteId}/${name}`;
+  const extras = audit.extras;
+
+  const toneTotals = useMemo(() => {
+    const totals = { attention: { groups: 0, items: 0 }, review: { groups: 0, items: 0 }, coverage: { groups: 0, items: 0 } };
+    for (const group of audit.findings) { totals[group.tone].groups += 1; totals[group.tone].items += size(group); }
+    return totals;
+  }, [audit]);
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<AuditCategory, { groups: number; items: number }>();
+    for (const group of audit.findings) {
+      const entry = counts.get(group.category) ?? { groups: 0, items: 0 };
+      entry.groups += 1; entry.items += size(group);
+      counts.set(group.category, entry);
+    }
+    return counts;
+  }, [audit]);
+  const visibleCategories = AUDIT_CATEGORIES.filter(item => categoryCounts.has(item.id) || item.id === category);
   const shownTargets = filtered.reduce((sum, group) => sum + group.targets.length, 0);
   const hasObservations = audit.pageCount > 0 || audit.linkTotal > 0 || audit.resourceCount > 0;
+  const broken = audit.linkDistribution.find(bucket => bucket.id === 'broken')?.count ?? 0;
+
+  const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  const filterBy = (value: AuditCategory) => { setCategory(value); setQuery(''); requestAnimationFrame(() => scrollTo('wo-audit-findings')); };
+  const captureStatus: { status: Status; label: string } = manifest.captureStatus === 'partial'
+    ? { status: 'warning', label: 'Partial collection' }
+    : manifest.captureStatus === 'complete' ? { status: 'good', label: 'Capture saved' } : { status: 'neutral', label: 'Legacy capture' };
+
+  const workItems = extras ? [
+    { label: 'Internal link opportunities', value: extras.linkOpportunities, hint: 'Heuristic suggestions to review' },
+    { label: 'Internal links to fix', value: extras.linkFixes, hint: 'Internal links that point at a recorded problem' },
+    { label: 'Duplicate groups', value: extras.duplicateGroups, hint: 'Titles, descriptions and content' },
+    ...(audit.imageMetricPages ? [{ label: 'Images without alt text', value: audit.imagesMissingAlt, hint: `From ${audit.imageMetricPages} pages with recorded metrics` }] : []),
+  ] : [];
+
   return <section className="wo-audit-panel" aria-label={`Site audit for ${manifest.domain}`}>
     <header className="wo-audit-header">
-      <div className="wo-audit-heading"><span className="wo-audit-kicker"><BarChart3 size={13} aria-hidden="true" /> Saved website evidence</span><h1>Site audit <span>{manifest.domain}</span></h1><p>Captured {captureDate(manifest.capturedAt)} · Findings from the saved capture</p></div>
-      <div className="wo-audit-header-actions"><button type="button" className="wo-audit-button" onClick={() => onOpenNote(`sites/${manifest.siteId}/_link-health.md`)}><FileText size={14} aria-hidden="true" /> Link report</button><button type="button" className="wo-audit-close" onClick={onClose} aria-label="Close audit" title="Close audit"><X size={20} aria-hidden="true" /></button></div>
+      <div className="wo-audit-heading">
+        <h1>Site audit <span>{manifest.domain}</span></h1>
+        <p><StatusPill status={captureStatus.status} label={captureStatus.label} /><span>Captured {captureDate(manifest.capturedAt)}. Saved observations, no new scan is running.</span></p>
+      </div>
+      <div className="wo-audit-actions" role="group" aria-label="Audit notes">
+        <button type="button" className="wo-audit-button" onClick={() => onOpenNote(notePath('_audit.md'))}><FileText size={14} aria-hidden="true" /> Audit report</button>
+        {extras?.tasks && <button type="button" className="wo-audit-button" onClick={() => onOpenNote(notePath('_tasks.md'))}><CheckSquare size={14} aria-hidden="true" /> Task list</button>}
+        <button type="button" className="wo-audit-button" onClick={() => onOpenNote(notePath('_findings.csv'))}><FileSpreadsheet size={14} aria-hidden="true" /> Findings CSV</button>
+        <button type="button" className="wo-audit-button" onClick={() => onOpenNote(notePath('_link-health.md'))}><Link2 size={14} aria-hidden="true" /> Link report</button>
+      </div>
+      <button type="button" className="wo-audit-close" onClick={onClose} aria-label="Close audit" title="Close audit"><X size={18} aria-hidden="true" /></button>
     </header>
+
     <div className="wo-audit-body">
-      <div className="wo-audit-intro">
-        <div><h2>Your capture, made actionable.</h2><p>Review recorded findings and follow each one to its source. Unchecked and inconclusive observations remain visible.</p></div>
-        <span className={`wo-audit-capture-state ${manifest.captureStatus === 'partial' ? 'wo-audit-state-partial' : ''}`}>{manifest.captureStatus === 'partial' ? 'Partial collection' : manifest.captureStatus === 'complete' ? 'Capture saved' : 'Legacy capture'}</span>
-      </div>
-      <div className="wo-audit-stats">
-        <div className="wo-audit-stat"><Layers size={17} aria-hidden="true" /><div><strong>{audit.pageCount ? displayCount(audit.pageCount) : 'No data'}</strong><span>Captured pages</span></div></div>
-        <div className="wo-audit-stat"><BarChart3 size={17} aria-hidden="true" /><div><strong>{hasObservations ? displayCount(audit.findingCount) : 'No data'}</strong><span>Recorded findings <small>across {audit.findings.length} groups</small></span></div></div>
-        <div className="wo-audit-stat"><Link2 size={17} aria-hidden="true" /><div><strong>{audit.linkTotal && audit.linkAttempted !== null ? `${displayCount(audit.linkAttempted)} / ${displayCount(audit.linkTotal)}` : 'No data'}</strong><span>Link targets attempted</span></div></div>
-        <div className="wo-audit-stat"><ImageIcon size={17} aria-hidden="true" /><div><strong>{audit.resourceCount ? displayCount(audit.resourceCount) : 'No data'}</strong><span>Observed media and resources</span></div></div>
-      </div>
-      <div className="wo-audit-charts">
-        <article className="wo-audit-card"><div className="wo-audit-card-head"><Link2 size={15} aria-hidden="true" /><h3>Destination checks</h3><span>Saved responses</span></div><Distribution title="Link status distribution" buckets={audit.linkDistribution} total={audit.linkTotal} /><button type="button" className="wo-audit-text-button" onClick={() => onOpenNote(`sites/${manifest.siteId}/_link-health.md`)}>Open link report <ArrowUpRight size={12} aria-hidden="true" /></button><p className="wo-audit-note">{audit.linkTotal ? 'A response is evidence for check time only. Inconclusive and unchecked targets are not counted as working links.' : 'No data. No destination check observations were saved.'}</p>{audit.linkPending > 0 && onContinueLinks && <button type="button" className="wo-audit-text-button" onClick={onContinueLinks}>Check remaining {displayCount(audit.linkPending)} targets <ArrowUpRight size={13} aria-hidden="true" /></button>}</article>
-        <article className="wo-audit-card"><div className="wo-audit-card-head"><Layers size={15} aria-hidden="true" /><h3>Pages by section</h3><span>{audit.pageCount} mapped</span></div><div className="wo-audit-section-bars" aria-label="Captured pages by section">{audit.pageSections.length ? audit.pageSections.slice(0, 7).map(section => <div className="wo-audit-bar-row" key={section.id}><div><span>{section.label}</span><strong>{displayCount(section.count)}</strong></div><div className="wo-audit-bar-track"><span style={{ width: `${section.count / maxSection * 100}%` }} /></div></div>) : <p className="wo-audit-empty-chart">No data</p>}</div>{audit.pageSections.length > 7 && <details className="wo-audit-more-sections"><summary>All {audit.pageSections.length} sections</summary><ul>{audit.pageSections.map(section => <li key={section.id}><span>{section.label}</span><strong>{displayCount(section.count)}</strong></li>)}</ul></details>}<p className="wo-audit-note">Counts come from captured internal pages. External domains and undiscovered pages are excluded.</p></article>
-        <article className="wo-audit-card"><div className="wo-audit-card-head"><ImageIcon size={15} aria-hidden="true" /><h3>Media inventory</h3><span>Local preservation</span></div><Distribution title="Resource download states" buckets={audit.mediaDistribution} total={audit.resourceCount} /><p className="wo-audit-note">Intentionally unselected variants and reference-only resources are separate from download failures.</p>{audit.mediaTypes.length > 0 ? <details className="wo-audit-media-types"><summary>Resource types <ChevronDown size={12} aria-hidden="true" /></summary><ul className="wo-audit-legend">{audit.mediaTypes.map(type => <li key={type.id}><span>{type.label}</span><strong>{displayCount(type.count)}</strong></li>)}</ul></details> : <p className="wo-audit-note">No data. No resource observations were saved.</p>}</article>
-      </div>
-      <div className="wo-audit-lower-grid">
-        <section className="wo-audit-inbox" aria-label="Recorded findings inbox">
-          <div className="wo-audit-inbox-head"><div><span className="wo-audit-kicker">From observation to action</span><h2>Recorded findings</h2></div><span className="wo-audit-total">{audit.findings.length} groups</span></div>
-          <label className="wo-audit-search"><Search size={16} aria-hidden="true" /><span className="wo-audit-sr-only">Search recorded findings and affected URLs</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search findings, pages, or URLs" /></label>
-          <div className="wo-audit-categories" role="group" aria-label="Filter findings by category"><button type="button" aria-pressed={category === 'all'} onClick={() => setCategory('all')}>All <span>{audit.findings.length}</span></button>{AUDIT_CATEGORIES.map(item => <button key={item.id} type="button" aria-pressed={category === item.id} onClick={() => setCategory(item.id)}>{item.label} <span>{groupCount(item.id)}</span></button>)}</div>
-          <p className="wo-audit-filter-count" role="status">{filtered.length} groups · {displayCount(shownTargets)} affected items{query && ` matching “${query}”`}</p>
-          <div className="wo-audit-findings">{filtered.length ? filtered.map(group => <FindingGroup key={`${manifest.siteId}:${group.id}:${query}`} group={group} onInspectPage={onInspectPage} onOpenNote={onOpenNote} onOpenExternalUrl={onOpenExternalUrl} />) : <div className="wo-audit-empty"><Search size={24} aria-hidden="true" /><h3>{audit.findings.length ? 'No matching findings' : hasObservations ? 'No findings recorded' : 'No data'}</h3><p>{audit.findings.length ? 'Try another category or search term.' : 'This capture contains no recorded findings for these signals. Unassessed areas remain listed separately.'}</p>{(query || category !== 'all') && <button type="button" className="wo-audit-text-button" onClick={() => { setQuery(''); setCategory('all'); }}>Clear filters</button>}</div>}</div>
+      <div className="wo-audit-content">
+        <div className="wo-audit-stats">
+          <StatRow label="Audit summary">
+            <StatTile label="Needs attention" icon={<XCircle size={13} className="wo-audit-icon-critical" aria-hidden="true" />}
+              value={hasObservations ? formatCount(toneTotals.attention.items) : 'No data'}
+              hint={plural(toneTotals.attention.groups, 'finding')}
+              onClick={toneTotals.attention.groups ? () => scrollTo('wo-audit-group-attention') : undefined} />
+            <StatTile label="To review" icon={<AlertTriangle size={13} className="wo-audit-icon-warning" aria-hidden="true" />}
+              value={hasObservations ? formatCount(toneTotals.review.items) : 'No data'}
+              hint={plural(toneTotals.review.groups, 'finding')}
+              onClick={toneTotals.review.groups ? () => scrollTo('wo-audit-group-review') : undefined} />
+            <StatTile label="Pages" value={audit.pageCount ? formatCount(audit.pageCount) : 'No data'} hint={plural(audit.pageSections.length, 'section')} />
+            <StatTile label="Links checked"
+              value={audit.linkTotal && audit.linkAttempted !== null ? `${formatCount(audit.linkAttempted)} of ${formatCount(audit.linkTotal)}` : 'No data'}
+              hint={audit.linkTotal ? `${formatCount(broken)} broken` : 'Not recorded'} />
+            <StatTile label="Open tasks" icon={<CheckSquare size={13} aria-hidden="true" />} value={extras?.tasks ? formatCount(extras.tasks.open) : 'No data'}
+              hint={extras?.tasks ? `${formatCount(extras.tasks.resolved)} resolved` : 'Task list not recorded'}
+              onClick={extras?.tasks ? () => onOpenNote(notePath('_tasks.md')) : undefined} />
+          </StatRow>
+        </div>
+
+        {workItems.length > 0 && <div className="wo-audit-work" role="list" aria-label="Audit work lists">
+          <span className="wo-audit-work-title">Work list</span>
+          {workItems.map(item => <span key={item.label} className="wo-audit-work-item" role="listitem" title={item.hint}>
+            {item.label}<b>{formatCount(item.value)}</b>
+          </span>)}
+        </div>}
+
+        <div className="wo-audit-charts">
+          <article className="wo-audit-card">
+            <header className="wo-audit-card-head"><h3>Findings by category</h3><span>Affected items</span></header>
+            {categoryCounts.size ? <RankedBars label="Affected items by finding category"
+              bars={[...categoryCounts].map(([id, entry]) => ({ id, label: categoryLabel(id), value: entry.items, hint: `${plural(entry.groups, 'finding')}. Select to filter the list`, onClick: () => filterBy(id) }))} />
+              : <p className="wo-audit-empty-chart">{hasObservations ? 'No findings recorded' : 'No data'}</p>}
+          </article>
+          <article className="wo-audit-card">
+            <header className="wo-audit-card-head"><h3>Pages by section</h3><span>{plural(audit.pageCount, 'page')}</span></header>
+            {audit.pageSections.length ? <RankedBars label="Captured pages by section" bars={audit.pageSections.map(section => ({ id: section.id, label: section.label, value: section.count }))} />
+              : <p className="wo-audit-empty-chart">No data</p>}
+          </article>
+          <article className="wo-audit-card wo-audit-card-stack">
+            <div className="wo-audit-card-part">
+              <header className="wo-audit-card-head"><h3>Link check results</h3><span>{plural(audit.linkTotal, 'target')}</span></header>
+              <SegmentedBar label="Link status distribution" parts={toParts(audit.linkDistribution)} />
+              <div className="wo-audit-card-links">
+                <button type="button" className="wo-audit-link" onClick={() => onOpenNote(notePath('_link-health.md'))}>Open link report <ArrowUpRight size={12} aria-hidden="true" /></button>
+                {audit.linkPending > 0 && onContinueLinks && <button type="button" className="wo-audit-link" onClick={onContinueLinks}>Check remaining {formatCount(audit.linkPending)} <ArrowUpRight size={12} aria-hidden="true" /></button>}
+              </div>
+            </div>
+            <div className="wo-audit-card-part">
+              <header className="wo-audit-card-head"><h3>Media inventory</h3><span>{plural(audit.resourceCount, 'resource')}</span></header>
+              <SegmentedBar label="Resource download states" parts={toParts(audit.mediaDistribution)} />
+            </div>
+          </article>
+        </div>
+
+        <section className="wo-audit-inbox" id="wo-audit-findings" aria-label="Recorded findings inbox">
+          <header className="wo-audit-inbox-head">
+            <h2>Findings <span>{plural(audit.findings.length, 'group')}</span></h2>
+            <p className="wo-audit-filter-count" role="status">{filtered.length} shown, {plural(shownTargets, 'affected item')}{query && ` matching "${query}"`}</p>
+          </header>
+          <div className="wo-audit-toolbar">
+            <label className="wo-audit-search"><Search size={14} aria-hidden="true" /><span className="wo-audit-sr-only">Search recorded findings and affected URLs</span><input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Search findings or URLs" /></label>
+            <div className="wo-audit-categories" role="group" aria-label="Filter findings by category">
+              <button type="button" aria-pressed={category === 'all'} onClick={() => setCategory('all')}>All <span>{audit.findings.length}</span></button>
+              {visibleCategories.map(item => <button key={item.id} type="button" aria-pressed={category === item.id} onClick={() => setCategory(item.id)}>{item.label} <span>{categoryCounts.get(item.id)?.groups ?? 0}</span></button>)}
+            </div>
+          </div>
+          {filtered.length ? TONES.map(tone => {
+            const groups = filtered.filter(group => group.tone === tone.id);
+            if (!groups.length) return null;
+            const capped = !expandedTones.has(tone.id) && groups.length > GROUP_ROW_LIMIT + 2;
+            return <div key={tone.id} className={`wo-audit-group is-${tone.id}`} id={`wo-audit-group-${tone.id}`}>
+              <h3>{tone.title} <span>{groups.length}</span></h3>
+              <div className="wo-audit-findings">{(capped ? groups.slice(0, GROUP_ROW_LIMIT) : groups).map(group => <FindingRow key={`${manifest.siteId}:${group.id}:${query}`} group={group} siteId={manifest.siteId} onInspectPage={onInspectPage} onOpenNote={onOpenNote} onOpenExternalUrl={onOpenExternalUrl} />)}</div>
+              {capped && <button type="button" className="wo-audit-link wo-audit-more-rows" onClick={() => setExpandedTones(current => new Set(current).add(tone.id))}>Show {groups.length - GROUP_ROW_LIMIT} more {tone.title.toLowerCase()}</button>}
+            </div>;
+          }) : <div className="wo-audit-empty">
+            <h3>{audit.findings.length ? 'No matching findings' : hasObservations ? 'No findings recorded' : 'No data'}</h3>
+            <p>{audit.findings.length ? 'Try another category or search term.' : 'This capture contains no recorded findings for these signals.'}</p>
+            {(query || category !== 'all') && <button type="button" className="wo-audit-link" onClick={() => { setQuery(''); setCategory('all'); }}>Clear filters</button>}
+          </div>}
         </section>
-        <aside className="wo-audit-evidence" aria-label="Audit scope and evidence">
-          <article className="wo-audit-card"><div className="wo-audit-card-head"><Shield size={15} aria-hidden="true" /><h3>Homepage headers</h3></div>{audit.headers && (audit.headers.present.length || audit.headers.missing.length) ? <><div className="wo-audit-header-tally"><strong>{audit.headers.present.length}</strong><span>present <small>of {audit.headers.present.length + audit.headers.missing.length} recorded checks</small></span></div><p className="wo-audit-note">{audit.headers.scope}</p><ul className="wo-audit-header-list">{audit.headers.present.map(header => <li key={header}><span>{header}</span><span>Present</span></li>)}{audit.headers.missing.map(header => <li key={header}><span>{header}</span><span className="wo-audit-review-text">Not observed</span></li>)}</ul></> : <p className="wo-audit-note">No data. Header presence was not recorded.</p>}<p className="wo-audit-note">Presence checks on one response do not establish site-wide security or legal compliance.</p></article>
-          <article className="wo-audit-card"><div className="wo-audit-card-head"><ImageIcon size={15} aria-hidden="true" /><h3>Image text observations</h3></div><div className="wo-audit-header-tally"><strong>{audit.imageMetricPages ? displayCount(audit.imagesMissingAlt) : 'No data'}</strong><span>without alt text <small>{audit.imageMetricPages ? `from ${audit.imageMetricPages} pages with recorded metrics` : 'metric was not recorded'}</small></span></div><p className="wo-audit-note">Image purpose and decorative use need review. Alt text observations do not establish accessibility conformance.</p></article>
-          <article className="wo-audit-card wo-audit-scope"><span className="wo-audit-kicker">Know the scope</span><h3>Not assessed</h3><ul>{audit.notAssessed.map(area => <li key={area}><span>{area}</span><span>Not assessed</span></li>)}</ul><p className="wo-audit-note">These require separate evidence and review. There is no overall health grade.</p></article>
-        </aside>
+
+        <div className="wo-audit-more">
+          {audit.headers && (audit.headers.present.length > 0 || audit.headers.missing.length > 0) && <Disclosure summary="Homepage response headers" count={audit.headers.present.length + audit.headers.missing.length}>
+            <KeyValueList rows={[
+              ...audit.headers.present.map(header => ({ label: header, value: 'Present', status: 'good' as Status })),
+              ...audit.headers.missing.map(header => ({ label: header, value: 'Not observed', status: 'warning' as Status })),
+            ]} />
+          </Disclosure>}
+          {audit.mediaTypes.length > 0 && <Disclosure summary="Resource types" count={audit.mediaTypes.length}>
+            <KeyValueList rows={audit.mediaTypes.map(type => ({ label: type.label, value: formatCount(type.count) }))} />
+          </Disclosure>}
+          {(manifest.captureFindings?.length ?? 0) > 0 && <Disclosure summary="Broken resources found while capturing" count={manifest.captureFindings!.length}>
+            <ul className="wo-audit-plain-list">{manifest.captureFindings!.map((finding, index) => <li key={index}>{finding}</li>)}</ul>
+          </Disclosure>}
+          {(manifest.captureWarnings?.length ?? 0) > 0 && <Disclosure summary="Capture warnings" count={manifest.captureWarnings!.length}>
+            <ul className="wo-audit-plain-list">{manifest.captureWarnings!.map((warning, index) => <li key={index}>{warning}</li>)}</ul>
+          </Disclosure>}
+          <ContentAndBrowser manifest={manifest} />
+          <Disclosure summary="About these numbers">
+            <p className="wo-audit-note">Every number comes from the saved capture. There is no overall health grade.</p>
+            <h4>Not assessed</h4>
+            <ul className="wo-audit-plain-list">{audit.notAssessed.map(area => <li key={area}>{area}</li>)}</ul>
+            <h4>How to read the charts</h4>
+            <ul className="wo-audit-plain-list">
+              <li>A link response is evidence for check time only. Inconclusive and unchecked targets are not counted as working links.</li>
+              <li>Pages by section counts captured internal pages. External domains and undiscovered pages are excluded.</li>
+              <li>Intentionally unselected variants and reference only resources are separate from download failures.</li>
+              {audit.headers && <li>Headers: {audit.headers.scope.replace(/\.?\s*$/, '.')} Presence checks on one response do not establish site wide security or legal compliance.</li>}
+              <li>Browser sample numbers come from one lab load on this machine through the capture proxy. They are not field data or Core Web Vitals. axe-core covers only part of WCAG.</li>
+              <li>Trust pages and bylines are recorded as present or absent only. This is not an E-E-A-T judgement.</li>
+              <li>Image purpose and decorative use need review. Alt text observations do not establish accessibility conformance.</li>
+              {audit.engineFindings && audit.scopeNotes.map(note => <li key={note}>{note}</li>)}
+            </ul>
+            <button type="button" className="wo-audit-link" onClick={() => onOpenNote(notePath('_dashboard.md'))}>Open capture dashboard <ArrowUpRight size={12} aria-hidden="true" /></button>
+          </Disclosure>
+        </div>
       </div>
-      {(manifest.captureFindings?.length ?? 0) > 0 && <details className="wo-audit-warnings"><summary>{manifest.captureFindings!.length} broken resources found while capturing</summary><ul>{manifest.captureFindings!.map((finding, index) => <li key={index}>{finding}</li>)}</ul></details>}
-      {(manifest.captureWarnings?.length ?? 0) > 0 && <details className="wo-audit-warnings"><summary>{manifest.captureWarnings!.length} capture warnings</summary><ul>{manifest.captureWarnings!.map((warning, index) => <li key={index}>{warning}</li>)}</ul></details>}
-      <footer className="wo-audit-footer"><span>Saved observations · No new scan is running</span><button type="button" className="wo-audit-text-button" onClick={() => onOpenNote(`sites/${manifest.siteId}/_dashboard.md`)}>Open capture dashboard <ArrowUpRight size={12} aria-hidden="true" /></button></footer>
     </div>
   </section>;
 }

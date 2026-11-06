@@ -1,7 +1,7 @@
 import type { SiteGraphManifest, SiteNode, SiteResource } from '../types/site';
 import { pendingLinkChecks } from './linkCoverage';
 
-export type AuditCategory = 'pages' | 'links' | 'structure' | 'images' | 'headers';
+export type AuditCategory = 'pages' | 'content' | 'links' | 'structure' | 'images' | 'schema' | 'accessibility' | 'headers' | 'security' | 'browser' | 'changes';
 export type AuditTone = 'good' | 'attention' | 'review' | 'coverage' | 'neutral';
 export interface AuditBucket { id: string; label: string; count: number; tone: AuditTone }
 export interface AuditTarget { id: string; label: string; url: string; detail: string; pageId?: string; notePath?: string; sourcePageId?: string }
@@ -12,22 +12,34 @@ export interface AuditFinding {
   title: string;
   explanation: string;
   targets: AuditTarget[];
+  /** Total affected items when the engine stored only the first 200 targets. */
+  totalTargets?: number;
 }
 export const AUDIT_CATEGORIES: Array<{ id: AuditCategory; label: string }> = [
-  { id: 'pages', label: 'Page signals' }, { id: 'links', label: 'Link checks' },
-  { id: 'structure', label: 'Site structure' }, { id: 'images', label: 'Image text' },
-  { id: 'headers', label: 'Response headers' },
+  { id: 'pages', label: 'Page signals' }, { id: 'content', label: 'Content' }, { id: 'links', label: 'Links' },
+  { id: 'structure', label: 'Site structure' }, { id: 'images', label: 'Images' }, { id: 'schema', label: 'Structured data' },
+  { id: 'accessibility', label: 'Accessibility' }, { id: 'headers', label: 'Response headers' }, { id: 'security', label: 'Security' },
+  { id: 'browser', label: 'Browser sample' }, { id: 'changes', label: 'Changes' },
 ];
-export const AUDIT_NOT_ASSESSED = ['Core Web Vitals', 'Accessibility', 'E-E-A-T and content quality', 'Cookie consent', 'Legal compliance'];
+const CATEGORY_IDS = new Set<string>(AUDIT_CATEGORIES.map(category => category.id));
+export const AUDIT_NOT_ASSESSED = ['Core Web Vitals field data', 'Full accessibility conformance', 'E-E-A-T judgement', 'Cookie consent', 'Legal compliance'];
+/** Why each area stays unassessed, shown beside the list. */
+export const AUDIT_SCOPE_NOTES = [
+  'Lab timings come from one sampled browser load on this machine, not from real visitors.',
+  'axe-core runs automated rules on a few sampled pages. Automated rules cover only part of WCAG, so manual review is still needed.',
+  'Trust pages, bylines and dates are recorded as present or absent. Their quality is not judged.',
+  'Third-party requests and cookies are observed on first load with no interaction. That is not a consent or legal assessment.',
+];
 const validCount = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
 const titleCase = (value: string) => value.replace(/-/g, ' ').replace(/^./, letter => letter.toUpperCase());
+const urlKey = (url: string) => url.replace(/#.*$/, '').replace(/\/+$/, '').toLowerCase();
 const pageTarget = (page: SiteNode, detail = ''): AuditTarget => ({ id: page.id, label: page.title || page.path, url: page.url, detail, pageId: page.id, notePath: page.obsidianPath });
 
 function mediaState(resource: SiteResource): string {
   if (resource.localPath) return 'saved';
   if (resource.downloadState === 'not-selected' || resource.downloadState === 'not-requested') return 'intentional';
   if (resource.downloadState === 'unavailable') return 'unavailable';
-  if (resource.downloadState === 'budget-skipped') return 'budget';
+  if (resource.downloadState === 'budget-skipped' || resource.downloadState === 'deadline-skipped') return 'budget';
   if (resource.downloadState === 'reference' || !resource.downloadState) return 'reference';
   return 'other';
 }
@@ -46,10 +58,41 @@ export function buildSiteAudit(manifest: SiteGraphManifest) {
     findingTargets.set(id, seen);
     findings.set(id, finding);
   };
+  const catalog = manifest.issueCatalog ?? {};
+  const engineFindings = Array.isArray(manifest.audit?.findings) ? manifest.audit!.findings : null;
+  const pageByKey = new Map(pages.map(page => [urlKey(page.url), page]));
+  const findPage = (url?: string) => url ? pageByUrl.get(url) ?? pageByKey.get(urlKey(url)) : undefined;
+  const totals = new Map<string, number>();
+  if (engineFindings) {
+    for (const finding of engineFindings) {
+      const category = (CATEGORY_IDS.has(finding.category) ? finding.category : 'pages') as AuditCategory;
+      for (const raw of finding.targets) {
+        const page = findPage(raw.url);
+        const source = findPage(raw.sourceUrl);
+        const detail = raw.detail ?? '';
+        const id = `${raw.url}|${raw.sourceUrl ?? ''}|${detail}`;
+        const target: AuditTarget = page
+          ? { ...pageTarget(page, detail), id }
+          : { id, label: raw.url, url: raw.url, detail, sourcePageId: source?.id, notePath: source?.obsidianPath };
+        if (page && source && source.id !== page.id) target.sourcePageId = source.id;
+        add(finding.id, category, finding.tone, finding.title, finding.explanation, target);
+      }
+      if (typeof finding.targetCount === 'number' && finding.targetCount > finding.targets.length) totals.set(finding.id, finding.targetCount);
+    }
+  }
   const sections = new Map<string, number>();
   let imageMetricPages = 0, imagesObserved = 0, imagesMissingAlt = 0;
   for (const page of pages) {
     sections.set(page.section || 'root', (sections.get(page.section || 'root') ?? 0) + 1);
+    if (engineFindings) {
+      // The engine already reports page issues as findings; only collect image totals here.
+      if (validCount(page.imagesMissingAlt) && page.statusCode >= 200 && page.statusCode < 400 && page.health !== 'unavailable') {
+        imageMetricPages += 1;
+        imagesObserved += validCount(page.imagesCount) ? page.imagesCount : 0;
+        imagesMissingAlt += page.imagesMissingAlt;
+      }
+      continue;
+    }
     if (page.health === 'broken') add('page-broken', 'pages', 'attention', 'Pages returned an error', 'The saved page response was marked broken. Inspect the recorded status and source before changing a URL.', pageTarget(page, `HTTP ${page.statusCode || 'not recorded'}`));
     if (page.health === 'unavailable') add('page-unavailable', 'pages', 'coverage', 'Page content was unavailable', 'The capture could not collect usable page content. This is a collection gap, not proof that the page is permanently broken.', pageTarget(page));
     if (page.health === 'redirect') add('page-redirect', 'pages', 'review', 'Redirected pages', 'A redirect was recorded. Check whether the redirect is intentional and whether internal links should use its destination.', pageTarget(page));
@@ -58,7 +101,10 @@ export function buildSiteAudit(manifest: SiteGraphManifest) {
     for (const issue of new Set(page.seoIssues ?? [])) {
       if ((issue === 'page-broken' && page.health === 'broken') || (issue === 'page-unavailable' && page.health === 'unavailable') || (issue === 'orphan-page' && page.health === 'orphan') || (issue === 'unlisted-in-sitemap' && page.health === 'unlisted') || (issue === 'redirected-source-url' && page.health === 'redirect')) continue;
       if (issue.startsWith('images-missing-alt') && validCount(page.imagesMissingAlt)) continue;
-      add(`seo:${issue.replace(/\s*\(\d+\)$/, '')}`, 'pages', 'review', titleCase(issue.replace(/\s*\(\d+\)$/, '')), 'A signal recorded by the capture. Review it in the page context; a flag does not establish a ranking, accessibility, or content quality failure.', pageTarget(page, issue));
+      const slug = issue.replace(/\s*\(\d+\)$/, '');
+      const entry = catalog[slug];
+      const category = (entry && CATEGORY_IDS.has(entry.category) ? entry.category : 'pages') as AuditCategory;
+      add(`seo:${slug}`, category, entry?.tone ?? 'review', entry?.title ?? titleCase(slug), entry?.explanation ?? 'A signal recorded by the capture. Review it in the page context; a flag does not establish a ranking, accessibility, or content quality failure.', pageTarget(page, issue));
     }
     if (validCount(page.imagesMissingAlt) && page.statusCode >= 200 && page.statusCode < 400 && page.health !== 'unavailable') {
       imageMetricPages += 1;
@@ -118,10 +164,22 @@ export function buildSiteAudit(manifest: SiteGraphManifest) {
   const headerScope = manifest.siteIntel?.techStack?.coverage?.securityHeadersScope || 'Saved homepage response. Legacy scope details were not recorded.';
   if (home && headers?.missing.length) add('headers-missing', 'headers', 'review', 'Response headers were not observed', `${headers.missing.join(', ')}. Scope: ${headerScope} Presence alone does not establish a secure configuration.`, pageTarget(home));
   const order = { attention: 0, review: 1, coverage: 2 };
-  const groups = [...findings.values()].sort((a, b) => order[a.tone] - order[b.tone] || b.targets.length - a.targets.length || a.title.localeCompare(b.title));
+  for (const [id, total] of totals) { const group = findings.get(id); if (group && total > group.targets.length) group.totalTargets = total; }
+  const size = (group: AuditFinding) => group.totalTargets ?? group.targets.length;
+  const groups = [...findings.values()].sort((a, b) => order[a.tone] - order[b.tone] || size(b) - size(a) || a.title.localeCompare(b.title));
+  const data = manifest.audit;
+  const duplicateGroups = data?.duplicates ? data.duplicates.titles.length + data.duplicates.descriptions.length + data.duplicates.exactContent.length + data.duplicates.nearContent.length : null;
   return {
+    engineFindings: engineFindings !== null,
+    extras: data ? {
+      linkOpportunities: data.linkOpportunities?.length ?? null,
+      linkFixes: data.linkFixes?.length ?? null,
+      duplicateGroups,
+      tasks: data.tasks ?? null,
+    } : null,
+    scopeNotes: AUDIT_SCOPE_NOTES,
     pageCount: pages.length, pagesWithFindings: new Set(groups.flatMap(group => group.targets.flatMap(target => target.pageId ? [target.pageId] : []))).size,
-    findings: groups, findingCount: groups.reduce((sum, group) => sum + group.targets.length, 0),
+    findings: groups, findingCount: groups.reduce((sum, group) => sum + size(group), 0),
     pageSections, linkDistribution, linkTotal, linkAttempted: manifest.linkHealth?.checkedCount ?? null,
     linksObserved: manifest.linkHealth !== undefined, linkUnchecked: linkCounts.get('unchecked') ?? 0, linkPending: pendingLinkChecks(manifest.linkHealth),
     mediaDistribution, mediaTypes, resourceCount: resources.length, mediaObserved: manifest.resources !== undefined,
@@ -139,6 +197,6 @@ export function filterAuditFindings(findings: AuditFinding[], category: AuditCat
     if (category !== 'all' && group.category !== category) return [];
     if (!needle || `${group.title} ${group.explanation}`.toLocaleLowerCase().includes(needle)) return [group];
     const targets = group.targets.filter(target => `${target.label} ${target.url} ${target.detail}`.toLocaleLowerCase().includes(needle));
-    return targets.length ? [{ ...group, targets }] : [];
+    return targets.length ? [{ ...group, targets, totalTargets: undefined }] : [];
   });
 }

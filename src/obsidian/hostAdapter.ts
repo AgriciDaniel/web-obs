@@ -112,6 +112,16 @@ export function createStandaloneHost(vaultName = DEFAULT_VAULT_NAME): SiteHostAd
         return null;
       }
     },
+    readAssetBytes: async (vaultRelativePath: string): Promise<ArrayBuffer | null> => {
+      const safe = sanitizeVaultRelativePath(vaultRelativePath);
+      if (!safe || !safe.startsWith('sites/')) return null;
+      try {
+        const res = await fetch(`/__web_obs/asset?path=${encodeURIComponent(safe)}`);
+        return res.ok ? await res.arrayBuffer() : null;
+      } catch {
+        return null;
+      }
+    },
     startCrawl: async (options: CrawlOptions): Promise<SiteGraphManifest | null> => {
       activeRun?.controller.abort();
       const controller = new AbortController();

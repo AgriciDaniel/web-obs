@@ -82,7 +82,9 @@ def main():
 
         page.get_by_role('button', name='Explore map highlights', exact=True).click()
         explorer = page.get_by_role('complementary', name='Page explorer', exact=True)
-        explorer.get_by_role('button', name=re.compile('^Flagged')).click()
+        assert not explorer.count(), 'The page explorer starts closed so the map has the room'
+        page.get_by_role('button', name='Pages: show or hide explorer', exact=True).click()
+        explorer.get_by_role('button', name=re.compile('^Needs attention')).click()
         page.get_by_role('button', name='Explore map highlights', exact=True).wait_for()
         assert not card.count()
         page.get_by_role('button', name='Explore map highlights', exact=True).click()
@@ -104,7 +106,9 @@ def main():
         for width, height in ((1280, 800), (900, 700), (390, 844)):
             page.set_viewport_size({'width': width, 'height': height})
             sample()
-            page.get_by_role('button', name='Close page explorer', exact=True).click()
+            close_explorer = page.get_by_role('button', name='Close page explorer', exact=True)
+            if close_explorer.count():
+                close_explorer.click()
             page.get_by_role('button', name='Explore map highlights', exact=True).click()
             page.wait_for_timeout(300)
             box = card.bounding_box()

@@ -14,7 +14,9 @@ const fixture = JSON.parse(fs.readFileSync(FIXTURE_PATH, 'utf8'));
 const internal = fixture.nodes.filter(node => node.kind !== 'external-domain');
 const sum = rows => rows.reduce((total, row) => total + row.count, 0);
 const bucket = (rows, id) => rows.find(row => row.id === id).count;
-const clone = () => structuredClone(fixture);
+// The saved capture may come from any engine version. Tests start from its graph without the
+// 0.2.0 engine audit and add one where they need it, so results do not depend on that version.
+const clone = () => { const copy = structuredClone(fixture); delete copy.audit; delete copy.issueCatalog; return copy; };
 let passed = 0;
 function test(name, fn) { fn(); passed++; console.log('[PASS] ' + name); }
 
@@ -29,8 +31,10 @@ test('retained capture chart counts are complete, internal-only, and do not muta
   assert.equal(sum(audit.mediaTypes), manifest.resources.length);
   assert.equal(bucket(audit.mediaDistribution, 'saved'), manifest.resources.filter(resource => resource.localPath).length);
   assert.equal(JSON.stringify(manifest), before);
-  assert.ok(audit.notAssessed.includes('Core Web Vitals'));
-  assert.ok(audit.notAssessed.includes('Accessibility'));
+  assert.ok(audit.notAssessed.includes('Core Web Vitals field data'));
+  assert.ok(audit.notAssessed.includes('Full accessibility conformance'));
+  assert.equal(audit.engineFindings, false);
+  assert.equal(audit.extras, null);
   assert.equal(Object.hasOwn(audit, 'score'), false);
 });
 
@@ -169,6 +173,71 @@ test('homepage header scope is explicit and absent coverage is not upgraded to s
   assert.match(buildSiteAudit(manifest).headers.scope, /Legacy scope details were not recorded/);
   delete manifest.siteIntel;
   assert.equal(buildSiteAudit(manifest).headers, null);
+});
+
+test('legacy capture uses issue catalog titles and categories when present', () => {
+  const manifest = clone();
+  manifest.nodes = [{ ...internal[0], health: 'healthy', seoIssues: ['mixed-content (2)', 'brand-new-signal'] }];
+  manifest.edges = []; delete manifest.linkHealth; delete manifest.siteIntel; delete manifest.audit;
+  manifest.issueCatalog = { 'mixed-content': { category: 'security', tone: 'attention', title: 'Mixed content', explanation: 'Insecure subresources.' } };
+  const audit = buildSiteAudit(manifest);
+  const mixed = audit.findings.find(group => group.id === 'seo:mixed-content');
+  assert.equal(mixed.title, 'Mixed content');
+  assert.equal(mixed.category, 'security');
+  assert.equal(mixed.tone, 'attention');
+  assert.equal(audit.findings.find(group => group.id === 'seo:brand-new-signal').category, 'pages');
+});
+
+test('engine findings replace node-derived page findings and map targets to pages and sources', () => {
+  const manifest = clone();
+  const [a, b] = internal;
+  manifest.nodes = [{ ...a, health: 'orphan', seoIssues: ['missing-title', 'images-missing-alt (2)'], imagesMissingAlt: 2, imagesCount: 4, statusCode: 200 }, { ...b, seoIssues: [] }];
+  manifest.edges = []; delete manifest.linkHealth; delete manifest.siteIntel;
+  const many = Array.from({ length: 200 }, (_, i) => ({ url: `https://fixture.invalid/img-${i}.png`, detail: `${i} KB`, sourceUrl: b.url }));
+  manifest.audit = {
+    findings: [
+      { id: 'seo:missing-title', category: 'pages', tone: 'attention', title: 'Missing title', explanation: 'Engine text.', targets: [{ url: a.url + '/', detail: '' }] },
+      { id: 'link-opportunity', category: 'links', tone: 'review', title: 'Internal link opportunities', explanation: 'Heuristic.', targets: [{ url: a.url, sourceUrl: b.url, detail: 'Mentions x' }] },
+      { id: 'image-oversized', category: 'images', tone: 'review', title: 'Large images', explanation: 'Resize.', targets: many, targetCount: 450 },
+      { id: 'mystery', category: 'not-a-category', tone: 'coverage', title: 'Unknown category', explanation: 'Falls back.', targets: [{ url: a.url }] },
+    ],
+    linkOpportunities: [{ sourceUrl: b.url, targetUrl: a.url, phrase: 'x' }], linkFixes: [],
+    duplicates: { titles: [{ value: 't', urls: [a.url, b.url] }], descriptions: [], h1: [], exactContent: [], nearContent: [] },
+    tasks: { open: 5, ticked: 1, resolved: 2, notRechecked: 0 },
+  };
+  const audit = buildSiteAudit(manifest);
+  assert.equal(audit.engineFindings, true);
+  assert.equal(audit.findings.filter(group => group.id === 'orphan' || group.id === 'missing-alt').length, 0);
+  assert.equal(audit.findings.filter(group => group.id === 'seo:missing-title').length, 1);
+  const title = audit.findings.find(group => group.id === 'seo:missing-title');
+  assert.equal(title.explanation, 'Engine text.');
+  assert.equal(title.targets[0].pageId, a.id, 'trailing slash variant still maps to the page');
+  const opportunity = audit.findings.find(group => group.id === 'link-opportunity').targets[0];
+  assert.equal(opportunity.pageId, a.id);
+  assert.equal(opportunity.sourcePageId, b.id);
+  const images = audit.findings.find(group => group.id === 'image-oversized');
+  assert.equal(images.targets.length, 200);
+  assert.equal(images.totalTargets, 450);
+  assert.equal(images.targets[0].sourcePageId, b.id);
+  assert.equal(audit.findings.find(group => group.id === 'mystery').category, 'pages');
+  assert.equal(audit.findingCount, 1 + 1 + 450 + 1);
+  assert.equal(audit.imagesMissingAlt, 2);
+  assert.deepEqual(audit.extras, { linkOpportunities: 1, linkFixes: 0, duplicateGroups: 1, tasks: { open: 5, ticked: 1, resolved: 2, notRechecked: 0 } });
+  const narrowed = filterAuditFindings(audit.findings, 'images', 'img-3.png');
+  assert.equal(narrowed[0].totalTargets, undefined);
+  assert.ok(audit.scopeNotes.some(note => note.includes('axe-core')));
+});
+
+test('engine path still reports link checks and header observations', () => {
+  const manifest = clone();
+  const home = { ...internal[0], kind: 'home', seoIssues: [] };
+  manifest.nodes = [home]; manifest.edges = [];
+  manifest.audit = { findings: [] };
+  manifest.linkHealth = { totalCount: 1, checkedCount: 1, results: [{ url: 'https://fixture.invalid/gone', status: 'broken', statusCode: 404, reason: 'HTTP 404' }] };
+  manifest.siteIntel = { techStack: { securityHeaders: { present: [], missing: ['CSP'] } } };
+  const audit = buildSiteAudit(manifest);
+  assert.ok(audit.findings.some(group => group.id === 'link-broken'));
+  assert.ok(audit.findings.some(group => group.id === 'headers-missing'));
 });
 
 console.log(`Site audit: ${passed} deterministic data cases passed. No network or scan was performed.`);

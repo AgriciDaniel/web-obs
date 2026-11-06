@@ -14,8 +14,20 @@ export interface SectionSector {
   pageCount: number;
 }
 
+export interface RoadColumn {
+  id: string;
+  title: string;
+  count: number;
+  /** Centre, left and right edge of the column and the top of its tallest stack, in world units. */
+  x: number;
+  left: number;
+  right: number;
+  top: number;
+}
+
 export interface ComputedSiteLayouts {
   sectors: SectionSector[];
+  roadColumns: RoadColumn[];
   globe: Map<string, [number, number, number]>;
   road: Map<string, [number, number, number]>;
   clusters: Map<string, [number, number, number]>;
@@ -43,7 +55,7 @@ function sphericalToWorld(
  *    - Main Domain Surface (R=5.35): Child pages packed cleanly inside their section's longitude slice
  *    - South Polar Drift Ring: Orphan pages (in sitemap, 0 incoming links) so isolated pages stand out
  *    - Outer Satellite Orbit (R=7.85): External domains positioned near the azimuth of linking pages
- * 2. `road`: Layered Click-Depth Sitemap Funnel (D0 -> D1 -> D2 -> D3+ -> Orphans -> External)
+ * 2. `road`: click depth columns (home, depth 1, depth 2, depth 3+, unlinked, external), only the ones in use
  * 3. `clusters`: 3D Force-Directed Link Authority Clusters
  */
 export function computeSiteLayouts(manifest: SiteGraphManifest): ComputedSiteLayouts {
@@ -214,58 +226,8 @@ export function computeSiteLayouts(manifest: SiteGraphManifest): ComputedSiteLay
     globe.set(ext.id, sphericalToWorld(GLOBE_EXTERNAL_RADIUS, az, latRad));
   });
 
-  // 2. SITEMAP ROAD LAYOUT (Left-to-right 3D Click-Depth Terraces)
-  // Columns: 0 = Home, 1 = Depth 1 / Hubs, 2 = Depth 2, 3 = Depth 3+, 4 = Orphans, 5 = External
-  const roadCols = new Map<number, SiteNode[]>();
-  for (const n of nodes) {
-    let col = 2;
-    if (n.kind === 'home' || n.id === homeNode?.id) {
-      col = 0;
-    } else if (n.kind === 'external-domain') {
-      col = 5;
-    } else if (n.health === 'orphan' || n.clickDepth === null) {
-      col = 4;
-    } else if (n.clickDepth <= 1 || n.kind === 'hub') {
-      col = 1;
-    } else if (n.clickDepth === 2) {
-      col = 2;
-    } else {
-      col = 3;
-    }
-    let arr = roadCols.get(col);
-    if (!arr) {
-      arr = [];
-      roadCols.set(col, arr);
-    }
-    arr.push(n);
-  }
-
-  const colX: Record<number, number> = {
-    0: -8.2,
-    1: -4.9,
-    2: -1.3,
-    3: 2.3,
-    4: 5.5,
-    5: 8.8,
-  };
-
-  roadCols.forEach((colNodes, col) => {
-    colNodes.sort((a, b) => a.section.localeCompare(b.section) || a.path.localeCompare(b.path));
-    const count = colNodes.length;
-    const xBase = colX[col] ?? 0;
-    const maxPerVertical = 9;
-    const subCols = Math.ceil(count / maxPerVertical);
-
-    colNodes.forEach((n, idx) => {
-      const subCol = Math.floor(idx / maxPerVertical);
-      const rowInSub = idx % maxPerVertical;
-      const rowsThisSub = Math.min(maxPerVertical, count - subCol * maxPerVertical);
-      const yStep = Math.min(1.05, 7.6 / Math.max(1, rowsThisSub));
-      const y = ((rowsThisSub - 1) * 0.5 - rowInSub) * yStep;
-      const z = (subCol - (subCols - 1) * 0.5) * 2.15 + ((rowInSub % 2) - 0.5) * 0.35;
-      road.set(n.id, [xBase + subCol * 0.55, y, z]);
-    });
-  });
+  // 2. SITEMAP ROAD LAYOUT: click depth columns left to right, each filled top to bottom.
+  const roadColumns = layoutRoad(nodes, homeNode, road);
 
   // 3. 3D LINK CLUSTERS (Deterministic 3D Force Relaxation seeded from Globe)
   const pos = new Map<string, [number, number, number]>();
@@ -352,5 +314,97 @@ export function computeSiteLayouts(manifest: SiteGraphManifest): ComputedSiteLay
     clusters.set(n.id, pos.get(n.id) ?? [0, 0, 0]);
   }
 
-  return { sectors, globe, road, clusters };
+  return { sectors, roadColumns, globe, road, clusters };
+}
+
+const ROAD_ROW_STEP = 0.95;
+const ROAD_SUBCOLUMN_WIDTH = 3.8;
+const ROAD_COLUMN_GAP = 2.4;
+/** Wide enough for a typical 16:9 pane once the toolbar and filter bar are taken away. */
+const ROAD_TARGET_ASPECT = 2.2;
+
+const ROAD_COLUMN_DEFS = [
+  { id: 'home', title: 'Home' },
+  { id: 'd1', title: 'Depth 1' },
+  { id: 'd2', title: 'Depth 2' },
+  { id: 'd3', title: 'Depth 3+' },
+  { id: 'unlinked', title: 'Unlinked' },
+  { id: 'external', title: 'External' },
+] as const;
+
+function roadColumnIndex(node: SiteNode, homeId: string | undefined): number {
+  if (node.kind === 'home' || node.id === homeId) return 0;
+  if (node.kind === 'external-domain') return 5;
+  if (node.health === 'orphan' || node.clickDepth === null) return 4;
+  if (node.clickDepth <= 1 || node.kind === 'hub') return 1;
+  return node.clickDepth === 2 ? 2 : 3;
+}
+
+/**
+ * Places every node into its depth column and returns the columns that hold at least one node.
+ * The row count is chosen so the internal columns come out about as wide as a landscape pane;
+ * a tall column wraps into side-by-side sub-columns instead of one long strip.
+ */
+function layoutRoad(nodes: readonly SiteNode[], homeNode: SiteNode | undefined, out: Map<string, [number, number, number]>): RoadColumn[] {
+  const buckets: SiteNode[][] = ROAD_COLUMN_DEFS.map(() => []);
+  for (const node of nodes) buckets[roadColumnIndex(node, homeNode?.id)].push(node);
+  for (const bucket of buckets) {
+    bucket.sort((a, b) => a.section.localeCompare(b.section) ||
+      Number(b.kind === 'hub') - Number(a.kind === 'hub') || a.path.localeCompare(b.path));
+  }
+  const used = buckets.map((bucket, index) => ({ index, bucket })).filter(({ bucket }) => bucket.length > 0);
+  if (!used.length) return [];
+
+  const internal = used.filter(({ index }) => index !== 5);
+  const sizeFor = (rows: number) => {
+    const subColumns = internal.reduce((sum, { bucket }) => sum + Math.ceil(bucket.length / rows), 0);
+    const width = subColumns * ROAD_SUBCOLUMN_WIDTH + Math.max(0, internal.length - 1) * ROAD_COLUMN_GAP;
+    return width / Math.max(ROAD_ROW_STEP * 3, (rows - 1) * ROAD_ROW_STEP);
+  };
+  const largest = Math.max(1, ...internal.map(({ bucket }) => bucket.length));
+  let rows = Math.min(largest, 4);
+  let best = Infinity;
+  for (let candidate = Math.min(largest, 4); candidate <= Math.max(4, Math.min(largest, 18)); candidate++) {
+    const miss = Math.abs(Math.log(sizeFor(candidate) / ROAD_TARGET_ASPECT));
+    if (miss < best - 1e-9) { best = miss; rows = candidate; }
+  }
+  rows = Math.max(1, rows);
+
+  const columns: RoadColumn[] = [];
+  let cursor = 0;
+  for (const { index, bucket } of used) {
+    const subColumns = Math.ceil(bucket.length / rows);
+    const width = subColumns * ROAD_SUBCOLUMN_WIDTH;
+    const left = cursor;
+    let tallest = 0;
+    bucket.forEach((node, i) => {
+      const sub = Math.floor(i / rows);
+      const row = i % rows;
+      const inThisSub = Math.min(rows, bucket.length - sub * rows);
+      tallest = Math.max(tallest, inThisSub);
+      const x = left + (sub + 0.5) * ROAD_SUBCOLUMN_WIDTH;
+      const y = ((inThisSub - 1) * 0.5 - row) * ROAD_ROW_STEP;
+      // A slight alternating depth keeps the 3D feel when the camera orbits.
+      const z = ((row % 2) - 0.5) * 0.3;
+      out.set(node.id, [x, y, z]);
+    });
+    columns.push({
+      id: ROAD_COLUMN_DEFS[index].id,
+      title: ROAD_COLUMN_DEFS[index].title,
+      count: bucket.length,
+      x: left + width / 2,
+      left,
+      right: left + width,
+      top: ((tallest - 1) * 0.5) * ROAD_ROW_STEP,
+    });
+    cursor += width + ROAD_COLUMN_GAP;
+  }
+
+  // Centre the internal columns on the origin so the default camera looks at the site, not the externals.
+  const internalColumns = columns.filter((column) => column.id !== 'external');
+  const span = internalColumns.length ? [internalColumns[0].left, internalColumns[internalColumns.length - 1].right] : [0, cursor];
+  const shift = -(span[0] + span[1]) / 2;
+  for (const column of columns) { column.x += shift; column.left += shift; column.right += shift; }
+  for (const [id, point] of out) out.set(id, [point[0] + shift, point[1], point[2]]);
+  return columns;
 }

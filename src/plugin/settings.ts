@@ -16,6 +16,16 @@ export interface WebObsPluginSettings {
   downloadImages: boolean;
   imageMode: 'preferred' | 'all';
   renderMode: 'auto' | 'always' | 'never';
+  browserAudit: boolean;
+  pageSnapshots: boolean;
+  snapshotLimit: number;
+  snapshotHtml: boolean;
+  spellCheck: boolean;
+  dnsChecks: boolean;
+  tlsCheck: boolean;
+  taskList: boolean;
+  /** One time limit for the network phases of a capture, in minutes. 0 means no limit. */
+  captureDeadlineMinutes: number;
   defaultViewMode: GlobeViewMode;
   themeBehavior: 'obsidian' | 'dark' | 'light';
   openInSplitPane: boolean;
@@ -28,6 +38,15 @@ export const DEFAULT_WEB_OBS_SETTINGS: WebObsPluginSettings = {
   downloadImages: true,
   imageMode: 'preferred',
   renderMode: 'auto',
+  browserAudit: true,
+  pageSnapshots: true,
+  snapshotLimit: 25,
+  snapshotHtml: false,
+  spellCheck: false,
+  dnsChecks: true,
+  tlsCheck: true,
+  taskList: true,
+  captureDeadlineMinutes: 0,
   defaultViewMode: 'globe',
   themeBehavior: 'obsidian',
   openInSplitPane: true,
@@ -149,6 +168,101 @@ export class WebObsSettingTab extends PluginSettingTab {
             this.bridge.settings.renderMode = value as 'auto' | 'always' | 'never';
             await this.bridge.saveSettings();
           })
+      );
+
+    new Setting(containerEl)
+      .setName('Browser audit sample')
+      .setDesc('Opens up to five pages in the headless browser after capture for lab timings, automated accessibility rules (axe-core), screenshots, JavaScript dependence and third parties on first load. Needs Playwright and Chromium; skipped with Fast HTTP only.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.bridge.settings.browserAudit ?? true).onChange(async (value) => {
+          this.bridge.settings.browserAudit = value;
+          await this.bridge.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Page snapshots')
+      .setDesc('Saves a full-page screenshot of the most important pages after capture and shows it at the top of each note. Needs Playwright and Chromium; skipped with Fast HTTP only.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.bridge.settings.pageSnapshots ?? true).onChange(async (value) => {
+          this.bridge.settings.pageSnapshots = value;
+          await this.bridge.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Snapshot limit')
+      .setDesc('Most pages to snapshot per capture, home and the strongest pages first. Keeps capture time and vault size in check (about 0.3 to 1 MB per snapshot).')
+      .addText((text) =>
+        text.setValue(String(this.bridge.settings.snapshotLimit ?? 25)).onChange(async (value) => {
+          const parsed = Number.parseInt(value, 10);
+          if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 500) {
+            this.bridge.settings.snapshotLimit = parsed;
+            await this.bridge.saveSettings();
+          }
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Save rendered HTML with snapshots')
+      .setDesc('Also keeps the page HTML after JavaScript ran, next to each snapshot. Useful for comparing what crawlers and visitors see.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.bridge.settings.snapshotHtml ?? false).onChange(async (value) => {
+          this.bridge.settings.snapshotHtml = value;
+          await this.bridge.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Email DNS checks')
+      .setDesc('Looks up MX, SPF, DMARC, common DKIM selectors and CAA for the domain through your system DNS resolver. Needs the optional dnspython package.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.bridge.settings.dnsChecks ?? true).onChange(async (value) => {
+          this.bridge.settings.dnsChecks = value;
+          await this.bridge.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Certificate check')
+      .setDesc('Reads the TLS certificate over one handshake with the site: who issued it, when it expires and which names it covers.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.bridge.settings.tlsCheck ?? true).onChange(async (value) => {
+          this.bridge.settings.tlsCheck = value;
+          await this.bridge.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Task list')
+      .setDesc('Writes _tasks.md, a checklist of fixes from the audit that keeps your ticks between captures. Turn it off if you track tasks somewhere else.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.bridge.settings.taskList ?? true).onChange(async (value) => {
+          this.bridge.settings.taskList = value;
+          await this.bridge.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Capture time limit')
+      .setDesc('Minutes a capture may spend on the network, across every phase. When it runs out, the capture stops requesting, saves what it has and is marked partial. 0 means no limit.')
+      .addText((text) =>
+        text.setPlaceholder('0').setValue(String(this.bridge.settings.captureDeadlineMinutes ?? 0)).onChange(async (value) => {
+          const minutes = Number(value.trim() || '0');
+          if (!Number.isFinite(minutes) || minutes < 0 || minutes > 1440) return;
+          this.bridge.settings.captureDeadlineMinutes = minutes;
+          await this.bridge.saveSettings();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName('Spell check')
+      .setDesc('Lists possible English misspellings per page. Names and jargon show up too, so it is off by default. Needs the optional pyspellchecker package.')
+      .addToggle((toggle) =>
+        toggle.setValue(this.bridge.settings.spellCheck ?? false).onChange(async (value) => {
+          this.bridge.settings.spellCheck = value;
+          await this.bridge.saveSettings();
+        })
       );
 
     new Setting(containerEl)

@@ -26,7 +26,16 @@ export interface DoctorFacts {
   browserError: string | null;
   vaultWritable: boolean | null;
   network: { ok: boolean; detail: string } | null;
+  /** Optional packages by pip name. Missing ones only switch off their own check. Absent on older probes. */
+  optionalPackages?: Record<string, boolean> | null;
 }
+
+/** Optional Python packages and the check each one enables. */
+export const OPTIONAL_PACKAGES: Array<{ name: string; feature: string }> = [
+  { name: 'dnspython', feature: 'email DNS checks' },
+  { name: 'pyspellchecker', feature: 'spell check' },
+  { name: 'html5lib', feature: 'HTML parse error counts' },
+];
 
 const DEFAULT_FIX_PYTHON =
   'Create a Python 3.14+ environment with the engine requirements, then set its executable in Web-Obs settings.';
@@ -137,6 +146,19 @@ export function buildDoctorReport(f: DoctorFacts): DoctorRow[] {
     });
   } else {
     rows.push({ id: 'packages', label: 'Python packages', state: 'pass', detail: 'requests, beautifulsoup4 and lxml are available.' });
+  }
+
+  if (f.optionalPackages) {
+    // Informational only: a missing optional package never warns or fails diagnostics.
+    const missing = OPTIONAL_PACKAGES.filter((entry) => f.optionalPackages?.[entry.name] !== true);
+    rows.push({
+      id: 'optional',
+      label: 'Optional packages',
+      state: 'pass',
+      detail: missing.length === 0
+        ? 'dnspython, pyspellchecker and html5lib are available.'
+        : `Optional, not installed: ${missing.map((entry) => `${entry.name} (${entry.feature})`).join(', ')}. Those checks are skipped.`,
+    });
   }
 
   if (f.renderMode === 'never') {

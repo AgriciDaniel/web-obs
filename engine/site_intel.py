@@ -14,11 +14,12 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import urljoin, urlparse, urlsplit, urlunparse
 
-from url_safety import DEFAULT_REQUEST_HEADERS, URLSafetyError, safe_requests_session
+from url_safety import DEFAULT_REQUEST_HEADERS, RequestDeadlineExceeded, URLSafetyError, safe_requests_session
 
-ROBOTS_PRODUCT_TOKEN = "WebObs"
+# The public robots.txt product name (RFC 9309) that WebObs answers to. Not a credential.
+ROBOTS_PRODUCT_NAME = "WebObs"
 
 # Token sources: OpenAI, Anthropic, Perplexity, Google, Apple, Meta, Common Crawl and Amazon list their tokens in
 # their own crawler documentation. Bytespider and DuckAssistBot are widely documented by crawler trackers but
@@ -378,6 +379,18 @@ def detect_funnel_platforms(all_external_urls: list[str]) -> list[dict]:
     return list(found.values())
 
 
+def _robots_agent_token(value: str) -> str:
+    """RFC 9309 product token: "*" alone, or the leading run of letters, "_" and "-".
+
+    "GPTBot/1.1" and "GPTBot*" are gptbot. An empty value or one with no valid token ("80legs", "008", "*bot") gives "",
+    which still starts a group, one that matches no crawler: its rules must not join the group above.
+    """
+    if re.fullmatch(r"\*\s*", value or ""):
+        return "*"
+    token = re.match(r"[A-Za-z_-]+", value or "")
+    return token.group(0).lower() if token else ""
+
+
 def _parse_robots_groups(robots_text: str) -> tuple[dict[str, list[tuple[str, str]]], Optional[str]]:
     groups: dict[str, list[tuple[str, str]]] = {}
     current_agents: list[str] = []
@@ -393,16 +406,14 @@ def _parse_robots_groups(robots_text: str) -> tuple[dict[str, list[tuple[str, st
         v_clean = val.strip()
 
         if f_low == "user-agent":
-            agent_token = v_clean.lower()
-            if not agent_token:
-                continue
+            # An empty or invalid value still starts a group, one that matches no crawler ("" from the helper).
+            agent_token = _robots_agent_token(v_clean)
             if seen_rule_in_group:
-                current_agents = [agent_token]
-                seen_rule_in_group = False
-            else:
+                current_agents, seen_rule_in_group = [], False
+            if agent_token:  # an invalid token still starts a group, one that matches no crawler
                 current_agents.append(agent_token)
-            groups.setdefault(agent_token, [])
-        elif f_low in ("allow", "disallow") and current_agents:
+                groups.setdefault(agent_token, [])
+        elif f_low in ("allow", "disallow"):
             seen_rule_in_group = True
             for ag in current_agents:
                 groups.setdefault(ag, []).append((f_low, v_clean))
@@ -410,6 +421,41 @@ def _parse_robots_groups(robots_text: str) -> tuple[dict[str, list[tuple[str, st
             content_signal_val = v_clean
 
     return groups, content_signal_val
+
+
+MAX_CRAWL_DELAY_SEC = 60.0
+
+
+def _parse_crawl_delays(robots_text: str) -> dict[str, float]:
+    """Crawl-delay per user-agent group. Not part of RFC 9309, but widely used to ask bots to slow down."""
+    delays: dict[str, float] = {}
+    current_agents: list[str] = []
+    seen_rule_in_group = False
+    for raw_line in (robots_text or "").lstrip("\ufeff").splitlines():
+        line = raw_line.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        field, val = line.split(":", 1)
+        f_low, v_clean = field.strip().lower(), val.strip()
+        if f_low == "user-agent":
+            agent_token = _robots_agent_token(v_clean)  # the same groups as the rules, empty values included
+            if seen_rule_in_group:
+                current_agents, seen_rule_in_group = [], False
+            if agent_token:
+                current_agents.append(agent_token)
+        elif f_low in ("allow", "disallow"):
+            seen_rule_in_group = True
+        elif f_low == "crawl-delay" and current_agents:
+            seen_rule_in_group = True
+            try:
+                value = float(v_clean)
+            except ValueError:
+                continue
+            if value != value or value < 0:  # NaN or negative
+                continue
+            for agent in current_agents:
+                delays.setdefault(agent, value)
+    return delays
 
 
 def _match_robots_path(path_and_query: str, pattern: str) -> bool:
@@ -467,7 +513,7 @@ def _robots_octets(value: str, *, pattern: bool) -> str:
 
 def _robots_rules_for_agent(groups: dict, user_agent: str) -> tuple[list, list[str]]:
     # The browser-shaped header still identifies this crawler as WebObs.
-    product = ROBOTS_PRODUCT_TOKEN if re.search(r"\bWebObs(?:/|\b)", user_agent, re.I) else user_agent.split("/", 1)[0].strip()
+    product = ROBOTS_PRODUCT_NAME if re.search(r"\bWebObs(?:/|\b)", user_agent, re.I) else user_agent.split("/", 1)[0].strip()
     key = product.lower()
     if key in groups:
         return groups[key], [key]
@@ -488,12 +534,17 @@ def build_robots_policy(
     """
     state, can_crawl, reason = "unknown", False, "Robots policy could not be established."
     rules, matched_agents = [], []
+    crawl_delay: Optional[float] = None
     if error or too_large:
         reason = str(error) if error else "Robots response exceeded the byte limit."
     elif isinstance(status_code, int) and 200 <= status_code < 300:
         state, can_crawl, reason = "parsed", True, "Fetched robots rules apply to WebObs."
         groups, _ = _parse_robots_groups(robots_text)
         rules, matched_agents = _robots_rules_for_agent(groups, user_agent)
+        delays = _parse_crawl_delays(robots_text)
+        product = ROBOTS_PRODUCT_NAME.lower() if re.search(r"\bWebObs\b", user_agent, re.I) else user_agent.split("/", 1)[0].strip().lower()
+        # The most specific group wins, as for allow and disallow rules.
+        crawl_delay = delays.get(product, delays.get("*") if product not in groups else None)
     elif status_code in (404, 410):
         state, can_crawl, reason = "absent", True, "Robots file is absent."
     elif isinstance(status_code, int) and 400 <= status_code < 500 and status_code != 429:
@@ -504,8 +555,9 @@ def build_robots_policy(
         reason = "Robots server failed; crawling is deferred."
     return {
         "state": state, "statusCode": status_code, "userAgent": user_agent,
-        "productToken": ROBOTS_PRODUCT_TOKEN if re.search(r"\bWebObs\b", user_agent, re.I) else user_agent.split("/", 1)[0],
+        "productToken": ROBOTS_PRODUCT_NAME if re.search(r"\bWebObs\b", user_agent, re.I) else user_agent.split("/", 1)[0],
         "canCrawl": can_crawl, "reason": reason, "matchedAgents": matched_agents,
+        "crawlDelaySec": crawl_delay,
         "rules": [[directive, pattern] for directive, pattern in rules],
     }
 
@@ -515,7 +567,7 @@ def robots_url_decision(policy: dict, url: str) -> dict:
     if not policy.get("canCrawl"):
         return {"allowed": False, "status": "unknown", "reason": policy.get("reason", "Unknown robots policy."), "matchedPattern": None}
     try:
-        parsed = urlparse(url)
+        parsed = urlsplit(url)  # urlsplit keeps ";params" in the path, which rules must see (RFC 9309)
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
             raise ValueError("Not an HTTP URL")
         target = parsed.path or "/"
@@ -530,8 +582,10 @@ def robots_url_decision(policy: dict, url: str) -> dict:
         if not pattern or directive not in ("allow", "disallow"):
             continue
         if _match_robots_path(target, pattern):
-            normalized = _robots_octets(pattern[:-1] if pattern.endswith("$") else pattern, pattern=True)
-            specificity = len(re.sub(r"%[0-9A-F]{2}", "_", normalized).replace("*", ""))
+            # Specificity is the length of the rule path as written, "*" and "$" included: Google's example
+            # "allow: /page" against "disallow: /*.htm" for /page.htm is disallowed, because /*.htm is longer.
+            # Each percent-encoded octet counts once. An exact tie goes to allow (least restrictive).
+            specificity = len(re.sub(r"%[0-9A-F]{2}", "_", _robots_octets(pattern, pattern=True)))
             if specificity > best_len or (specificity == best_len and directive == "allow"):
                 best_len, best_directive, best_pattern = specificity, directive, pattern
     allowed = best_directive != "disallow"
@@ -556,18 +610,10 @@ MAX_DISCOVERY_REDIRECTS = 3
 USER_TRIGGERED_AI_BOTS = ("ChatGPT-User", "Claude-User", "Perplexity-User")
 
 
-def validate_llms_txt(text: str) -> dict:
-    """Check llms.txt against llmstxt.org: an H1 title is required; summary and link lists are expected."""
-    lines = [ln.rstrip() for ln in (text or "").lstrip("\ufeff").splitlines()]
-    first = next((ln for ln in lines if ln.strip()), "")
-    issues: list[str] = []
-    if not re.match(r"^#\s+\S", first):
-        issues.append("missing-h1-title")
-    if not any(ln.lstrip().startswith(">") for ln in lines):
-        issues.append("no-summary-blockquote")
-    if not any(re.match(r"^\s*[-*]\s+\[[^\]]+\]\([^)\s]+\)", ln) for ln in lines):
-        issues.append("no-link-list")
-    return {"valid": "missing-h1-title" not in issues, "issues": issues}
+def validate_llms_txt(text: str, base_url: Optional[str] = None, content_type: Optional[str] = None) -> dict:
+    """Check llms.txt against the llmstxt.org format. The full rules live in llms_txt.py."""
+    from llms_txt import validate_llms_txt as _validate
+    return _validate(text, base_url=base_url, content_type=content_type)
 
 
 def validate_security_txt(text: str, now: Optional[datetime] = None) -> dict:
@@ -704,6 +750,8 @@ def probe_ai_and_discovery_endpoints(
     site_checks: dict[str, dict] = {}
 
     validation: dict[str, dict] = {}
+    # Whether the llms.txt checks got an answer, so a missing file is told apart from a failed request.
+    llms_probe: dict[str, dict] = {key: {"state": "not-checked"} for key in ("llmsTxt", "llmsFullTxt")}
     markdown_negotiation = {
         "supported": False,
         "varyAccept": False,
@@ -804,29 +852,51 @@ def probe_ai_and_discovery_endpoints(
                 if endpoints.get(key) and not save_name:
                     continue
                 target = f"{origin.rstrip('/')}{rel_url}"
+                tracked = key in llms_probe
                 if not allowed(target):
+                    if tracked:
+                        llms_probe[key] = {"state": "refused", "detail": "robots.txt does not allow fetching it."}
                     continue
                 try:
                     resp = _fetch_following(session, target, allowed, skipped, timeout=4.0, stream=True)
                     if resp is None:
+                        if tracked:
+                            llms_probe[key] = {"state": "not-checked", "detail": "It redirects to another site, which is not followed."}
                         continue
                     try:
-                        if resp.status_code != 200:
+                        status = resp.status_code
+                        if status != 200:
+                            if tracked:
+                                llms_probe[key] = ({"state": "absent", "statusCode": status} if status in (404, 410)
+                                                   else {"state": "unavailable", "statusCode": status, "detail": f"HTTP {status}."})
                             continue
                         ctype = (resp.headers.get("Content-Type") or "").lower()
                         if "text/html" in ctype:
+                            if tracked:
+                                llms_probe[key] = {"state": "html", "statusCode": status, "contentType": ctype.split(";")[0].strip()}
                             continue
-                        raw = resp.raw.read(512 * 1024, decode_content=True)
+                        limit = 512 * 1024
+                        raw = resp.raw.read(limit, decode_content=True)
                         text = raw.decode("utf-8", errors="replace").strip()
-                        if not text or text.lstrip().lower().startswith("<!doctype html"):
+                        if not text or text.lstrip().lower().startswith(("<!doctype html", "<html")):
+                            if tracked:
+                                llms_probe[key] = {"state": "html" if text else "absent", "statusCode": status,
+                                                   "detail": "Empty response." if not text else "HTML returned."}
                             continue
                         if expected_kind == "json":
                             json.loads(text)
-                        endpoints[key] = True
                         if key == "llmsTxt":
-                            validation[key] = validate_llms_txt(text)
+                            validation[key] = validate_llms_txt(text, base_url=resp.url or target, content_type=ctype)
+                        elif key == "llmsFullTxt":
+                            from llms_txt import validate_llms_full_txt
+                            validation[key] = validate_llms_full_txt(text, content_type=ctype)
                         elif key == "securityTxt":
                             validation[key] = validate_security_txt(text)
+                        # Marked found only after validation, so a validation crash never reads as a clean recheck.
+                        endpoints[key] = True
+                        if tracked:
+                            llms_probe[key] = {"state": "found", "statusCode": status, "url": resp.url or target,
+                                               "contentType": ctype.split(";")[0].strip() or None, "truncated": len(raw) >= limit}
                         if save_name and save_name not in saved_files:
                             out_path = os.path.join(site_root, save_name)
                             with open(out_path, "w", encoding="utf-8") as f:
@@ -834,7 +904,9 @@ def probe_ai_and_discovery_endpoints(
                             saved_files.append(save_name)
                     finally:
                         resp.close()
-                except Exception:
+                except Exception as exc:
+                    if tracked and llms_probe[key]["state"] != "found":
+                        llms_probe[key] = {"state": "not-checked", "detail": f"Request failed ({type(exc).__name__})."}
                     continue
 
             # 3. Site level checks: https redirect, www/non-www duplicate, soft 404
@@ -907,6 +979,7 @@ def probe_ai_and_discovery_endpoints(
         "aiBotsPolicy": ai_bots,
         "userTriggeredBots": [b for b in USER_TRIGGERED_AI_BOTS if b in ai_bots],
         "validation": validation,
+        "llmsProbe": llms_probe,
         "siteChecks": site_checks,
         "robotsFindings": analyze_robots(robots_text),
         "allowedAiBotsCount": len(allowed_bots),
@@ -982,6 +1055,8 @@ def _check_direct_external_url(url: str, deadline: float, request_timeout: float
         row["reason"] = "Redirect or method-fallback limit reached."
     except URLSafetyError:
         row["reason"] = "Target or redirect refused by URL safety."
+    except RequestDeadlineExceeded as exc:
+        row["reason"] = f"Direct check failed: {exc}"
     except Exception as exc:
         row["reason"] = "Direct check failed: " + type(exc).__name__
     return row

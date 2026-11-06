@@ -21,6 +21,7 @@ import re
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
+from note_safety import plain_language
 from bs4 import BeautifulSoup, Comment, NavigableString, Tag
 
 INLINE_TAGS = {
@@ -114,6 +115,15 @@ DECORATIVE_BUTTON_WORDS = {
     "prev",
     "previous",
     "next",
+    "light",
+    "dark",
+    "system",
+    "theme",
+    "toggle theme",
+    "copy address",
+    "copy link",
+    "copy code",
+    "search",
 }
 
 _LAZY_IMG_ATTRS = (
@@ -287,7 +297,63 @@ def _is_meaningful_inline_svg(svg: Tag) -> bool:
     return False
 
 
-def _prepare_content_root(soup: BeautifulSoup, base_url: str, inline_svgs_out: Optional[list[dict]] = None) -> Tag:
+_SKIP_LINK_RE = re.compile(r"^\s*(?:skip\b|back to top\b)", re.IGNORECASE)
+_LANDMARK_ROLES = {"banner": "header", "navigation": "nav", "contentinfo": "footer", "complementary": "aside"}
+_REGION_LABELS = {"header": "Header", "nav": "Navigation", "footer": "Footer", "aside": "Sidebar"}
+
+
+def _landmark_kind(tag: Tag) -> Optional[str]:
+    name = (tag.name or "").lower()
+    if name in ("header", "nav", "footer", "aside"):
+        return name
+    return _LANDMARK_ROLES.get((tag.get("role") or "").lower().strip())
+
+
+def _region_label(tag: Tag, kind: str) -> str:
+    label = _REGION_LABELS[kind]
+    named = _collapse_ws(str(tag.get("aria-label") or ""))
+    if named and named.lower() not in label.lower():
+        label = f"{label}: {named[:40]}"
+    return label
+
+
+def _collect_site_regions(body: Tag, base_url: str, regions_out: Optional[list[dict]]) -> None:
+    """Take site chrome out of the content flow, keeping it as labelled regions in document order.
+
+    A header that holds the page H1 stays in the content. Landmarks inside <main> or <article>
+    belong to the content (an article's own aside or byline header) and are left alone.
+    """
+    main_el = body.find("main") or body.find(attrs={"role": "main"})
+    candidates: list[tuple[Tag, str]] = []
+    for tag in body.find_all(True):
+        if not isinstance(tag, Tag) or tag.parent is None:
+            continue
+        kind = _landmark_kind(tag)
+        if not kind:
+            continue
+        if tag.find_parent(["main", "article"]) is not None or tag.find_parent(attrs={"role": "main"}) is not None:
+            continue
+        if any(tag in parent.descendants for parent, _kind in candidates):
+            continue
+        if kind == "header" and tag.find("h1") is not None:
+            continue
+        candidates.append((tag, kind))
+    for tag, kind in candidates:
+        if regions_out is not None:
+            position = "after"
+            if main_el is not None:
+                # Document order relative to the main content.
+                position = "before" if any(el is main_el for el in tag.find_all_next(True, limit=None)) else "after"
+            elif kind in ("header", "nav"):
+                position = "before"
+            markdown = re.sub(r"\n{3,}", "\n\n", _render_block_children(tag, base_url)).strip()
+            if markdown:
+                regions_out.append({"kind": kind, "label": _region_label(tag, kind), "position": position, "markdown": markdown})
+        tag.decompose()
+
+
+def _prepare_content_root(soup: BeautifulSoup, base_url: str, inline_svgs_out: Optional[list[dict]] = None,
+                          regions_out: Optional[list[dict]] = None) -> Tag:
     # Remove comments and non-visual tags (handle <svg> separately to preserve inline charts/diagrams!)
     for comment in soup.find_all(string=lambda t: isinstance(t, Comment)):
         comment.extract()
@@ -408,18 +474,12 @@ def _prepare_content_root(soup: BeautifulSoup, base_url: str, inline_svgs_out: O
             el.decompose()
 
     body = soup.body or soup
-    # Otherwise use body and strip top-level site chrome (header, nav, footer)
-    for chrome in list(body.find_all(["nav", "header", "footer"])):
-        # Keep <header> if it sits inside <article> or <section> and contains the page <h1>!
-        if (chrome.name or "").lower() == "header" and chrome.find("h1") is not None:
-            continue
-        chrome.decompose()
-
-    for role_val in ("navigation", "banner", "contentinfo"):
-        for rc in list(body.find_all(attrs={"role": role_val})):
-            if isinstance(rc, Tag) and rc.find("h1") is None:
-                rc.decompose()
-
+    # Skip links ("Skip to content") are keyboard helpers, not page content.
+    for anchor in list(body.find_all("a", href=True)):
+        if isinstance(anchor, Tag) and str(anchor.get("href") or "").startswith("#") and _SKIP_LINK_RE.match(anchor.get_text(" ", strip=True)):
+            anchor.decompose()
+    # Site chrome (header, navigation, footer, sidebars) leaves the content flow but is kept as regions.
+    _collect_site_regions(body, base_url, regions_out)
     return body
 
 
@@ -540,6 +600,11 @@ def _render_inline_node(node: Tag | NavigableString, base_url: str) -> str:
     name = (node.name or "").lower()
     if name == "br":
         return " "
+    if name == "button":
+        label = _collapse_ws(node.get_text(" ", strip=True))
+        if not label or label.lower() in DECORATIVE_BUTTON_WORDS or len(label) <= 2:
+            return ""
+        return label
     if name == "img":
         img_url = _best_img_url(node, base_url)
         if not img_url:
@@ -583,10 +648,22 @@ def _render_inline_node(node: Tag | NavigableString, base_url: str) -> str:
 
 def _render_inline_children(parent: Tag, base_url: str) -> str:
     parts: list[str] = []
+    previous: Tag | NavigableString | None = None
     for child in parent.children:
         rendered = _render_inline_node(child, base_url)
         if not rendered:
             continue
+        # "<span>Person</span>Jake" is a label styled as its own block; keep the words apart.
+        if (
+            parts
+            and isinstance(child, NavigableString)
+            and isinstance(previous, Tag)
+            and (previous.name or "").lower() in ("span", "small", "label", "strong", "b", "div")
+            and not parts[-1].endswith((" ", "\n"))
+            and re.match(r"[A-Z0-9]", rendered)
+        ):
+            parts.append(" ")
+        previous = child
         # Ensure adjacent sibling tags never concatenate words without space
         if (
             parts
@@ -612,6 +689,9 @@ def _is_compact_kv_row(div_el: Tag) -> Optional[str]:
         return None
     el_children = [c for c in div_el.children if isinstance(c, Tag)]
     if not (2 <= len(el_children) <= 4):
+        return None
+    # Rows holding links or buttons are actions or navigation; render them so the links survive.
+    if any((c.name or "").lower() in ("a", "button") or c.find(["a", "button"]) is not None for c in el_children):
         return None
 
     # Do not collapse a grid of multiple cards; only leaf rows where each child has <=1 sub-tag
@@ -685,8 +765,11 @@ def _render_block_node(node: Tag | NavigableString, base_url: str, list_depth: i
         raw_code = node.get_text("\n", strip=False).strip("\r\n")
         if not raw_code.strip():
             return ""
-        lang = _guess_code_lang(node, raw_code)
-        return f"```{lang}\n{raw_code}\n```"
+        lang = plain_language(_guess_code_lang(node, raw_code))  # no live renderer names (mermaid, agent...)
+        # CommonMark: the fence must be longer than any backtick run inside, or a fence shown in the
+        # code (a tutorial's "```js") would close the block early and turn the rest into page text.
+        fence = "`" * max(3, max((len(run) for run in re.findall(r"`+", raw_code)), default=0) + 1)
+        return f"{fence}{lang}\n{raw_code}\n{fence}"
 
     if name == "table":
         return _render_table(node, base_url)
@@ -710,10 +793,24 @@ def _render_block_node(node: Tag | NavigableString, base_url: str, list_depth: i
             nested_lists = [c for c in li.children if isinstance(c, Tag) and (c.name or "").lower() in ("ul", "ol")]
             for nl in nested_lists:
                 nl.extract()
+            # Code inside the item stays a code block, indented to the item's content so it stays in the item.
+            code_blocks = [pre.extract() for pre in li.find_all("pre")]
             li_text = _collapse_ws(_render_inline_children(li, base_url))
             line = f"{indent}{prefix}{li_text}" if li_text else ""
-            sub_rendered = [_render_block_node(nl, base_url, list_depth + 1) for nl in nested_lists]
-            sub_rendered = [s for s in sub_rendered if s]
+            pad = " " * (len(indent) + len(prefix))
+            codes = [_render_block_node(pre, base_url, list_depth) for pre in code_blocks]
+            codes = ["\n".join((pad + row) if row else row for row in code.split("\n")) for code in codes if code]
+            if codes and not line:
+                # Only code: open the fence on the marker line. An empty marker cannot interrupt a paragraph,
+                # so "1." on its own line would fold into the line above it.
+                codes[0] = f"{indent}{prefix}" + codes[0][len(pad):]
+                line = "\n".join(codes)
+            elif codes:
+                line = "\n".join([line] + codes)
+            # A nested list starts at this item's content column ("1. " is 3 wide, "10. " is 4), not at a fixed two
+            # spaces, which in CommonMark would make "  1." a sibling of "1. item" instead of its child.
+            sub_rendered = [_render_block_node(nl, base_url, 0) for nl in nested_lists]
+            sub_rendered = ["\n".join((pad + row) if row else row for row in s.split("\n")) for s in sub_rendered if s]
             if line and sub_rendered:
                 items.append(line + "\n" + "\n".join(sub_rendered))
             elif line:
@@ -859,6 +956,7 @@ def convert_html_to_markdown(
     page_url: str,
     parser: str = "lxml",
     inline_svgs_out: Optional[list[dict]] = None,
+    regions_out: Optional[list[dict]] = None,
 ) -> str:
     """
     Convert full page HTML into clean, structured Obsidian-ready Markdown
@@ -867,7 +965,7 @@ def convert_html_to_markdown(
     if not html or not html.strip():
         return ""
     soup = BeautifulSoup(html, parser)
-    root = _prepare_content_root(soup, page_url, inline_svgs_out=inline_svgs_out)
+    root = _prepare_content_root(soup, page_url, inline_svgs_out=inline_svgs_out, regions_out=regions_out)
     md = _render_block_children(root, page_url)
     # Collapse 3+ consecutive newlines down to 2
     md = re.sub(r"\n{3,}", "\n\n", md).strip()

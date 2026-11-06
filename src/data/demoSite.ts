@@ -5,7 +5,7 @@ import type { SiteGraphManifest } from '../types/site';
  * before running their first live capture.
  */
 export const PREVIEW_SITE_MANIFEST: SiteGraphManifest = {
-  schemaVersion: '1.1.0',
+  schemaVersion: '1.3.0',
   siteId: 'preview-studio.example',
   domain: 'studio.example',
   brandName: 'Northstar Studio',
@@ -777,4 +777,77 @@ export const PREVIEW_SITE_MANIFEST: SiteGraphManifest = {
     { id: 'e-x8', source: 'page-insights-link-graph', target: 'ext-github', kind: 'external', zone: 'body', anchor: 'audit scripts on GitHub', targetUrl: 'https://github.com/northstar-studio/audit-tools' },
     { id: 'e-x9', source: 'page-insights-orphan-draft', target: 'ext-youtube', kind: 'external', zone: 'body', anchor: 'Watch recording', targetUrl: 'https://youtube.com/watch?v=example' },
   ],
+};
+
+// Schema 1.3.0 audit data so the standalone preview shows the page checks, audit work lists and Site Intel cards.
+const demoNode = (id: string) => PREVIEW_SITE_MANIFEST.nodes.find((node) => node.id === id)!;
+const DEMO = 'https://studio.example';
+
+// Keep the homepage unflagged: map discovery treats flagged pages as a separate highlight set.
+demoNode('page-insights-cwv').seoIssues = ['render-blocking-resources (2)', 'first-image-lazy-loaded'];
+demoNode('page-home').pageChecks = {
+  textRatio: 0.164, textChars: 6120, htmlBytes: 37320,
+  readability: { fleschReadingEase: 48.2, fleschKincaidGrade: 10.4, automatedReadabilityIndex: 11.1, colemanLiauIndex: 12.6, smogIndex: 11.8, sentences: 58, wordsPerSentence: 16.2, note: 'English formulas with a heuristic syllable count.' },
+  titleRelevance: 0.8, descriptionRelevance: 0.71, titleLength: 43, descriptionLength: 86,
+  doctype: true, metaCharset: 'utf-8', headerCharset: 'utf-8', charsetMismatch: false, duplicateMetaTags: [], metaRefresh: null,
+  deprecatedTags: [], frames: false, flash: false, placeholderText: false, insecureLinks: [], mixedContent: [],
+  scripts: { total: 7, external: 3, renderBlocking: ['/js/vendor.js'] },
+  stylesheets: { total: 2, renderBlocking: ['/css/site.css'] },
+  dom: { nodes: 612, maxDepth: 14, maxChildren: 22, widestElement: 'ul' },
+  url: { length: 22, pathLength: 1, queryParams: [], hasUppercase: false, hasUnderscore: false, nonAscii: false, doubleSlash: false },
+  openGraph: { 'og:title': 'Northstar Studio', 'og:type': 'website', 'og:image': `${DEMO}/og/home.webp`, 'og:url': `${DEMO}/` },
+  twitter: { 'twitter:card': 'summary_large_image', 'twitter:title': 'Northstar Studio' },
+  firstImageLazy: true,
+  cache: { cacheControl: 'public, max-age=600', maxAge: 600, cacheable: true, noStore: false, noCache: false, etag: true, lastModified: null, contentEncoding: 'br' },
+  microdataTypes: [], rdfaTypes: [],
+  accessibility: { unlabeledInputs: 0, unnamedButtons: 1, emptyLinks: 0, note: 'Static HTML checks only. Not a full accessibility assessment.' },
+  citability: { questionHeadings: 2, headingsChecked: 9, lists: 4, tables: 0, faqBlocks: 1, paragraphs: 14, avgParagraphWords: 38.5, longParagraphs: 0, answerFirst: true, note: 'Heuristic structure signals that tend to make passages easy to quote. Not a score.' },
+  htmlValidation: null, spelling: null,
+};
+demoNode('page-home').keywords = { unigrams: [{ term: 'growth', count: 14, density: 1.5 }], bigrams: [{ term: 'technical seo', count: 9, density: 1.9 }, { term: 'web systems', count: 6, density: 1.3 }], trigrams: [] };
+
+PREVIEW_SITE_MANIFEST.issueCatalog = {
+  'render-blocking-resources': { category: 'pages', tone: 'review', title: 'Render-blocking scripts or styles', explanation: 'Scripts without async or defer and stylesheets in the head delay the first paint.' },
+  'first-image-lazy-loaded': { category: 'images', tone: 'review', title: 'First image is lazy loaded', explanation: 'The main image often is the largest paint. Lazy loading it delays the page.' },
+};
+
+PREVIEW_SITE_MANIFEST.audit = {
+  version: 1,
+  findings: [
+    { id: 'seo:render-blocking-resources', category: 'pages', tone: 'review', title: 'Render-blocking scripts or styles', explanation: 'Scripts without async or defer and stylesheets in the head delay the first paint.', targets: [{ url: `${DEMO}/insights/lcp-subparts`, detail: '2 on this page' }] },
+    { id: 'seo:first-image-lazy-loaded', category: 'images', tone: 'review', title: 'First image is lazy loaded', explanation: 'The main image often is the largest paint. Lazy loading it delays the page.', targets: [{ url: `${DEMO}/insights/lcp-subparts` }] },
+    { id: 'link-opportunity', category: 'links', tone: 'review', title: 'Internal link opportunities', explanation: 'These pages mention another page\'s topic in their text but do not link to it. Heuristic: check that the mention really refers to that page.', targets: [{ url: `${DEMO}/insights/sitemap-hygiene`, sourceUrl: `${DEMO}/insights/sitemap-hygiene`, detail: `Mentions "technical seo": link to ${DEMO}/services/technical-seo` }] },
+    { id: 'link-fix-broken', category: 'links', tone: 'attention', title: 'Internal links to a URL that returns 404 or 410', explanation: 'Update the link on the source page to point straight at the final, canonical URL.', targets: [{ url: `${DEMO}/services/legacy-migration`, sourceUrl: `${DEMO}/services`, detail: 'Linked from this page as "Migrations".' }] },
+    { id: 'dup-description', category: 'content', tone: 'review', title: 'Pages share the same meta description', explanation: 'Each group of pages uses one identical meta description. Distinct wording helps search engines and readers tell pages apart.', targets: [{ url: `${DEMO}/work`, detail: 'Shared by 2 pages' }, { url: `${DEMO}/work/acme-cloud`, detail: 'Shared by 2 pages' }] },
+    { id: 'schema-missing-required', category: 'schema', tone: 'review', title: 'Structured data not eligible for its rich result', explanation: 'Google needs these properties before it can show that rich result. Ignore this when the rich result is not a goal.', targets: [{ url: `${DEMO}/services/technical-seo`, detail: 'Product: missing name' }] },
+    { id: 'a11y-color-contrast', category: 'browser', tone: 'review', title: 'Accessibility: Elements must meet minimum color contrast ratio thresholds', explanation: 'axe-core reported this automated rule on a sampled page. Automated rules cover only part of WCAG.', targets: [{ url: `${DEMO}/`, detail: 'serious, 3 elements' }] },
+    { id: 'csp-weak', category: 'security', tone: 'review', title: 'The Content Security Policy has gaps', explanation: 'These directives leave room for injected scripts. Tighten them step by step and test the site.', targets: [{ url: `${DEMO}/`, detail: 'No Content-Security-Policy header.' }] },
+    { id: 'change-title', category: 'changes', tone: 'review', title: 'Title changed since the last capture', explanation: 'Titles affect how the page appears in search results.', targets: [{ url: `${DEMO}/services`, detail: '"Services" to "Services | Northstar Studio"' }] },
+  ],
+  duplicates: { titles: [], descriptions: [{ value: 'selected client work', urls: [`${DEMO}/work`, `${DEMO}/work/acme-cloud`] }], h1: [], exactContent: [], nearContent: [], note: 'Compared across captured, indexable 2xx pages only.' },
+  linkFixes: [{ sourceUrl: `${DEMO}/services`, linkedUrl: `${DEMO}/services/legacy-migration`, targetUrl: `${DEMO}/services/legacy-migration`, problem: 'broken', anchor: 'Migrations', zone: 'body' }],
+  linkOpportunities: [{ sourceUrl: `${DEMO}/insights/sitemap-hygiene`, targetUrl: `${DEMO}/services/technical-seo`, phrase: 'technical seo', context: '...a technical SEO review starts with the sitemap...' }],
+  conflicts: [], cannibalization: [], anchorConflicts: [], crawlTraps: [],
+  weakPages: { singleInlink: [`${DEMO}/work/acme-cloud`], deadEnds: [], noBodyOutlinks: [], deep: [], nofollowInternal: [] },
+  keywords: { unigrams: [{ term: 'growth', count: 40, pages: 9 }], bigrams: [{ term: 'technical seo', count: 31, pages: 6 }, { term: 'internal links', count: 18, pages: 4 }], trigrams: [] },
+  freshness: { stale: [{ url: `${DEMO}/insights/2023-webinar-recap`, date: '2023-05-02', ageDays: 1281 }], undated: [`${DEMO}/contact`], undatedCount: 1, datedCount: 12, staleAfterDays: 365, oldest: { url: `${DEMO}/insights/2023-webinar-recap`, date: '2023-05-02' }, newest: { url: `${DEMO}/insights/lcp-subparts`, date: '2026-10-21' } },
+  trust: { about: `${DEMO}/about`, contact: `${DEMO}/contact`, privacy: null, terms: null, legalLinks: {}, authorPages: [], pagesWithAuthor: 4, pagesWithDate: 12, pagesChecked: 15, note: 'Presence of pages and bylines only. Not an E-E-A-T judgement.' },
+  tasks: { open: 7, ticked: 1, resolved: 3, notRechecked: 0 },
+};
+
+PREVIEW_SITE_MANIFEST.siteIntel!.browserAudit = {
+  state: 'ok', detail: 'Audited 1 sampled page.', elapsedSec: 2.1, sampledUrls: [`${DEMO}/`], budgetSkippedUrls: [],
+  pages: [{
+    url: `${DEMO}/`, error: null, screenshot: null,
+    lab: { lcpMs: 812, cls: 0.02, domContentLoadedMs: 310, loadMs: 1290, requests: 24, transferBytes: 412000, note: 'One lab load on this machine through the capture proxy. Not field data.' },
+    jsGap: { rawWords: 920, renderedWords: 940, rawLinks: 48, renderedLinks: 49, rawSchemaTypes: ['Organization'], renderedSchemaTypes: ['Organization'], rawH1: ['B2B growth systems'], renderedH1: ['B2B growth systems'], wordsAddedByJsPct: 2 },
+    a11y: { state: 'ok', engine: 'axe-core 4.14.0', violations: [{ id: 'color-contrast', impact: 'serious', help: 'Elements must meet minimum color contrast ratio thresholds', nodes: 3 }], passes: 38 },
+    thirdParty: { hosts: [{ host: 'www.googletagmanager.com', requests: 2, category: 'analytics' }], cookies: [{ name: '_ga', domain: '.studio.example', firstParty: true, secure: false, httpOnly: false, sameSite: 'Lax' }], note: 'Observed on first load with no interaction. Not a consent or legal assessment.' },
+  }],
+  findings: [],
+};
+PREVIEW_SITE_MANIFEST.siteIntel!.transport = {
+  tls: { state: 'ok', detail: 'Verified certificate, 64 days remaining.', issuer: 'Example CA', subject: 'studio.example', notBefore: '2026-09-01T00:00:00Z', notAfter: '2027-01-06T00:00:00Z', daysRemaining: 64, tlsVersion: 'TLSv1.3', san: ['studio.example', 'www.studio.example'], coversWww: true, verified: true, error: null },
+  headerQuality: { hsts: { present: true, maxAge: 31536000, includeSubDomains: true, preload: false, preloadReady: false, issues: ['Add preload to qualify for the HSTS preload list.'] }, csp: { present: false, reportOnly: false, directives: {}, issues: ['No Content-Security-Policy header.'] }, cookies: [], otherIssues: [] },
+  emailDns: { state: 'skipped', detail: 'Install dnspython to enable email DNS checks.', mx: [], spf: null, dmarc: null, dkim: { checkedSelectors: [], found: [], note: 'Common selectors only.' }, caa: [], note: 'Queried through the system DNS resolver.' },
 };

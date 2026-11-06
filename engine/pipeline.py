@@ -9,7 +9,8 @@ from urllib.parse import urldefrag, urlparse
 from extractor import LocalAssetDownloader, extract_page_data
 from resources import classify_resource
 from sitemap import canonicalize_crawl_url, is_same_site_host, url_match_key
-from site_intel import robots_url_decision
+from url_safety import MAX_RETRY_AFTER_SEC, capture_out_of_time, capture_time_left, note_origin_request, retry_after_seconds, wait_for_origin_pacing
+from site_intel import MAX_CRAWL_DELAY_SEC, robots_url_decision
 
 MAX_ASSET_FILES = 500
 MAX_ASSET_BYTES = 128 * 1024 * 1024
@@ -221,8 +222,11 @@ def collect_site(origin, target_url, target_host, sitemap_urls, site_root,
                 'statusCode': result.get('status_code'), 'robotsPolicy': decision['status']}
         return row
 
+    extract_failures = []
+    extract_successes = 0
+
     def accept_page(url, result, decision):
-        nonlocal page_budget_used, collapsed_page_requests
+        nonlocal page_budget_used, collapsed_page_requests, extract_successes
         status = result.get('status_code') or 0
         classification = classify_resource(result.get('final_url') or url,
             result.get('content_type'), result.get('content_disposition'))
@@ -246,7 +250,13 @@ def collect_site(origin, target_url, target_host, sitemap_urls, site_root,
         effective = final
         extracted = None
         if not result.get('error') and 200 <= status < 400 and result.get('html'):
-            extracted = extract_fn(result['html'], effective, target_host, result.get('headers'))
+            try:
+                extracted = extract_fn(result['html'], effective, target_host, result.get('headers'))
+                extract_successes += 1
+            except Exception as exc:  # One malformed page must not end the whole capture.
+                extract_failures.append(exc)
+                result = {**result, 'error': f'Page content could not be parsed ({type(exc).__name__}).', 'error_kind': 'extract'}
+                extracted = None
         existing_source = sources.get(effective)
         row = save_receipt(url, result, decision, extracted)
         existing = pages.get(effective)
@@ -325,14 +335,83 @@ def collect_site(origin, target_url, target_host, sitemap_urls, site_root,
         queue_asset(entry)
         enqueue_link(entry['url'])
     from contextlib import nullcontext
-    dispatcher_options = {'min_interval_sec': delay_sec}
+    # Politeness: honour the site's Crawl-delay and back off when it answers 429 or 503.
+    target_policy = policy_for(home) or {}
+    asked_delay = target_policy.get('crawlDelaySec')
+    slow_sec = min(float(asked_delay), MAX_CRAWL_DELAY_SEC) if isinstance(asked_delay, (int, float)) and asked_delay > 0 else 0.0
+    if slow_sec:
+        warnings.append(f"robots.txt asks for {asked_delay:g} s between requests, so this capture sends one request at a time to the site, {slow_sec:g} s apart."
+                        + (f" Values above {MAX_CRAWL_DELAY_SEC:g} s are treated as {MAX_CRAWL_DELAY_SEC:g} s." if asked_delay > MAX_CRAWL_DELAY_SEC else ''))
+    dispatcher_options = {'min_interval_sec': max(delay_sec, slow_sec)}
+    if slow_sec:
+        dispatcher_options['per_origin'] = 1
+    on_site = lambda candidate: is_same_site_host(urlparse(candidate).hostname or '', target_host)
+    politeness = {'resume_at': 0.0, 'hits': 0, 'halted': False}
+    rate_limit_retried = set()
+    # The capture-wide deadline (--deadline): once it passes, nothing new is requested, and work cut
+    # short is recorded as not finished rather than as broken pages or links.
+    out_of_time = {'hit': False, 'pages': 0, 'files': 0, 'links': 0}
+    DEADLINE_REASON = 'Not requested: the capture deadline was reached.'
+
+    def cut_by_deadline(result):
+        """A failure with no HTTP answer that the capture deadline caused, not the site."""
+        left = capture_time_left()
+        if left is None or result.get('status_code') is not None or result.get('statusCode') is not None:
+            return False
+        text = str(result.get('error') or result.get('reason') or '')
+        if 'Capture deadline' in text:
+            return True
+        return left == 0 and (result.get('error_kind') == 'timeout' or 'Deadline' in text or 'Timeout' in text)
+
+    def cached_robots_status(url):
+        # Cache only: past the deadline, a robots.txt not already read is not fetched.
+        parsed = urlparse(url)
+        policy = robots_policies.get(f"{parsed.scheme}://{parsed.netloc}")
+        return robots_url_decision(policy, url)['status'] if policy else 'unknown'
+
+    def stop_for_deadline():
+        out_of_time['hit'] = True
+        for skipped in page_queue:
+            receipts.append({'url': skipped, 'path': urlparse(skipped).path, 'statusCode': None, 'attempted': False,
+                             'robotsPolicy': cached_robots_status(skipped),
+                             'error': DEADLINE_REASON, 'rawPath': None, 'rawSha256': None})
+            counts['pages']['skipped'] += 1
+            out_of_time['pages'] += 1
+        page_queue.clear()
+        for skipped in asset_queue:
+            inventory[skipped].update(downloadState='deadline-skipped', downloadReason=DEADLINE_REASON)
+            counts['media']['skipped'] += 1
+            out_of_time['files'] += 1
+        asset_queue.clear()
+        for skipped in link_queue:
+            if skipped not in link_results:
+                link_results[skipped] = {'url': skipped, 'finalUrl': skipped, 'status': 'unchecked', 'statusCode': None, 'attempted': False,
+                                         'reason': DEADLINE_REASON, 'redirectChain': [], 'method': None}
+                counts['links']['skipped'] += 1
+                out_of_time['links'] += 1
+        link_queue.clear()
+
+    def site_ready():
+        """Whether another request to the captured site may start now."""
+        if time.monotonic() < politeness['resume_at']:
+            return False
+        if slow_sec:
+            return not any(on_site(job['url']) for bucket in (page_futures, asset_futures, link_futures) for job in bucket.values())
+        return True
+
+    # Lease waits for a slow site count against the job deadline, so give each job room for its hops.
+    page_timeout, asset_timeout, link_timeout = 30 + 6 * slow_sec, 20 + 2 * slow_sec, 8 + 2 * slow_sec
     # A serial mode exists for reproducible benchmarks and isolated fault injection.
     from pipeline_serial import SerialDispatcher
     dispatcher_class = WorkerDispatcher if parallel else SerialDispatcher
+    if slow_sec:
+        wait_for_origin_pacing(home)  # the sitemap phase's last request still counts
     with dispatcher_class(**dispatcher_options) as dispatcher:
         with dispatcher.parent_requests() if hasattr(dispatcher, 'parent_requests') else nullcontext():
             while True:
-                while page_queue and len(page_futures) < 4 and page_budget_used < max_pages and candidate_requests < max_pages * 4:
+                if not out_of_time['hit'] and capture_out_of_time():
+                    stop_for_deadline()
+                while page_queue and len(page_futures) < 4 and page_budget_used < max_pages and candidate_requests < max_pages * 4 and site_ready():
                     url = page_queue.popleft()
                     decision = robots_url_decision(policy_for(url), url)
                     if not decision['allowed']:
@@ -344,9 +423,11 @@ def collect_site(origin, target_url, target_host, sitemap_urls, site_root,
                     candidate_requests += 1
                     payload = {'url': url, 'target_host': target_host, 'robots_policies': dict(robots_policies), 'render_mode': 'always' if render_mode == 'always' else 'never'}
                     operation = 'render' if render_mode == 'always' else 'page-http'
-                    future = dispatcher.submit(operation, payload, timeout_sec=30)
+                    future = dispatcher.submit(operation, payload, timeout_sec=page_timeout)
                     page_futures[future] = {'url': url, 'decision': decision, 'operation': operation}
                 while asset_queue and len(asset_futures) < 2:
+                    if on_site(asset_queue[0]) and not site_ready():
+                        break
                     url = asset_queue.popleft()
                     entry = inventory[url]
                     if media_requests >= MAX_ASSET_FILES or saved_resource_count + (downloader.downloaded_count if downloader else 0) + len(asset_futures) >= MAX_ASSET_FILES or saved_resource_bytes + (downloader.total_bytes if downloader else 0) >= MAX_ASSET_BYTES:
@@ -354,7 +435,7 @@ def collect_site(origin, target_url, target_host, sitemap_urls, site_root,
                         continue
                     media_requests += 1
                     payload = {'url': url, 'target_host': target_host, 'robots_policies': dict(robots_policies), 'allowed_types': ['image', 'transcript'], 'max_bytes': min(1024 * 1024 if entry['type'] == 'transcript' else 12 * 1024 * 1024, max(0, MAX_ASSET_BYTES - saved_resource_bytes - (downloader.total_bytes if downloader else 0)))}
-                    asset_futures[dispatcher.submit('asset', payload, timeout_sec=20)] = {'url': url}
+                    asset_futures[dispatcher.submit('asset', payload, timeout_sec=asset_timeout)] = {'url': url}
                     entry['downloadState'] = 'fetching'
                 if not page_futures and (not page_queue or page_budget_used >= max_pages or candidate_requests >= max_pages * 4):
                     if links_drain_deadline is None:
@@ -372,16 +453,20 @@ def collect_site(origin, target_url, target_host, sitemap_urls, site_root,
                         link_results[url] = {'url': url, 'status': 'unchecked', 'statusCode': None, 'attempted': False, 'reason': 'Destination checks disabled.' if not check_external else 'Link-check budget reached.', 'finalUrl': url, 'redirectChain': [], 'method': None}
                         counts['links']['skipped'] += 1
                         continue
+                    if on_site(url) and not site_ready() and not (links_drain_deadline is not None and time.monotonic() >= links_drain_deadline):
+                        link_queue.append(url)
+                        continue
                     if is_same_site_host(urlparse(url).hostname or '', target_host) and not robots_url_decision(policy_for(url), url)['allowed']:
                         link_results[url] = {'url': url, 'finalUrl': url, 'status': 'unchecked', 'statusCode': None, 'attempted': False, 'reason': 'Robots policy refused the resource.', 'redirectChain': [], 'method': None}
                         counts['links']['skipped'] += 1
                         continue
                     payload = {'url': url, 'target_host': target_host, 'robots_policies': dict(robots_policies), 'request_timeout': 3}
-                    link_futures[dispatcher.submit('link', payload, timeout_sec=8)] = {'url': url}
+                    link_futures[dispatcher.submit('link', payload, timeout_sec=link_timeout)] = {'url': url}
                 all_futures = set(page_futures) | set(asset_futures) | set(link_futures)
                 progress('draining' if links_drain_deadline else 'crawl')
                 if not all_futures:
                     if page_queue and page_budget_used < max_pages and candidate_requests < max_pages * 4 or asset_queue or link_queue:
+                        time.sleep(.05 if time.monotonic() < politeness['resume_at'] else 0)
                         continue
                     break
                 completed, _ = wait(all_futures, timeout=.25, return_when=FIRST_COMPLETED)
@@ -403,7 +488,54 @@ def collect_site(origin, target_url, target_host, sitemap_urls, site_root,
                         (root / relative).write_bytes(raw)
                         robots_receipts[policy_origin] = {key: value for key, value in receipt.items() if key != 'raw_bytes'}
                         robots_receipts[policy_origin].update(rawPath=relative, sha256=digest)
+                    if cut_by_deadline(result):
+                        # Cut short by the capture deadline: not a fault of the site.
+                        if not out_of_time['hit']:
+                            stop_for_deadline()
+                        if bucket is page_futures:
+                            receipts.append({'url': url, 'path': urlparse(url).path, 'statusCode': None, 'attempted': True,
+                                             'robotsPolicy': job['decision']['status'], 'error': 'Not finished: the capture deadline was reached.',
+                                             'rawPath': None, 'rawSha256': None})
+                            counts['pages']['skipped'] += 1
+                            out_of_time['pages'] += 1
+                            continue
+                        if bucket is link_futures:
+                            link_results[url] = {'url': url, 'finalUrl': url, 'status': 'unchecked', 'statusCode': None, 'attempted': False,
+                                                 'reason': 'Not finished: the capture deadline was reached.', 'redirectChain': [], 'method': None}
+                            counts['links']['skipped'] += 1
+                            out_of_time['links'] += 1
+                            continue
+                        inventory[url].update(downloadState='deadline-skipped', downloadReason='Not finished: the capture deadline was reached.')
+                        counts['media']['skipped'] += 1
+                        out_of_time['files'] += 1
+                        continue
                     if bucket is page_futures:
+                        status = result.get('status_code')
+                        if status in (429, 503) and on_site(result.get('final_url') or url):
+                            headers = result.get('headers') or {}
+                            explicit = status == 429 or any(str(key).lower() == 'retry-after' for key in headers)
+                            # 429 or Retry-After is an explicit request to slow down. A bare 503 is often one
+                            # broken page, so it is retried once later without pausing the whole site.
+                            wait_sec = retry_after_seconds(headers, default=30.0) if explicit else 0.0
+                            if explicit:
+                                politeness['hits'] += 1
+                                politeness['resume_at'] = max(politeness['resume_at'], time.monotonic() + min(wait_sec, MAX_RETRY_AFTER_SEC))
+                            if explicit and (politeness['hits'] >= 3 or wait_sec > MAX_RETRY_AFTER_SEC) and not politeness['halted']:
+                                politeness['halted'] = True
+                                warnings.append(f"The site answered HTTP {status} and asked us to slow down, so the capture stopped requesting new pages. "
+                                                "Try again later or raise the delay between requests.")
+                                for skipped in page_queue:
+                                    receipts.append({'url': skipped, 'path': urlparse(skipped).path, 'statusCode': None, 'attempted': False,
+                                                     'robotsPolicy': robots_url_decision(policy_for(skipped), skipped)['status'],
+                                                     'error': 'Not requested: the site was rate limiting the capture.', 'rawPath': None, 'rawSha256': None})
+                                    counts['pages']['skipped'] += 1
+                                page_queue.clear()
+                            elif not politeness['halted'] and url not in rate_limit_retried:
+                                rate_limit_retried.add(url)
+                                warnings.append(f"{url}: HTTP {status}, " + (f"pausing {min(wait_sec, MAX_RETRY_AFTER_SEC):g} s before trying it once more." if explicit else "trying it once more later."))
+                                page_budget_used -= 1
+                                page_queue.append(url)
+                                continue
                         if job['operation'] == 'page-http' and render_mode == 'auto' and result.get('is_spa') and not result.get('error'):
                             payload = {'url': url, 'target_host': target_host, 'robots_policies': dict(robots_policies), 'render_mode': 'always', 'prior_http': result}
                             page_futures[dispatcher.submit('render', payload, timeout_sec=30)] = {**job, 'operation': 'render'}
@@ -469,11 +601,16 @@ def collect_site(origin, target_url, target_host, sitemap_urls, site_root,
                             result = {'url': url, 'finalUrl': url, 'status': 'unknown', 'statusCode': result.get('status_code'), 'attempted': True, 'reason': result.get('error') or 'Worker failed.', 'redirectChain': [], 'method': None}
                         link_results[url] = result
 
+            if out_of_time['hit']:
+                warnings.append(f"The capture deadline was reached during collection: {out_of_time['pages']} pages, "
+                                f"{out_of_time['files']} files and {out_of_time['links']} links were not requested or not finished.")
             if page_queue:
                 warnings.append(f'The page limit left {len(page_queue)} discovered page candidates unvisited.')
                 counts['pages']['skipped'] += len(page_queue)
                 page_queue.clear()
             progress('settled', True)
+    if slow_sec:
+        note_origin_request(home)  # the workers' last request counts toward the next main-process one
     for entry in inventory.values():
         check = link_results.get(entry['url'])
         if check:
@@ -493,6 +630,9 @@ def collect_site(origin, target_url, target_host, sitemap_urls, site_root,
         entry['references'].sort(key=lambda ref: (ref['pageUrl'], ref['role'], ref.get('label') or '', ref.get('language') or ''))
     ordered_checks = [link_results[url] for url in sorted(link_results)]
     sample_urls = sorted(samples, key=lambda sample_url: (sample_url != home, sample_url))
+    if extract_failures and not extract_successes:
+        # Every page failed to parse: the extractor itself is broken. Keep the previous capture.
+        raise extract_failures[0]
     return {'pages': ordered_pages, 'aliases': aliases, 'images': images,
         'html_samples': [samples[url] for url in sample_urls], 'sample_urls': sample_urls,
         'sample_headers': {url: sample_headers.get(url, {}) for url in sample_urls},

@@ -1,4 +1,5 @@
-import type { SiteGraphManifest } from '../types/site';
+import { botsUnknown } from './aiCrawlers';
+import type { LlmsTxtValidation, SiteGraphManifest } from '../types/site';
 
 export type CheckState = 'ok' | 'warn' | 'missing' | 'unknown';
 
@@ -48,6 +49,75 @@ function performanceScore(manifest: SiteGraphManifest): ScoreItem {
   return { id: 'performance', label: 'Performance', state, detail: `${notes.join('; ')}. Server signals only, not Core Web Vitals.` };
 }
 
+type AiIntel = NonNullable<NonNullable<SiteGraphManifest['siteIntel']>['aiReadiness']>;
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`;
+
+/** llms.txt against the llmstxt.org format, with its links checked against the capture. */
+export function llmsRow(ai: AiIntel, llms: LlmsTxtValidation | undefined): DiscoveryRow {
+  const probe = ai.llmsProbe?.llmsTxt;
+  const draft = ai.llmsDraft?.text;
+  const fix = draft || LLMS_SNIPPET;
+  if (!ai.endpoints.llmsTxt) {
+    // Optional: Google Search ignores it and Lighthouse marks a 404 as not applicable. Only a server error is a problem.
+    const serverError = probe?.state === 'unavailable' && (probe.statusCode ?? 0) >= 500;
+    const detail = serverError ? `The server fails with HTTP ${probe!.statusCode} when asked for it.`
+      : probe?.state === 'html' ? 'The address serves a web page instead of a markdown file.'
+      : probe?.state === 'refused' ? 'Not checked: robots.txt does not allow fetching it.'
+      : probe?.state === 'unavailable' ? `Not checked: the site answered ${probe.detail ?? 'with an error'}`
+      : probe?.state === 'not-checked' ? `Not checked. ${probe.detail ?? ''}`.trim()
+      : 'Not found.';
+    const answered = !probe || probe.state === 'absent' || probe.state === 'html';
+    const note = answered ? ' Optional: Google Search ignores it; coding tools and assistants given your site can use it.' : '';
+    return { id: 'llms', label: 'llms.txt', state: serverError ? 'warn' : 'unknown',
+      detail: detail + note + (draft && answered ? ' A draft built from this capture is ready to copy.' : ''),
+      fix: answered || serverError ? fix : undefined };
+  }
+  if (!llms?.notes) {  // captured before 0.2.0 checked the full format
+    return { id: 'llms', label: 'llms.txt', state: llms?.issues.length ? 'warn' : 'ok',
+      detail: llms?.issues.length ? `Found. Check: ${llms.issues.join(', ')}.` : 'Found and matches the llmstxt.org format.',
+      fix: llms && !llms.valid ? fix : undefined };
+  }
+  const notes = llms.notes;
+  const errors = notes.filter(n => n.level === 'error').length;
+  const warnings = notes.filter(n => n.level === 'warn').length;
+  const links = ai.llmsLinks ?? [];
+  const dead = links.filter(l => l.state === 'broken' || l.state === 'unavailable' || l.state === 'blocked').length;
+  const loose = links.filter(l => l.state === 'redirect' || l.state === 'noindex' || l.state === 'non-canonical').length;
+  const parts = [`Found: ${plural(llms.stats?.sections ?? 0, 'section')}, ${plural(llms.stats?.links ?? 0, 'link')}${llms.hasOptional ? ', an Optional section' : ''}.`];
+  if (errors) parts.push(`${plural(errors, 'format error')}.`);
+  if (warnings) parts.push(`${plural(warnings, 'format note')}.`);
+  if (dead) parts.push(`${plural(dead, 'link')} agents cannot use.`);
+  if (loose) parts.push(`${plural(loose, 'link')} could be more direct.`);
+  const sameSite = links.filter(l => l.sameSite);
+  if (!errors && !warnings) parts.push('Matches the llmstxt.org format.');
+  if (sameSite.length && sameSite.every(l => l.state === 'ok')) parts.push(`All ${plural(sameSite.length, 'link')} on this site work.`);
+  const unchecked = sameSite.filter(l => l.state === 'unchecked').length;
+  if (unchecked) parts.push(`${plural(unchecked, 'link')} on this site not checked.`);
+  return {
+    id: 'llms', label: 'llms.txt',
+    state: errors || warnings || dead || loose ? 'warn' : 'ok',
+    detail: parts.join(' '),
+    fix: errors ? fix : undefined,
+    badge: llms.stats ? `~${llms.stats.approxTokens.toLocaleString('en-US')} tokens` : undefined,
+  };
+}
+
+/** llms.txt v2: pages that declare a markdown copy, and whether the copies checked load as markdown. */
+export function markdownRow(ai: AiIntel): DiscoveryRow | null {
+  const info = ai.markdownAlternates;
+  if (!info) return null;
+  const checked = info.checked.filter(r => r.state !== 'unchecked' && r.state !== 'blocked');
+  const bad = checked.filter(r => r.state !== 'ok');
+  if (!info.declaredPages) {
+    return { id: 'markdown-copies', label: 'Markdown page copies', state: 'unknown',
+      detail: 'No page declares a markdown copy. Optional (llms.txt v2): rel="alternate" type="text/markdown".' };
+  }
+  return { id: 'markdown-copies', label: 'Markdown page copies', state: bad.length ? 'warn' : 'ok',
+    detail: `${plural(info.declaredPages, 'page')} declare a markdown copy. ` + (checked.length
+      ? (bad.length ? `${bad.length} of ${checked.length} checked do not load as markdown.` : `All ${checked.length} checked load as markdown.`)
+      : 'None could be checked.') };
+}
+
 export function buildDiscoveryChecklist(manifest: SiteGraphManifest): { rows: DiscoveryRow[]; score: ScoreItem[] } {
   const ai = manifest.siteIntel?.aiReadiness;
   const robots = manifest.robotsPolicy;
@@ -81,14 +151,9 @@ export function buildDiscoveryChecklist(manifest: SiteGraphManifest): { rows: Di
   });
 
   if (ai) {
-    const llms = v('llmsTxt');
-    rows.push({
-      id: 'llms',
-      label: 'llms.txt',
-      state: !ai.endpoints.llmsTxt ? 'missing' : llms && !llms.valid ? 'warn' : llms && llms.issues.length ? 'warn' : 'ok',
-      detail: !ai.endpoints.llmsTxt ? 'Not found.' : llms && llms.issues.length ? `Found. Check: ${llms.issues.join(', ')}.` : 'Found and matches the llmstxt.org format.',
-      fix: !ai.endpoints.llmsTxt || (llms && !llms.valid) ? LLMS_SNIPPET : undefined,
-    });
+    rows.push(llmsRow(ai, v('llmsTxt') as LlmsTxtValidation | undefined));
+    const markdown = markdownRow(ai);
+    if (markdown) rows.push(markdown);
     rows.push({
       id: 'llms-full',
       label: 'llms-full.txt',
@@ -158,6 +223,8 @@ export function buildDiscoveryChecklist(manifest: SiteGraphManifest): { rows: Di
   const redirectFail = Object.values(ai?.siteChecks ?? {}).some((c) => c.state === 'fail');
   const headers = manifest.siteIntel?.techStack?.securityHeaders;
   const blocked = ai?.blockedAiBots.length ?? 0;
+  // When robots.txt could not be read every bot is "unknown": that is no data, never a pass.
+  const aiBotsUnknown = botsUnknown(ai?.aiBotsPolicy);
 
   const score: ScoreItem[] = [
     {
@@ -175,8 +242,10 @@ export function buildDiscoveryChecklist(manifest: SiteGraphManifest): { rows: Di
     {
       id: 'ai',
       label: 'AI readiness',
-      state: !ai ? 'unknown' : !ai.endpoints.llmsTxt || blocked > 0 || (v('llmsTxt') && !v('llmsTxt')!.valid) ? 'warn' : 'pass',
-      detail: !ai ? 'No data.' : `llms.txt ${ai.endpoints.llmsTxt ? 'present' : 'missing'}; ${blocked} AI bots blocked in robots.txt.`,
+      // A missing llms.txt is optional and does not lower this score; an invalid one does.
+      state: !ai ? 'unknown' : blocked > 0 || (v('llmsTxt') && !v('llmsTxt')!.valid) ? 'warn' : aiBotsUnknown ? 'unknown' : 'pass',
+      detail: !ai ? 'No data.' : `llms.txt ${ai.endpoints.llmsTxt ? 'present' : 'missing'}; `
+        + (aiBotsUnknown ? 'AI crawler access unknown: robots.txt could not be read.' : `${blocked} AI bots blocked in robots.txt.`),
     },
     {
       id: 'security',

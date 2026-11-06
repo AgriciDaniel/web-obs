@@ -23,6 +23,7 @@ from resources import classify_resource, extract_resource_references, fetch_asse
 from site_intel import canonicalize_external_domain
 from sitemap import canonicalize_crawl_url, is_same_site_host, url_match_key
 from page_fetch import fetch_page_html
+from page_checks import run_page_checks
 
 
 try:
@@ -348,6 +349,18 @@ def _is_decorative_image(img) -> bool:
     return False
 
 
+def parse_link_header(value: str) -> list[tuple[str, dict[str, str]]]:
+    """RFC 8288 Link header: `<url>; rel="alternate"; type="text/markdown", <url2>; rel=describedby`."""
+    out = []
+    for part in re.findall(r"<([^>]*)>([^,<]*(?:\"[^\"]*\"[^,<]*)*)", value or "")[:20]:
+        target, rest = part
+        params = {}
+        for key, quoted, bare in re.findall(r";\s*([\w*-]+)\s*=\s*(?:\"([^\"]*)\"|([^;,\s]*))", rest):
+            params.setdefault(key.lower(), quoted or bare)
+        out.append((target.strip(), params))
+    return out
+
+
 def extract_page_data(
     html: str,
     page_url: str,
@@ -385,12 +398,15 @@ def extract_page_data(
     published_date = ""
     modified_date = ""
 
+    meta_tags: list[tuple[str, str, str]] = []
     for meta in soup.find_all("meta"):
         name = (meta.get("name") or "").lower().strip()
         prop = (meta.get("property") or "").lower().strip()
         content = (meta.get("content") or "").strip()
         if not content:
             continue
+        if len(meta_tags) < 200:
+            meta_tags.append((name, prop, content))
         if name == "description" and not meta_description:
             meta_description = content
         elif prop == "og:description" and not meta_description:
@@ -431,6 +447,7 @@ def extract_page_data(
     hreflang_links: list[dict] = []
     rss_feeds: list[str] = []
     markdown_alternates: list[str] = []
+    described_by: list[str] = []  # rel="describedby" points at the llms.txt that covers the page
 
     for link_el in soup.find_all("link"):
         rel_raw = link_el.get("rel") or []
@@ -438,7 +455,10 @@ def extract_page_data(
         href = (link_el.get("href") or "").strip()
         if not href:
             continue
-        full_l = urljoin(page_url, href)
+        try:
+            full_l = urljoin(page_url, href)
+        except ValueError:
+            continue
         ltype = (link_el.get("type") or "").lower().strip()
 
         if "canonical" in rels and not canonical:
@@ -453,6 +473,19 @@ def extract_page_data(
                 rss_feeds.append(full_l)
             if ltype == "text/markdown" and full_l not in markdown_alternates:
                 markdown_alternates.append(full_l)
+        if "describedby" in rels and full_l not in described_by and len(described_by) < 5:
+            described_by.append(full_l)
+
+    for target, params in parse_link_header(hdrs_low.get("link", "")):
+        try:
+            full_l = urljoin(page_url, target)
+        except ValueError:
+            continue
+        rels = params.get("rel", "").lower().split()
+        if "alternate" in rels and params.get("type", "").lower() == "text/markdown" and full_l not in markdown_alternates:
+            markdown_alternates.append(full_l)
+        if "describedby" in rels and full_l not in described_by and len(described_by) < 5:
+            described_by.append(full_l)
 
     # Heading hierarchy + level-skip check in DOM order. Skips are judged inside the main
     # content when the page has one. Headings in site-wide template regions (header, nav,
@@ -642,8 +675,12 @@ def extract_page_data(
             continue
         if lower_href.startswith("sms:"):
             continue
-        full_href = urljoin(page_url, raw_href)
-        parsed = urlparse(full_href)
+        try:
+            full_href = urljoin(page_url, raw_href)
+            parsed = urlparse(full_href)
+            _ = parsed.hostname
+        except ValueError:
+            continue
         if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
             continue
 
@@ -760,11 +797,13 @@ def extract_page_data(
     # Full-fidelity semantic DOM-to-Markdown conversion (plus inline SVG chart capture)
     normalized_html = str(soup)
     inline_svgs: list[dict] = []
+    site_regions: list[dict] = []
     markdown_body = convert_html_to_markdown(
         normalized_html,
         page_url,
         parser=_HTML_PARSER,
         inline_svgs_out=inline_svgs,
+        regions_out=site_regions,
     )
 
     if len(markdown_body) < 40 and trafilatura is not None:
@@ -788,8 +827,12 @@ def extract_page_data(
 
     # Visible word & character count (excluding nav/header/footer/script/style)
     wc_soup = BeautifulSoup(html, _HTML_PARSER)
-    for tag in wc_soup(["script", "style", "noscript", "nav", "footer", "header"]):
+    for tag in wc_soup(["head", "script", "style", "noscript", "nav", "footer"]):
         tag.decompose()
+    # A site header is chrome, but <article><header><h1> holds the page's own heading.
+    for tag in wc_soup.find_all("header"):
+        if tag.find_parent(["article", "main"]) is None:
+            tag.decompose()
     visible_text = re.sub(r"\s+", " ", wc_soup.get_text(" ", strip=True)).strip()
     visible_chars = len(visible_text)
     words = re.findall(r"\b\w+\b", visible_text)
@@ -849,6 +892,17 @@ def extract_page_data(
         seo_issues.append(f"images-missing-alt ({images_missing_alt})")
     if generic_anchors:
         seo_issues.append(f"generic-anchor-text ({len(generic_anchors)})")
+    if images_missing_dimensions > 0:
+        seo_issues.append(f"images-missing-dimensions ({images_missing_dimensions})")
+
+    page_check_result = run_page_checks(
+        html=html, soup=soup, page_url=page_url, headers=hdrs_low, lang=html_lang, title=title,
+        meta_description=meta_description, visible_text=visible_text, h1=headings["h1"],
+        meta_tags=meta_tags, canonical=canonical, images=images,
+        internal_links=internal_links, external_links=external_links)
+    for issue in page_check_result["issues"]:
+        if issue not in seo_issues:
+            seo_issues.append(issue)
 
     return {
         "title": title,
@@ -873,6 +927,7 @@ def extract_page_data(
         "favicon": favicon,
         "rss_feeds": rss_feeds,
         "markdown_alternates": markdown_alternates,
+        "described_by": described_by,
         "h1": headings["h1"],
         "h2": headings["h2"],
         "h3": headings["h3"],
@@ -908,9 +963,15 @@ def extract_page_data(
         "template_heading_skips": template_heading_skips,
         "images_missing_dimensions": images_missing_dimensions,
         "seo_issues": seo_issues,
+        "page_checks": page_check_result["checks"],
+        "simhash": page_check_result["simhash"],
+        "keywords": page_check_result["keywords"],
+        "visible_text": visible_text,
         "internal_links": internal_links,
         "external_links": external_links,
         "markdown": markdown_body,
+        # Header, navigation, sidebar and footer as rendered Markdown, kept out of the content hash.
+        "site_regions": site_regions,
     }
 
 

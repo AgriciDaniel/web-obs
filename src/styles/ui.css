@@ -1,0 +1,93 @@
+/* Shared panel primitives. Tokens come from theme.css; status tokens are added here. */
+.wo-shell {
+  --status-good: var(--hub);
+  --status-warning: var(--orphan);
+  --status-critical: var(--broken);
+  --status-neutral: var(--border-strong);
+  --status-info: var(--accent-bright);
+  --ui-gap: 12px;
+  --ui-radius: 10px;
+  --ui-text-sm: 12px;
+  --ui-text-md: 13px;
+  --ui-text-lg: 15px;
+}
+
+.wo-shell .wo-ui-section { display: flex; flex-direction: column; gap: 10px; padding: 14px 0; border-top: 1px solid var(--border-hairline); }
+.wo-shell .wo-ui-section:first-child { border-top: 0; padding-top: 4px; }
+.wo-shell .wo-ui-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.wo-shell .wo-ui-section-head h3 { margin: 0; font-size: var(--ui-text-md); font-weight: 600; color: var(--ink-primary); letter-spacing: 0; text-transform: none; }
+.wo-shell .wo-ui-section-aside { font-size: var(--ui-text-sm); color: var(--ink-muted); }
+
+.wo-shell .wo-ui-stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; }
+.wo-shell .wo-ui-stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 10px 12px; border: 1px solid var(--border-hairline); border-radius: var(--ui-radius); background: var(--bg-subtle); text-align: left; font: inherit; color: inherit; }
+.wo-shell .wo-ui-stat.is-action { cursor: pointer; }
+.wo-shell .wo-ui-stat.is-action:hover { border-color: var(--border-strong); }
+.wo-shell .wo-ui-stat.is-action:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 2px; }
+.wo-shell .wo-ui-stat-label { display: flex; align-items: center; gap: 6px; font-size: var(--ui-text-sm); color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wo-shell .wo-ui-stat-value { font-size: 22px; font-weight: 600; line-height: 1.15; color: var(--ink-primary); }
+.wo-shell .wo-ui-stat-hint { font-size: 11px; color: var(--ink-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.wo-shell .wo-ui-pill { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 18px; white-space: nowrap; border: 1px solid var(--border-hairline); color: var(--ink-secondary); background: var(--bg-subtle); }
+.wo-shell .wo-ui-pill svg { flex: none; }
+.wo-shell .wo-ui-pill.is-good svg { color: var(--status-good); }
+.wo-shell .wo-ui-pill.is-warning svg { color: var(--status-warning); }
+.wo-shell .wo-ui-pill.is-critical svg { color: var(--status-critical); }
+.wo-shell .wo-ui-pill.is-info svg { color: var(--status-info); }
+.wo-shell .wo-ui-pill.is-neutral svg { color: var(--ink-muted); }
+
+.wo-shell .wo-ui-kv { display: flex; flex-direction: column; margin: 0; }
+.wo-shell .wo-ui-kv-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--border-hairline); font-size: var(--ui-text-md); }
+.wo-shell .wo-ui-kv-row:last-child { border-bottom: 0; }
+.wo-shell .wo-ui-kv-row dt { color: var(--ink-secondary); min-width: 0; }
+.wo-shell .wo-ui-kv-row dd { margin: 0; color: var(--ink-primary); text-align: right; font-variant-numeric: tabular-nums; min-width: 0; overflow-wrap: anywhere; }
+
+.wo-shell .wo-ui-disclosure { border-radius: var(--ui-radius); }
+.wo-shell .wo-ui-disclosure > summary { display: flex; align-items: center; gap: 6px; padding: 6px 0; cursor: pointer; list-style: none; font-size: var(--ui-text-md); color: var(--ink-secondary); }
+.wo-shell .wo-ui-disclosure > summary::-webkit-details-marker { display: none; }
+.wo-shell .wo-ui-disclosure > summary:hover { color: var(--ink-primary); }
+.wo-shell .wo-ui-disclosure > summary:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 2px; }
+.wo-shell .wo-ui-disclosure-chevron { transition: transform 120ms ease; flex: none; }
+.wo-shell .wo-ui-disclosure[open] > summary .wo-ui-disclosure-chevron { transform: rotate(90deg); }
+.wo-shell .wo-ui-disclosure-body { padding: 4px 0 8px 19px; display: flex; flex-direction: column; gap: 8px; }
+.wo-shell .wo-ui-count { margin-left: auto; min-width: 20px; padding: 0 6px; border-radius: 999px; background: var(--bg-subtle); border: 1px solid var(--border-hairline); font-size: 11px; line-height: 17px; text-align: center; color: var(--ink-secondary); font-variant-numeric: tabular-nums; }
+
+.wo-shell .wo-ui-tabs { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.wo-shell .wo-ui-tablist { display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: var(--bg-subtle); border: 1px solid var(--border-hairline); }
+.wo-shell .wo-ui-tab { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-secondary); font: inherit; font-size: var(--ui-text-md); font-weight: 500; cursor: pointer; white-space: nowrap; }
+.wo-shell .wo-ui-tab .wo-ui-count { margin-left: 0; }
+.wo-shell .wo-ui-tab:hover { color: var(--ink-primary); }
+.wo-shell .wo-ui-tab.is-active { background: var(--bg-panel); color: var(--ink-primary); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
+.wo-shell .wo-ui-tab:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 1px; }
+.wo-shell .wo-ui-tabpanel:focus-visible { outline: none; }
+
+.wo-shell .wo-ui-segbar { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.wo-shell .wo-ui-segbar-track { display: flex; gap: 2px; height: 28px; }
+.wo-shell .wo-ui-segbar-track.is-thin { height: 8px; }
+.wo-shell .wo-ui-segbar-part { display: flex; align-items: center; min-width: 3px; border-radius: 4px; overflow: hidden; }
+.wo-shell .wo-ui-segbar-track.is-thin .wo-ui-segbar-part { border-radius: 999px; }
+.wo-shell .wo-ui-segbar-text { padding-left: 8px; font-size: 11px; font-weight: 600; color: #ffffff; white-space: nowrap; }
+.wo-shell .wo-ui-segbar-text.is-dark { color: #1a1a1a; }
+.wo-shell .wo-ui-segbar-empty { display: flex; align-items: center; padding: 0 10px; flex: 1; border-radius: 4px; background: var(--bg-subtle); font-size: 11px; color: var(--ink-muted); }
+.wo-shell .wo-ui-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: var(--ui-text-sm); color: var(--ink-secondary); }
+.wo-shell .wo-ui-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.wo-shell .wo-ui-legend-item i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.wo-shell .wo-ui-legend-item b { font-weight: 600; color: var(--ink-primary); font-variant-numeric: tabular-nums; }
+.wo-shell .wo-ui-legend-item.is-zero { color: var(--ink-muted); }
+.wo-shell .wo-ui-legend-item.is-zero b { color: var(--ink-muted); font-weight: 500; }
+
+.wo-shell .wo-ui-bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.wo-shell .wo-ui-bar { display: grid; grid-template-columns: minmax(80px, 38%) 1fr 44px; align-items: center; gap: 10px; width: 100%; padding: 2px 0; border: 0; background: transparent; font: inherit; color: inherit; text-align: left; }
+.wo-shell .wo-ui-bar.is-action { cursor: pointer; border-radius: 6px; }
+.wo-shell .wo-ui-bar.is-action:hover .wo-ui-bar-label { color: var(--ink-primary); }
+.wo-shell .wo-ui-bar.is-action:focus-visible { outline: 2px solid var(--accent-bright); outline-offset: 2px; }
+.wo-shell .wo-ui-bar-label { font-size: var(--ui-text-md); color: var(--ink-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wo-shell .wo-ui-bar-track { height: 10px; border-radius: 0 4px 4px 0; }
+.wo-shell .wo-ui-bar-fill { display: block; height: 10px; border-radius: 0 4px 4px 0; background: var(--accent-bright); }
+.wo-shell .wo-ui-bar-value { font-size: var(--ui-text-md); color: var(--ink-primary); text-align: right; font-variant-numeric: tabular-nums; }
+
+.wo-shell .wo-ui-note { margin: 0; font-size: var(--ui-text-sm); line-height: 1.5; color: var(--ink-muted); }
+.wo-shell .wo-ui-empty { margin: 0; padding: 12px; border-radius: var(--ui-radius); border: 1px solid var(--border-hairline); font-size: var(--ui-text-sm); color: var(--ink-muted); text-align: center; }
+
+@media (prefers-reduced-motion: reduce) {
+  .wo-shell .wo-ui-disclosure-chevron { transition: none; }
+}

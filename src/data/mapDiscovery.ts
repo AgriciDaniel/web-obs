@@ -36,8 +36,8 @@ export function buildDiscoveryStops(nodes: readonly SiteNode[]): DiscoveryStop[]
     'Something to inspect', 'The saved capture records a flag here. Open the inspector to see the observation and its context.');
   const gateway = rank(node => node.externalDomainsOut);
   if (gateway && gateway.externalDomainsOut > 0) add(gateway, 'A window to the wider web', `This page links to ${gateway.externalDomainsOut} external ${gateway.externalDomainsOut === 1 ? 'domain' : 'domains'} in the capture.`);
-  const read = rank(node => node.wordCount);
-  if (read && read.wordCount > 0) add(read, 'Read beyond the map', `${read.wordCount.toLocaleString()} words were retained for this page. Its Markdown note is ready to explore.`);
+  const read = rank(node => node.pageChecks?.wordsMeasured === false ? 0 : node.wordCount);
+  if (read && read.pageChecks?.wordsMeasured !== false && read.wordCount > 0) add(read, 'Read beyond the map', `${read.wordCount.toLocaleString()} words were retained for this page. Its Markdown note is ready to explore.`);
   for (const node of [...nodes].sort((a, b) => a.path.localeCompare(b.path))) {
     if (stops.length >= 4) break;
     add(node, 'Another perspective', 'A different place in this saved map. Follow a captured link to see where it leads.');

@@ -7,6 +7,7 @@ refuses a different vault, runs local HTTP fixtures, and never closes the app.
 import argparse
 import importlib.util
 import json
+import re
 from pathlib import Path
 import threading
 from http.server import ThreadingHTTPServer
@@ -108,6 +109,8 @@ def main():
             passed('Native capture shows independent page, media and link queues')
             site_id = f'127.0.0.1-{website.server_port}'
             page.get_by_role('combobox', name='Captured websites').locator(f'option[value="{site_id}"]').wait_for(state='attached', timeout=30000)
+            if not page.get_by_role('complementary', name='Page explorer').count():
+                page.get_by_role('button', name='Pages: show or hide explorer', exact=True).click()
             page.get_by_role('complementary', name='Page explorer').wait_for()
             manifest_file = args.vault / 'sites' / site_id / '_site-graph.json'
             manifest = json.loads(manifest_file.read_text(encoding='utf-8'))
@@ -115,7 +118,7 @@ def main():
             if args.spa_fixture:
                 assert next(n for n in manifest['nodes'] if n['kind'] == 'home')['renderUsed']
                 passed('Selected render mode produced SPA content through the native Python child')
-            assert page.get_by_text('Partial snapshot', exact=True).is_visible()
+            assert page.locator('.wo-snapshot-badge').first.get_attribute('title') == 'Partial snapshot'
             expected_targets = 4 + int(args.spa_fixture) + (6 if args.media_fixture else 0)
             assert manifest['linkHealth']['totalCount'] == expected_targets
             assert '/private' not in fixture.Website.hits
@@ -139,11 +142,13 @@ def main():
                 passed('Native capture saves captions separately and keeps large media as references')
             geometry = page.evaluate("""() => {
               const shell = document.querySelector('.wo-shell');
-              const summary = shell.querySelector('.wo-site-overview').getBoundingClientRect();
+              const summary = shell.querySelector('.wo-site-overview')?.getBoundingClientRect();
               const header = shell.querySelector('.wo-topbar').getBoundingClientRect();
               const drawer = shell.querySelector('.wo-intel-drawer').getBoundingClientRect();
+              const stage = shell.querySelector('.wo-canvas-stage').getBoundingClientRect();
               const leaf = shell.getBoundingClientRect();
-              return {headerClear: header.bottom <= summary.top, drawerInside: drawer.left >= leaf.left && drawer.right <= leaf.right, leafWidth: leaf.width};
+              const chromeBottom = Math.max(header.bottom, summary ? summary.bottom : 0);
+              return {headerClear: stage.top >= chromeBottom - 1 && drawer.top >= chromeBottom - 1, drawerInside: drawer.left >= leaf.left && drawer.right <= leaf.right, leafWidth: leaf.width};
             }""")
             assert geometry['headerClear'] and geometry['drawerInside'], geometry
             passed('Native split-pane layout keeps toolbar, summary and drawer within its leaf')
@@ -152,10 +157,11 @@ def main():
             page.get_by_role('complementary', name='Page explorer').locator('.wo-page-row').first.click()
             page.get_by_role('complementary', name='Page Inspector').wait_for()
             if args.media_fixture:
+                page.get_by_role('complementary', name='Page Inspector').get_by_role('tab', name=re.compile('^Links')).click()
                 details = page.get_by_role('complementary', name='Page Inspector').locator('.wo-resource-details')
                 details.locator('summary').click()
                 assert details.evaluate('(element) => element.open')
-                assert details.locator('.wo-link-row').count() == 7
+                assert details.locator('.wo-dr-link').count() == 7
                 page.screenshot(path=str(args.evidence / 'native-inspector-media.png'))
                 passed('Native inspector expands the page media and resource references')
             page.get_by_role('button', name='Open Note', exact=True).click()

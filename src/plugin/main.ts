@@ -10,6 +10,7 @@ import { SiteGlobeView } from './SiteGlobeView';
 import { DoctorModal } from './DoctorModal';
 import { runDoctor } from './doctor';
 import { installEngine } from './engineBundle';
+import { buildComparisonMarkdown, comparisonNotePath } from './compareSites';
 import path from 'node:path';
 
 class QuickCaptureModal extends Modal {
@@ -61,6 +62,41 @@ class QuickCaptureModal extends Modal {
   }
 }
 
+class CompareSitesModal extends Modal {
+  private left = '';
+  private right = '';
+
+  constructor(plugin: Plugin, private sites: string[], private onCompare: (left: string, right: string) => void) {
+    super(plugin.app);
+    this.left = sites[0] ?? '';
+    this.right = sites[1] ?? '';
+  }
+
+  override onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl('h3', { text: 'Compare two captured sites' });
+    const pick = (name: string, value: string, set: (v: string) => void) => new Setting(contentEl).setName(name).addDropdown((drop) => {
+      for (const site of this.sites) drop.addOption(site, site);
+      drop.setValue(value).onChange(set);
+    });
+    pick('First site', this.left, (v) => { this.left = v; });
+    pick('Second site', this.right, (v) => { this.right = v; });
+    new Setting(contentEl).addButton((btn) => btn.setButtonText('Write comparison note').setCta().onClick(() => {
+      if (!this.left || !this.right || this.left === this.right) {
+        new Notice('Choose two different sites.');
+        return;
+      }
+      this.close();
+      this.onCompare(this.left, this.right);
+    }));
+  }
+
+  override onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
 export default class WebObsPlugin extends Plugin {
   settings: WebObsPluginSettings = { ...DEFAULT_WEB_OBS_SETTINGS };
 
@@ -94,6 +130,12 @@ export default class WebObsPlugin extends Plugin {
           await view?.runCrawlFromPlugin({ url });
         }).open();
       },
+    });
+
+    this.addCommand({
+      id: 'compare-sites',
+      name: 'Compare two captured sites',
+      callback: () => { void this.openCompareSites(); },
     });
 
     this.addCommand({
@@ -182,6 +224,33 @@ export default class WebObsPlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+  }
+
+  private async openCompareSites(): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    const sites: string[] = [];
+    if (await adapter.exists('sites')) {
+      for (const folder of (await adapter.list('sites')).folders) {
+        const id = folder.split('/').pop() ?? '';
+        if (id && !id.startsWith('_') && await adapter.exists(`${folder}/_site-graph.json`)) sites.push(id);
+      }
+    }
+    if (sites.length < 2) {
+      new Notice('Capture at least two sites before comparing them.');
+      return;
+    }
+    new CompareSitesModal(this, sites.sort(), async (left, right) => {
+      try {
+        const read = async (id: string) => JSON.parse(await adapter.read(`sites/${id}/_site-graph.json`));
+        const markdown = buildComparisonMarkdown(await read(left), await read(right));
+        const target = comparisonNotePath(left, right);
+        if (!(await adapter.exists('sites/_compare'))) await adapter.mkdir('sites/_compare');
+        await adapter.write(target, markdown);
+        await this.app.workspace.openLinkText(target, '', true);
+      } catch (error) {
+        new Notice(`Comparison failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }).open();
   }
 
   private notifyViewsOfSettings(): void {

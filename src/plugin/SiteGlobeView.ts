@@ -14,6 +14,7 @@ import {
   normalizePath,
 } from 'obsidian';
 import App from '../App';
+import { type ResyncAdapter, resyncVaultFolder } from './vaultResync';
 import {
   type MountedSiteGlobeView,
   WEB_OBS_VIEW_TYPE,
@@ -37,6 +38,10 @@ import { ensurePythonEngineReady } from './pythonRuntime';
 import { WindowVisibilityBinding } from './windowVisibility';
 import { JsonlDecoder } from '../data/jsonl';
 import { isSafeSiteId, parseSiteManifest } from '../data/validateManifest';
+
+/** A logo larger than this is not drawn on the map; real logos are far smaller. */
+const MAX_MAP_ASSET_BYTES = 4 * 1024 * 1024;
+const MAP_ASSET_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'ico', 'avif']);
 
 export interface WebObsPluginBridge {
   manifest: { dir?: string };
@@ -294,6 +299,18 @@ export class SiteGlobeView extends ItemView {
       ? [scriptPath, continuing, '--vault', vaultBase, '--continue-links']
       : [scriptPath, target, '--vault', vaultBase, '--max-pages', String(maxPages), '--render', renderMode, '--image-mode', (options.imageMode ?? this.plugin.settings.imageMode) === 'all' ? 'all' : 'preferred'];
     if (!downloadImages) args.push('--no-images');
+    if (!continuing) {
+      if (!(options.browserAudit ?? this.plugin.settings.browserAudit ?? true)) args.push('--no-browser-audit');
+      if (options.spellCheck ?? this.plugin.settings.spellCheck ?? false) args.push('--spell-check');
+      if (!(options.dnsChecks ?? this.plugin.settings.dnsChecks ?? true)) args.push('--no-dns-checks');
+      if (!(options.pageSnapshots ?? this.plugin.settings.pageSnapshots ?? true)) args.push('--no-snapshots');
+      else args.push('--snapshot-limit', String(Math.max(1, Math.min(500, Math.trunc(options.snapshotLimit ?? this.plugin.settings.snapshotLimit ?? 25)))));
+      if (options.snapshotHtml ?? this.plugin.settings.snapshotHtml ?? false) args.push('--snapshot-html');
+      if (!(options.tlsCheck ?? this.plugin.settings.tlsCheck ?? true)) args.push('--no-tls-check');
+      if (!(options.taskList ?? this.plugin.settings.taskList ?? true)) args.push('--no-tasks');
+      const deadlineSec = options.deadlineSec ?? (this.plugin.settings.captureDeadlineMinutes ?? 0) * 60;
+      if (Number.isFinite(deadlineSec) && deadlineSec > 0) args.push('--deadline', String(Math.max(1, Math.min(86400, Math.round(deadlineSec)))));
+    }
 
     return new Promise((resolve) => {
       let child: ChildProcessWithoutNullStreams;
@@ -390,6 +407,8 @@ export class SiteGlobeView extends ItemView {
           const manifest = await this.loadVaultSiteManifest(completedSiteId);
           if (!isCurrent()) { finish(null); return; }
           if (!manifest) { finish(null, 'Crawler reported completion, but its saved capture could not be validated.'); return; }
+          await this.resyncSiteFolder(completedSiteId);
+          if (!isCurrent()) { finish(null); return; }
           const sites = await this.listVaultSites();
           if (!isCurrent()) { finish(null); return; }
           state.running = false;
@@ -409,6 +428,18 @@ export class SiteGlobeView extends ItemView {
         }
       });
     });
+  }
+
+  /** The capture swaps the site folder in one rename; make Obsidian index what is there now. */
+  private async resyncSiteFolder(siteId: string): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) return;
+    try {
+      const result = await resyncVaultFolder(adapter as unknown as ResyncAdapter, normalizePath(`sites/${siteId}`));
+      if (result.state === 'unsupported') new Notice('Capture saved. If new snapshots or notes do not show yet, reload Obsidian once.');
+    } catch {
+      new Notice('Capture saved. If new snapshots or notes do not show yet, reload Obsidian once.');
+    }
   }
 
   private tryInit(): void {
@@ -436,6 +467,24 @@ export class SiteGlobeView extends ItemView {
       cancelCrawl: () => this.cancelActiveCrawl(true),
       onOpenNote: (vaultRelativePath: string, splitPane?: boolean) => {
         void this.openVaultNote(vaultRelativePath, splitPane);
+      },
+      resolveAssetUrl: (vaultRelativePath: string) => {
+        const safe = sanitizeVaultRelativePath(vaultRelativePath);
+        if (!safe) return null;
+        const file = this.app.vault.getAbstractFileByPath(normalizePath(safe));
+        return file instanceof TFile ? this.app.vault.getResourcePath(file) : null;
+      },
+      readAssetBytes: async (vaultRelativePath: string) => {
+        const safe = sanitizeVaultRelativePath(vaultRelativePath);
+        if (!safe || !safe.startsWith('sites/')) return null;
+        const file = this.app.vault.getAbstractFileByPath(normalizePath(safe));
+        // Images only, so this can never become a way to read notes or capture data.
+        if (!(file instanceof TFile) || !MAP_ASSET_EXTENSIONS.has(file.extension.toLowerCase()) || file.stat.size > MAX_MAP_ASSET_BYTES) return null;
+        try {
+          return await this.app.vault.readBinary(file);
+        } catch {
+          return null;
+        }
       },
       onOpenExternalUrl: (url: string) => {
         const safe = sanitizeExternalHttpUrl(url);
@@ -513,6 +562,16 @@ export class SiteGlobeView extends ItemView {
     const abstractFile = this.app.vault.getAbstractFileByPath(norm);
     if (!(abstractFile instanceof TFile)) {
       new Notice(`Note not found in vault: ${norm}`);
+      return;
+    }
+    // Obsidian has no view for files such as CSV. Hand them to the system's default app.
+    if (!['md', 'canvas', 'base', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'avif', 'pdf'].includes(abstractFile.extension.toLowerCase())) {
+      const app = this.app as unknown as { openWithDefaultApp?: (path: string) => unknown };
+      if (typeof app.openWithDefaultApp === 'function') {
+        void app.openWithDefaultApp(norm);
+      } else {
+        new Notice(`Open ${norm} from your file manager.`);
+      }
       return;
     }
 

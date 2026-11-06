@@ -91,6 +91,10 @@ def build_pages_base_yaml(domain_folder: str, clean_domain: str,
             "note.response_time_ms": {"displayName": "Final request duration (ms)"},
             "note.path": {"displayName": "URL path"},
             "note.health": {"displayName": "Recorded state"},
+            "note.text_ratio": {"displayName": "Text to HTML (%)"},
+            "note.readability": {"displayName": "Flesch reading ease"},
+            "note.findings_count": {"displayName": "Findings"},
+            "note.link_opportunities": {"displayName": "Link opportunities"},
         },
         "views": [
             {"type": "table", "name": "All Site Pages", "filters": page_filter,
@@ -109,6 +113,18 @@ def build_pages_base_yaml(domain_folder: str, clean_domain: str,
              "order": ["file.name", "note.path", "note.kind", "note.authority_score",
                        "note.inlinks_body", "note.outlinks_body"],
              "sort": [{"property": "note.authority_score", "direction": "DESC"}]},
+            {"type": "table", "name": "Content Quality", "filters": page_filter,
+             "order": ["file.name", "note.path", "note.word_count", "note.text_ratio", "note.readability",
+                       "note.duplicate", "note.dom_nodes", "note.findings_count"],
+             "sort": [{"property": "note.findings_count", "direction": "DESC"}]},
+            {"type": "table", "name": "Duplicates", "filters": {"and": [page_filter, "note.duplicate == true"]},
+             "order": ["file.name", "note.path", "note.h1", "note.word_count", "note.content_hash"]},
+            {"type": "table", "name": "Link Opportunities", "filters": {"and": [page_filter, "note.link_opportunities > 0"]},
+             "order": ["file.name", "note.path", "note.link_opportunities", "note.outlinks_body", "note.inlinks_body"],
+             "sort": [{"property": "note.link_opportunities", "direction": "DESC"}]},
+            {"type": "table", "name": "Thin Pages", "filters": {"and": [page_filter, "note.word_count < 200", "note.words_measured != false", 'note.health != "broken"']},
+             "order": ["file.name", "note.path", "note.word_count", "note.text_ratio", "note.inlinks_body"],
+             "sort": [{"property": "note.word_count", "direction": "ASC"}]},
             {"type": "table", "name": "External Domains",
              "filters": 'note.kind == "external-domain"',
              "order": ["file.name", "note.domain", "note.linking_pages_count", "note.unique_urls_count"],
@@ -228,7 +244,8 @@ def _edge_keys(edges: list[dict], nodes: list[dict]) -> set[tuple]:
 def compute_and_write_site_drift(site_root: str, clean_domain: str, captured_iso: str,
                                  prev_manifest: Optional[dict], new_internal_nodes: list[dict],
                                  new_ext_domains: list[str], *, new_edges: Optional[list[dict]] = None,
-                                 capture_status: str = "partial") -> Optional[dict]:
+                                 capture_status: str = "partial", previous_site_root: Optional[str] = None,
+                                 home_url: str = "", security_headers_present: Optional[list[str]] = None) -> Optional[dict]:
     """Compare observations. Absence from a crawl does not establish deletion."""
     if not prev_manifest or not isinstance(prev_manifest.get("nodes"), list):
         return None
@@ -239,7 +256,9 @@ def compute_and_write_site_drift(site_root: str, clean_domain: str, captured_iso
     unobserved = sorted(set(old_pages) - set(current))
     confirmed_missing = sorted(url for url, node in current.items()
                                if url in old_pages and node.get("statusCode") in (404, 410))
-    changes = {"titleChanges": [], "h1Changes": [], "healthChanges": [], "wordDeltas": [], "contentChanges": []}
+    changes = {"titleChanges": [], "h1Changes": [], "healthChanges": [], "wordDeltas": [], "contentChanges": [],
+               "descriptionChanges": [], "canonicalChanges": [], "noindexAdded": [], "noindexRemoved": [],
+               "schemaChanges": [], "issueChanges": []}
     for url in sorted(set(old_pages) & set(current)):
         old, new = old_pages[url], current[url]
         body_observed = isinstance(new.get("statusCode"), int) and 200 <= new["statusCode"] < 300 and new.get("health") != "broken"
@@ -249,10 +268,33 @@ def compute_and_write_site_drift(site_root: str, clean_domain: str, captured_iso
         if (old.get("statusCode"), old.get("health")) != (new.get("statusCode"), new.get("health")):
             changes["healthChanges"].append({"url": url, "oldStatus": old.get("statusCode"), "newStatus": new.get("statusCode")})
         delta = int(new.get("wordCount") or 0) - int(old.get("wordCount") or 0)
-        if body_observed and delta:
+        # No word change where either capture did not measure words (languages written without spaces).
+        measured = all((node.get("pageChecks") or {}).get("wordsMeasured") is not False for node in (old, new))
+        if body_observed and measured and delta:
             changes["wordDeltas"].append({"url": url, "delta": delta})
         if body_observed and old.get("contentHash") and new.get("contentHash") and old["contentHash"] != new["contentHash"]:
             changes["contentChanges"].append({"url": url, "oldHash": old["contentHash"], "newHash": new["contentHash"]})
+        if not body_observed:
+            continue
+        if (old.get("metaDescription") or "") != (new.get("metaDescription") or "") and "metaDescription" in old:
+            changes["descriptionChanges"].append({"url": url, "old": old.get("metaDescription"), "new": new.get("metaDescription")})
+        if (old.get("canonical") or "") != (new.get("canonical") or "") and "canonical" in old:
+            changes["canonicalChanges"].append({"url": url, "old": old.get("canonical"), "new": new.get("canonical")})
+        old_noindex = "noindex" in (old.get("metaRobots") or "").lower()
+        new_noindex = "noindex" in (new.get("metaRobots") or "").lower()
+        if new_noindex and not old_noindex:
+            changes["noindexAdded"].append({"url": url, "old": old.get("metaRobots") or "", "new": new.get("metaRobots")})
+        elif old_noindex and not new_noindex:
+            changes["noindexRemoved"].append({"url": url, "old": old.get("metaRobots"), "new": new.get("metaRobots") or ""})
+        old_schema, new_schema = set(old.get("schemaTypes") or []), set(new.get("schemaTypes") or [])
+        if old_schema != new_schema:
+            changes["schemaChanges"].append({"url": url, "added": sorted(new_schema - old_schema), "removed": sorted(old_schema - new_schema)})
+        # 0.2.0 added many issue types; comparing against an older capture would list them all as new.
+        if isinstance(old.get("seoIssues"), list) and tuple(int(x) for x in re.findall(r"\d+", str(prev_manifest.get("schemaVersion", "0")))[:3]) >= (1, 3, 0):
+            strip = lambda items: {re.sub(r"\s*\(\d+\)$", "", i) for i in items or []}
+            old_issues, new_issues = strip(old.get("seoIssues")), strip(new.get("seoIssues"))
+            if old_issues != new_issues:
+                changes["issueChanges"].append({"url": url, "added": sorted(new_issues - old_issues), "resolved": sorted(old_issues - new_issues)})
     old_external = {node["title"] for node in prev_manifest["nodes"] if isinstance(node, dict) and node.get("kind") == "external-domain" and isinstance(node.get("title"), str)}
     added_external = sorted(set(new_ext_domains) - old_external)
     absent_external = sorted(old_external - set(new_ext_domains))
@@ -272,7 +314,29 @@ def compute_and_write_site_drift(site_root: str, clean_domain: str, captured_iso
               "addedExternalDomainsCount": len(added_external), "removedExternalDomainsCount": 0,
               "addedEdges": added_edges, "unobservedEdges": absent_edges,
               "addedEdgesCount": len(added_edges), "unobservedEdgesCount": len(absent_edges)}
-    result["hasChanges"] = bool(added or confirmed_missing or added_external or added_edges or any(changes.values()))
+    file_changes = []
+    if previous_site_root:
+        import difflib
+        for name in ("_raw/robots.txt", "llms.txt", "llms-full.txt", "security.txt"):
+            old_file, new_file = Path(previous_site_root) / name, Path(site_root) / name
+            if not old_file.is_file() and not new_file.is_file():
+                continue
+            old_lines = old_file.read_text(encoding="utf-8", errors="replace").splitlines() if old_file.is_file() else []
+            new_lines = new_file.read_text(encoding="utf-8", errors="replace").splitlines() if new_file.is_file() else []
+            if old_lines == new_lines:
+                continue
+            diff = list(difflib.unified_diff(old_lines, new_lines, "previous/" + name, "current/" + name, lineterm="", n=1))
+            if diff:
+                file_changes.append({"file": name.removeprefix("_raw/"), "added": sum(1 for d in diff if d.startswith("+") and not d.startswith("+++")),
+                                     "removed": sum(1 for d in diff if d.startswith("-") and not d.startswith("---")), "diff": diff[:120]})
+    header_changes = {}
+    old_headers = (((prev_manifest.get("siteIntel") or {}).get("techStack") or {}).get("securityHeaders") or {}).get("present")
+    if isinstance(old_headers, list) and security_headers_present is not None:
+        header_changes = {"added": sorted(set(security_headers_present) - set(old_headers)),
+                          "removed": sorted(set(old_headers) - set(security_headers_present))}
+    result.update(fileChanges=file_changes, fileChangesCount=len(file_changes), headerChanges=header_changes, homeUrl=home_url)
+    result["hasChanges"] = bool(added or confirmed_missing or added_external or added_edges or any(changes.values())
+                                or file_changes or header_changes.get("added") or header_changes.get("removed"))
     root = Path(site_root)
     _write_json(root / "_drift-report.json", result)
     lines = [f"# Capture Drift: {clean_domain}", "",
@@ -282,6 +346,11 @@ def compute_and_write_site_drift(site_root: str, clean_domain: str, captured_iso
     sections = [("Newly observed pages", added), ("Previously observed pages not visited", unobserved),
                 ("Fetched 404/410 responses", confirmed_missing), *changes.items(),
                 ("Newly observed edges", added_edges), ("Previously observed edges absent from this snapshot", absent_edges)]
+    for row in file_changes:
+        lines.extend([f"## File changed: {row['file']}", "", "```diff", *row["diff"], "```", ""])
+    if header_changes.get("added") or header_changes.get("removed"):
+        lines.extend(["## Homepage security headers", "", f"- Added: {', '.join(header_changes['added']) or 'none'}",
+                      f"- Removed: {', '.join(header_changes['removed']) or 'none'}", ""])
     for name, rows in sections:
         lines.extend([f"## {name}", ""])
         lines.extend("- " + (json.dumps(row, ensure_ascii=False) if not isinstance(row, str) else row) for row in rows)

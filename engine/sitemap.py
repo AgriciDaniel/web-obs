@@ -21,7 +21,8 @@ from urllib.parse import unquote, urljoin, urlparse, urlunparse
 import requests
 from lxml import etree
 
-from url_safety import DEFAULT_REQUEST_HEADERS, URLSafetyError, safe_requests_session, validate_url
+from url_safety import (DEFAULT_REQUEST_HEADERS, RequestDeadlineExceeded, URLSafetyError, apply_robots_pacing,
+                        capture_out_of_time, safe_requests_session, validate_url)
 from site_intel import build_robots_policy, robots_url_decision
 
 COMMON_SITEMAP_PATHS = (
@@ -214,6 +215,8 @@ def _bounded_fetch_bytes(
                     resp.close()
     except URLSafetyError as exc:
         out["error"] = f"URL safety validation failed: {exc}"
+    except RequestDeadlineExceeded as exc:
+        out["error"] = str(exc)
     except requests.exceptions.RequestException as exc:
         out["error"] = f"Request failed: {exc}"
     except (ValueError, OSError) as exc:
@@ -375,7 +378,7 @@ def discover_and_expand_sitemaps(
     result.robots_error = robots_resp["error"]
     result.robots_too_large = robots_resp["too_large"]
     if isinstance(robots_resp["status_code"], int) and 200 <= robots_resp["status_code"] < 300 and not robots_resp["error"] and not robots_resp["too_large"]:
-        text = robots_resp["content"].decode("utf-8", errors="replace")
+        text = robots_resp["content"].decode("utf-8-sig", errors="replace")
         result.robots_text = text
         for line in text.splitlines():
             m = _SITEMAP_LINE.match(line)
@@ -388,6 +391,12 @@ def discover_and_expand_sitemaps(
         result.robots_text, result.robots_status_code, result.robots_error, result.robots_too_large,
     )
     policies = {origin: result.robots_policy}
+    apply_robots_pacing(origin, result.robots_policy)
+    deadline_note = "The capture deadline was reached while reading robots.txt and sitemaps."
+    if capture_out_of_time():
+        # robots.txt was not read in time, so nothing can be said about it or the sitemaps.
+        warn(deadline_note)
+        return result
     if not result.robots_policy["canCrawl"]:
         warn(result.robots_policy["reason"])
 
@@ -400,6 +409,7 @@ def discover_and_expand_sitemaps(
                     fetched["content"].decode("utf-8", errors="replace"),
                     fetched["status_code"], fetched["error"], fetched["too_large"],
                 )
+                apply_robots_pacing(target_origin, policies[target_origin])
                 if fetched["too_large"]:
                     warn(f"Robots response exceeded byte limit: {target_origin}/robots.txt")
             decision = robots_url_decision(policies[target_origin], target)
@@ -424,6 +434,9 @@ def discover_and_expand_sitemaps(
     while idx < len(queue):
         sm_url, source = queue[idx]
         idx += 1
+        if capture_out_of_time():
+            warn(deadline_note)
+            break
         if sm_url in visited_sitemaps:
             continue
         visited_sitemaps.add(sm_url)
@@ -460,6 +473,7 @@ def discover_and_expand_sitemaps(
                 "kind": kind,
                 "url_count": len(entries),
                 "child_count": len(children),
+                "bytes": len(fetched["content"] or b""),
             }
         )
 
