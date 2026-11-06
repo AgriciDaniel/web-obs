@@ -126,6 +126,19 @@ def _words(n: dict) -> int:
     return n.get("wordCount") or 0
 
 
+# Characters of visible text that stand in for a word gate where words are not measured. A heuristic, not a
+# sourced rule: about two characters per word in Chinese or Japanese, so 60 matches the 30 word gate below.
+EXACT_DUPLICATE_MIN_CHARS = 60
+
+
+def _enough_text(n: dict, words: int, chars: int) -> bool:
+    """Enough text to judge: the word count, or visible characters where words are not measured."""
+    checks = n.get("pageChecks") or {}
+    if checks.get("wordsMeasured") is False:
+        return (checks.get("textChars") or 0) >= chars
+    return (n.get("wordCount") or 0) >= words
+
+
 def find_duplicates(nodes: list[dict]) -> dict:
     # Pages that canonicalize elsewhere already name their preferred URL; the conflict checks cover them.
     ok = [n for n in nodes if _page_ok(n) and not _noindex(n) and _self_canonical(n)]
@@ -143,7 +156,7 @@ def find_duplicates(nodes: list[dict]) -> dict:
 
     exact = defaultdict(list)
     for n in ok:
-        if n.get("contentHash") and _words(n) >= 30:
+        if n.get("contentHash") and _enough_text(n, 30, EXACT_DUPLICATE_MIN_CHARS):
             exact[n["contentHash"]].append(n["url"])
     exact_groups = [sorted(urls) for urls in exact.values() if len(urls) > 1]
     exact_members = {u for g in exact_groups for u in g}

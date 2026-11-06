@@ -19,6 +19,7 @@ import json
 import multiprocessing.process
 import os
 from pathlib import Path
+import re
 import shutil
 import ssl
 import subprocess
@@ -181,11 +182,24 @@ def browser_problem():
             driver.chromium.launch(headless=True, executable_path=resolved["executablePath"], timeout=30000).close()
         return None
     except Exception as exc:  # the caller decides whether a browser that does not start fails the suite
-        noise = ("temporary directories cleanup", "gracefully close", "Call log", "launching", "<launched>")
-        lines = [line.strip() for line in str(exc).splitlines()
-                 if line.strip() and not line.strip().startswith("=") and not any(n in line for n in noise)]
-        # Playwright appends the browser's own log; its last lines name the real cause (a signal, a missing library).
-        return f"Chromium did not start ({type(exc).__name__}): " + " | ".join(lines[-4:])[:500]
+        return f"Chromium did not start ({type(exc).__name__}): " + chromium_reason(str(exc))
+
+
+def chromium_reason(log: str) -> str:
+    """The lines of Playwright's launch log a member can act on.
+
+    Chromium's own FATAL or ERROR line ("Socket path too long", "error while loading shared libraries") comes
+    first, then the last lines (the exit signal). Playwright's bookkeeping lines are left out.
+    """
+    noise = ("temporary directories cleanup", "gracefully close", "Call log", "launching", "<launched>")
+    lines = []
+    for raw in log.splitlines():
+        line = raw.strip().removeprefix("- ").strip()  # the call log repeats browser lines with a "- " prefix
+        if line and not line.startswith("=") and not any(n in line for n in noise) and line not in lines:
+            lines.append(line)
+    causes = [line for line in lines if re.search(r"FATAL|ERROR|error while loading", line)]
+    tail = [line for line in lines[-2:] if line not in causes]
+    return " | ".join(line[:300] for line in causes[:2] + tail)
 
 
 def make_test_ca(folder: Path):
@@ -334,6 +348,29 @@ class ManifestSwitches(unittest.TestCase):
         self.assertIn("invalid task counts", verdicts["negative count"])
         self.assertIn("invalid task counts", verdicts["text count"])
         self.assertIn("invalid audit tasks", verdicts["tasks list"])
+
+
+class ChromiumReason(unittest.TestCase):
+    def test_chromiums_own_error_line_comes_first(self):
+        log = """BrowserType.launch: Target page, context or browser has been closed
+Browser logs:
+<launching> /opt/chromium/chrome --headless
+<launched> pid=7
+[pid=7][err] [1106/064040.1:FATAL:chrome/browser/process_singleton_posix.cc:315] Socket path too long: /tmp/x/SingletonSocket
+[pid=7][err] #0 0x55 base::debug::CollectStackTrace()
+[pid=7][err] [end of stack trace]
+[pid=7] <kill>
+[pid=7] <will force kill>
+[pid=7] <process did exit: exitCode=null, signal=SIGABRT>
+[pid=7] starting temporary directories cleanup
+Call log:
+  - <launching> /opt/chromium/chrome"""
+        reason = chromium_reason(log)
+        self.assertTrue(reason.startswith("[pid=7][err] [1106/064040.1:FATAL"), reason)
+        self.assertIn("Socket path too long", reason)
+        self.assertIn("signal=SIGABRT", reason)
+        self.assertNotIn("temporary directories cleanup", reason)
+        self.assertIn("signal=SIGABRT", chromium_reason("[pid=7] <kill>\n[pid=7] <process did exit: exitCode=null, signal=SIGABRT>"))
 
 
 if __name__ == "__main__":

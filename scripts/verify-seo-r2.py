@@ -222,9 +222,10 @@ class UnspacedLanguageNotes(unittest.TestCase):
         self.assertIs(home["pageChecks"]["wordsMeasured"], False)
 
 
-def audit_node(url, measured, **extra):
+def audit_node(url, measured, chars=1320, **extra):
     node = {"url": url, "statusCode": 200, "health": "ok", "wordCount": 400, "contentHash": "same", "simhash": 12345,
-            "outlinksTotal": 1, "outlinksBody": 0, "inlinksTotal": 2, "pageChecks": {"wordsMeasured": measured}}
+            "outlinksTotal": 1, "outlinksBody": 0, "inlinksTotal": 2,
+            "pageChecks": {"wordsMeasured": measured, "textChars": chars}}
     node.update(extra)
     return node
 
@@ -236,11 +237,16 @@ class UnmeasuredWordsInAudits(unittest.TestCase):
         zh = [audit_node("https://x.test/zh-a", False), audit_node("https://x.test/zh-b", False)]
         en = [audit_node("https://x.test/en-a", True, contentHash="en", simhash=999),
               audit_node("https://x.test/en-b", True, contentHash="en", simhash=999)]
-        duplicates = str(site_audit.find_duplicates(zh + en))
-        self.assertIn("en-a", duplicates)
-        self.assertNotIn("zh-a", duplicates)
-        weak = site_audit.weak_pages(zh + en, {}, "https://x.test/")
+        tiny = [audit_node("https://x.test/zh-tiny-a", False, chars=20, contentHash="tiny", simhash=7),
+                audit_node("https://x.test/zh-tiny-b", False, chars=20, contentHash="tiny", simhash=7)]
+        found = site_audit.find_duplicates(zh + en + tiny)
+        exact = str(found.get("exactContent"))
+        self.assertIn("en-a", exact, "measured twins are unchanged")
+        self.assertIn("zh-a", exact, "identical Chinese pages are exact duplicates, judged by visible characters")
+        self.assertNotIn("zh-tiny", str(found), "near-empty identical pages are not")
+        weak = site_audit.weak_pages(zh + en + [audit_node("https://x.test/zh-end", False, outlinksTotal=0)], {}, "https://x.test/")
         self.assertEqual(weak["noBodyOutlinks"], ["https://x.test/en-a", "https://x.test/en-b"])
+        self.assertIn("https://x.test/zh-end", weak["deadEnds"], "the dead-end check has no word gate")
 
     def test_no_word_change_between_captures(self):
         prev = {"schemaVersion": "1.3.0", "capturedAt": "2026-11-01T00:00:00Z", "captureStatus": "complete",
