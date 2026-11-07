@@ -51,6 +51,21 @@ check('a densely linked site keeps the cluster layout bounded', () => {
   assert.ok(max < 200, `the layout stays compact (widest coordinate ${max.toFixed(1)})`);
 });
 
+check('pages that link only to a busy home page stay as close as before', () => {
+  // A star: the home page has 50 links, each page has one. Before the stability fix the pages sat at a
+  // radius of about 7.3; damping the home page's links for both ends pushed them out past 10.
+  const nodes = [node('home', 'home', 0)];
+  const edges = [];
+  for (let i = 0; i < 50; i++) {
+    nodes.push(node(`p${i}`, 'page', i + 1));
+    edges.push({ id: `h${i}`, source: 'home', target: `p${i}`, kind: 'internal-body' });
+  }
+  const clusters = computeSiteLayouts({ domain: 'example.test', nodes, edges }).clusters;
+  const radii = nodes.slice(1).map((page) => Math.hypot(...clusters.get(page.id))).sort((a, b) => a - b);
+  const median = radii[radii.length >> 1];
+  assert.ok(median < 8.5, `pages keep their pull toward home (median radius ${median.toFixed(2)})`);
+});
+
 check('the cluster layout is deterministic', () => {
   const site = linkedSite(120, 5);
   const a = computeSiteLayouts(site).clusters;
