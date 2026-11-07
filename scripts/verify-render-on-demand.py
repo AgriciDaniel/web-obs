@@ -75,15 +75,22 @@ def main():
                 page.wait_for_timeout(ms)
                 return page.evaluate('() => ({ ...window.__p })')
 
-            def quiet(key, what, limit=30):
-                """Wait for a full second with no new count. A slow runner may still be placing labels at first;
-                a map that keeps measuring or drawing never goes quiet, and fails here."""
+            def quiet(key, what, limit=30, stable=1):
+                """Wait for `stable` full seconds in a row with no new count. A slow runner may still be placing labels at
+                first; a map that keeps measuring or drawing never goes quiet, and fails here."""
+                calm = 0
                 for _ in range(limit):
                     if counters(1000)[key] == 0:
-                        return
+                        calm += 1
+                        if calm >= stable:
+                            return
+                    else:
+                        calm = 0
                 raise AssertionError(f'{what} for {limit} s: {counters(1000)}')
 
-            quiet('dim', 'label sizes were still being read')
+            # Labels are bound from a pool as nodes settle, and a slow runner can stall for a second between two bursts of
+            # measuring, so one quiet second is not proof that the map has settled. Three in a row is.
+            quiet('dim', 'label sizes were still being read', stable=3)
 
             def pills():
                 return page.evaluate("() => [...document.querySelectorAll('.wo-node-pill')].filter(p => !p.classList.contains('is-hidden')).length")
