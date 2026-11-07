@@ -6,6 +6,7 @@ not native Obsidian and not a GPU measurement.
 """
 import json
 from pathlib import Path
+import shutil
 import socket
 import subprocess
 import sys
@@ -39,10 +40,12 @@ def free_port():
 def main():
     port = free_port()
     # The project's own Vite, never npx: npx may resolve or download a package through the npm cache.
-    vite = ROOT / 'node_modules' / '.bin' / 'vite'
-    if not vite.exists():
-        raise SystemExit(f'Vite is not installed at {vite}. Run npm ci first.')
-    server = subprocess.Popen([str(vite), '--host', '127.0.0.1', '--port', str(port), '--strictPort'], cwd=ROOT,
+    # Node runs Vite's own script: node_modules/.bin/vite is a shell script that Windows cannot start.
+    vite = ROOT / 'node_modules' / 'vite' / 'bin' / 'vite.js'
+    node = shutil.which('node')
+    if not vite.exists() or not node:
+        raise SystemExit(f'Node and Vite are needed ({vite}). Run npm ci first.')
+    server = subprocess.Popen([node, str(vite), '--host', '127.0.0.1', '--port', str(port), '--strictPort'], cwd=ROOT,
                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         for _ in range(60):
