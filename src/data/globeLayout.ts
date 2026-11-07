@@ -1,4 +1,5 @@
 import type { SiteEdge, SiteGraphManifest, SiteNode } from '../types/site';
+import { shortPillLabel } from './pillLabel';
 
 export const GLOBE_HUB_RADIUS = 3.05;
 export const GLOBE_SURFACE_RADIUS = 5.35;
@@ -327,16 +328,6 @@ export function computeSiteLayouts(manifest: SiteGraphManifest): ComputedSiteLay
   return { sectors, roadColumns, roadMetrics, globe, road, clusters };
 }
 
-/** Characters a pill label is shown with (mirrors the 28 character cut-off used for node labels). */
-const ROAD_LABEL_MAX_CHARS = 28;
-
-function roadLabelChars(node: SiteNode): number {
-  if (node.kind === 'home') return 14;
-  const title = node.title.split('|')[0].split(' - ')[0].trim();
-  const text = title.length > 0 && title.length <= ROAD_LABEL_MAX_CHARS ? title : (node.path || '/');
-  return Math.min(ROAD_LABEL_MAX_CHARS, text.length);
-}
-
 /**
  * Derives Road spacing from the nodes actually present, so it scales with the site:
  * - sub-column width follows the longer labels (90th percentile), so labels fit without a wasted gutter;
@@ -345,7 +336,7 @@ function roadLabelChars(node: SiteNode): number {
  */
 export function computeRoadMetrics(nodes: readonly SiteNode[]): RoadMetrics {
   if (!nodes.length) return DEFAULT_ROAD_METRICS;
-  const lengths = nodes.map(roadLabelChars).sort((a, b) => a - b);
+  const lengths = nodes.map((node) => shortPillLabel(node).length).sort((a, b) => a - b);
   const labelChars = lengths[Math.min(lengths.length - 1, Math.floor(lengths.length * 0.9))];
   const subColumnWidth = Math.min(5.6, Math.max(2.6, labelChars * 0.17 + 0.9));
   const rowStep = Math.min(1.3, Math.max(0.7, 1.25 - 0.1 * Math.log2(Math.max(nodes.length, 8) / 8)));

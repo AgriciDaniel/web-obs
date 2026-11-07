@@ -13,6 +13,7 @@ import {
   type ComputedSiteLayouts,
 } from '../data/globeLayout';
 import { attentionNodeIds, restingLabelIds } from '../data/mapAttention';
+import { shortPillLabel } from '../data/pillLabel';
 import { type BrandMark, pickBrandMark } from '../data/brandMark';
 import { type LogoTone, MIN_LOGO_COVERAGE, analyseLogo, badgeColors, decodeLogo, drawBrandBadge } from './brandBadge';
 import type {
@@ -235,25 +236,6 @@ export function fitCameraToPoints(points: readonly THREE.Vector3[], direction: T
   let radius = 0;
   for (const p of points) radius = Math.max(radius, p.distanceTo(center));
   return { lookTarget: center, camTarget: center.clone().addScaledVector(d, distance), distance, radius };
-}
-
-function shortPillLabel(node: SiteNode, domain?: string): string {
-  if (node.kind === 'home') {
-    const cleanDomain = (
-      domain ||
-      node.url.replace(/^https?:\/\//i, '').replace(/\/.*$/, '') ||
-      'site'
-    ).trim();
-    return cleanDomain;
-  }
-  if (node.kind === 'external-domain') return node.title;
-  const cleanTitle = node.title.split('|')[0].split(' - ')[0].trim();
-  if (cleanTitle.length > 0 && cleanTitle.length <= 28) return cleanTitle;
-  const p = node.path || '/';
-  if (p.length <= 28) return p;
-  const parts = p.split('/').filter(Boolean);
-  const last = parts[parts.length - 1] ?? p;
-  return `/${last.slice(0, 24)}`;
 }
 
 export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
