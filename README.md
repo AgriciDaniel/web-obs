@@ -87,6 +87,10 @@ Stuck? Run **Web-Obs: Run diagnostics** from the command palette. It checks your
 - [Changelog](CHANGELOG.md)
 - [Contributing](CONTRIBUTING.md) and [Security](SECURITY.md)
 
+## Contributors
+
+Thanks to everyone who has improved Web-Obs, including [gcollins808](https://github.com/gcollins808) for the Clusters and Road view fixes. The full list is on the [contributors page](https://github.com/AgriciDaniel/web-obs/graphs/contributors).
+
 ## License
 
 [MIT](LICENSE). Made by [Daniel Agrici](https://agricidaniel.com).

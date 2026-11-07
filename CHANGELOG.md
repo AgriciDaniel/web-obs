@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **Clusters no longer fly apart on densely linked sites.** On a site where pages carry dozens of links, the Clusters layout could push pages out without limit. Each link's pull is now shared out by how many links a page has, so busy pages stay steady while small sites lay out exactly as before. Thanks to [gcollins808](https://github.com/gcollins808).
+- **The Road view scales to the site, and Road and Clusters zoom out fully.** Road spacing follows the number of pages and the length of their labels, and the camera can now pull back far enough to show a large site whole. Thanks to [gcollins808](https://github.com/gcollins808).
+
 ## 0.2.2 - 2026-11-07
 
 Safer page reading, cleaner logos in notes, and a proper cancel on Windows.
