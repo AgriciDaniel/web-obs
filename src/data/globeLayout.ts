@@ -42,6 +42,11 @@ export interface ComputedSiteLayouts {
   globe: Map<string, [number, number, number]>;
   road: Map<string, [number, number, number]>;
   clusters: Map<string, [number, number, number]>;
+  /**
+   * Starts computing `clusters` in small time slices, so opening the Clusters view is instant on large sites.
+   * Returns a function that cancels it. Reading `clusters` early finishes the remaining work at once.
+   */
+  prefetchClusters?: (sliceMs?: number, gapMs?: number) => () => void;
 }
 
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
@@ -72,7 +77,6 @@ function sphericalToWorld(
 export function computeSiteLayouts(manifest: SiteGraphManifest): ComputedSiteLayouts {
   const globe = new Map<string, [number, number, number]>();
   const road = new Map<string, [number, number, number]>();
-  const clusters = new Map<string, [number, number, number]>();
 
   const nodes = manifest.nodes;
   const edges = manifest.edges;
@@ -241,101 +245,203 @@ export function computeSiteLayouts(manifest: SiteGraphManifest): ComputedSiteLay
   const { columns: roadColumns, metrics: roadMetrics } = layoutRoad(nodes, homeNode, road);
 
   // 3. 3D LINK CLUSTERS (Deterministic 3D Force Relaxation seeded from Globe)
-  const pos = new Map<string, [number, number, number]>();
-  for (const n of nodes) {
-    const g = globe.get(n.id) ?? [0, 0, 0];
-    pos.set(n.id, [g[0] * 0.85, g[1] * 0.85, g[2] * 0.85]);
-  }
-
-  const activeEdges: SiteEdge[] = edges.filter((e) => e.kind !== 'internal-chrome');
-  const idList = nodes.map((n) => n.id);
-  const vel = new Map<string, [number, number, number]>();
-  for (const id of idList) vel.set(id, [0, 0, 0]);
-
-  // Each end of a link moves by the spring divided by that end's own link count (above 8), so a
-  // hub with hundreds of links cannot overshoot and drive the relaxation unstable, while a page
-  // with few links keeps its full pull toward the hub.
-  const degree = new Map<string, number>();
-  for (const e of activeEdges) {
-    degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
-    degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
-  }
-  const iterations = Math.min(90, Math.max(40, Math.round(1400 / Math.max(12, nodes.length))));
-  for (let iter = 0; iter < iterations; iter++) {
-    const alpha = 1 - iter / iterations;
-    // Repulsion
-    for (let i = 0; i < idList.length; i++) {
-      const pA = pos.get(idList[i])!;
-      const vA = vel.get(idList[i])!;
-      for (let j = i + 1; j < idList.length; j++) {
-        const pB = pos.get(idList[j])!;
-        const vB = vel.get(idList[j])!;
-        const dx = pA[0] - pB[0];
-        const dy = pA[1] - pB[1];
-        const dz = pA[2] - pB[2];
-        const dSq = Math.max(0.25, dx * dx + dy * dy + dz * dz);
-        const f = (0.52 * alpha) / dSq;
-        const dist = Math.sqrt(dSq);
-        const fx = (dx / dist) * f;
-        const fy = (dy / dist) * f;
-        const fz = (dz / dist) * f;
-        vA[0] += fx;
-        vA[1] += fy;
-        vA[2] += fz;
-        vB[0] -= fx;
-        vB[1] -= fy;
-        vB[2] -= fz;
+  // The force simulation is O(N^2) per iteration, so it is not run on load. It runs on first use, or earlier in
+  // small time slices when the caller asks for a prefetch while the page is idle.
+  let relaxation: ClusterRelaxation | null = null;
+  let clustersCache: Map<string, [number, number, number]> | null = null;
+  const relaxer = () => (relaxation ??= new ClusterRelaxation(nodes, edges, homeNode, globe));
+  return {
+    sectors,
+    roadColumns,
+    roadMetrics,
+    globe,
+    road,
+    get clusters() {
+      if (!clustersCache) {
+        const job = relaxer();
+        job.step(Infinity); // finishes whatever a prefetch has not done yet
+        clustersCache = job.result();
       }
-    }
+      return clustersCache;
+    },
+    prefetchClusters(sliceMs = 4, gapMs = 12) {
+      if (clustersCache || nodes.length < PREFETCH_MIN_NODES) return () => {};
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const tick = () => {
+        timer = undefined;
+        if (clustersCache) return;
+        const job = relaxer();
+        if (job.step(sliceMs)) {
+          clustersCache = job.result();
+          return;
+        }
+        timer = setTimeout(tick, gapMs);
+      };
+      timer = setTimeout(tick, 300);
+      return () => {
+        if (timer !== undefined) clearTimeout(timer);
+      };
+    },
+  };
+}
 
-    // Spring attraction
+/** Below this many nodes the relaxation takes a few tens of milliseconds, so it is simply run on first use. */
+const PREFETCH_MIN_NODES = 300;
+
+/**
+ * Deterministic 3D force relaxation seeded from the globe layout, as a job that can run in slices.
+ * Flat typed arrays and index loops: the pairwise repulsion runs N^2/2 times per iteration, and string-keyed Map
+ * lookups in that loop dominated the cost. The repulsion computes `(dx / dist) * (k / dSq)` as
+ * `dx * (k / (dSq * dist))`, one division per pair instead of four; coordinates differ from the older form only
+ * at floating-point rounding (about 1e-10 % of the layout radius).
+ */
+export class ClusterRelaxation {
+  private readonly n: number;
+  private readonly px: Float64Array;
+  private readonly py: Float64Array;
+  private readonly pz: Float64Array;
+  private readonly vx: Float64Array;
+  private readonly vy: Float64Array;
+  private readonly vz: Float64Array;
+  private readonly homeIndex: number;
+  private readonly es: number[] = [];
+  private readonly et: number[] = [];
+  private readonly eideal: number[] = [];
+  private readonly eshareS: number[] = [];
+  private readonly eshareT: number[] = [];
+  private readonly iterations: number;
+  private iter = 0;
+  /** Next row of the repulsion pass to compute, when a slice ended part-way through an iteration. */
+  private row = 0;
+
+  private readonly nodes: readonly SiteNode[];
+
+  constructor(
+    nodes: readonly SiteNode[],
+    edges: readonly SiteEdge[],
+    homeNode: SiteNode | undefined,
+    globe: ReadonlyMap<string, [number, number, number]>
+  ) {
+    this.nodes = nodes;
+    const n = (this.n = nodes.length);
+    this.px = new Float64Array(n); this.py = new Float64Array(n); this.pz = new Float64Array(n);
+    this.vx = new Float64Array(n); this.vy = new Float64Array(n); this.vz = new Float64Array(n);
+    const indexById = new Map<string, number>();
+    let homeIndex = -1;
+    for (let i = 0; i < n; i++) {
+      const g = globe.get(nodes[i].id) ?? [0, 0, 0];
+      this.px[i] = g[0] * 0.85; this.py[i] = g[1] * 0.85; this.pz[i] = g[2] * 0.85;
+      indexById.set(nodes[i].id, i);
+      if (homeNode && nodes[i].id === homeNode.id) homeIndex = i;
+    }
+    this.homeIndex = homeIndex;
+
+    // Each end of a link moves by the spring divided by that end's own link count (above 8), so a
+    // hub with hundreds of links cannot overshoot and drive the relaxation unstable, while a page
+    // with few links keeps its full pull toward the hub.
+    const activeEdges = edges.filter((e) => e.kind !== 'internal-chrome');
+    const degree = new Int32Array(n);
     for (const e of activeEdges) {
-      const pS = pos.get(e.source);
-      const pT = pos.get(e.target);
-      if (!pS || !pT) continue;
-      const vS = vel.get(e.source)!;
-      const vT = vel.get(e.target)!;
-      const ideal = e.kind === 'external' ? 5.6 : e.kind === 'sitemap-hierarchy' ? 3.2 : 3.8;
-      const dx = pT[0] - pS[0];
-      const dy = pT[1] - pS[1];
-      const dz = pT[2] - pS[2];
-      const dist = Math.max(0.1, Math.hypot(dx, dy, dz));
-      const pull = (dist - ideal) * 0.045 * alpha;
-      const fx = (dx / dist) * pull;
-      const fy = (dy / dist) * pull;
-      const fz = (dz / dist) * pull;
-      const shareS = Math.min(1, 8 / (degree.get(e.source) ?? 1));
-      const shareT = Math.min(1, 8 / (degree.get(e.target) ?? 1));
-      vS[0] += fx * shareS;
-      vS[1] += fy * shareS;
-      vS[2] += fz * shareS;
-      vT[0] -= fx * shareT;
-      vT[1] -= fy * shareT;
-      vT[2] -= fz * shareT;
+      const s = indexById.get(e.source), t = indexById.get(e.target);
+      if (s !== undefined) degree[s]++;
+      if (t !== undefined) degree[t]++;
     }
+    // Edges whose ends are both known, as parallel arrays: source, target, ideal length, and each end's share of the spring.
+    for (const e of activeEdges) {
+      const s = indexById.get(e.source), t = indexById.get(e.target);
+      if (s === undefined || t === undefined) continue;
+      this.es.push(s); this.et.push(t);
+      this.eideal.push(e.kind === 'external' ? 5.6 : e.kind === 'sitemap-hierarchy' ? 3.2 : 3.8);
+      this.eshareS.push(Math.min(1, 8 / degree[s]));
+      this.eshareT.push(Math.min(1, 8 / degree[t]));
+    }
+    this.iterations = Math.min(90, Math.max(40, Math.round(1400 / Math.max(12, n))));
+  }
 
-    // Centering + integrate
-    for (const n of nodes) {
-      if (homeNode && n.id === homeNode.id) {
-        pos.set(n.id, [0, 0, 0]);
-        continue;
+  /**
+   * Advances the simulation until `budgetMs` has elapsed (checked every 16 rows of the repulsion pass), or to the
+   * end when the budget is Infinity. Returns true once every iteration is done.
+   */
+  step(budgetMs: number): boolean {
+    const deadline = budgetMs === Infinity ? Infinity : performance.now() + budgetMs;
+    const { n, px, py, pz, vx, vy, vz, es, et, eideal, eshareS, eshareT, homeIndex, iterations } = this;
+    const edgeCount = es.length;
+    while (this.iter < iterations) {
+      const alpha = 1 - this.iter / iterations;
+      const k = 0.52 * alpha;
+      // Repulsion
+      for (let i = this.row; i < n; i++) {
+        const ax = px[i], ay = py[i], az = pz[i];
+        let vax = vx[i], vay = vy[i], vaz = vz[i];
+        for (let j = i + 1; j < n; j++) {
+          const dx = ax - px[j];
+          const dy = ay - py[j];
+          const dz = az - pz[j];
+          const dSq = Math.max(0.25, dx * dx + dy * dy + dz * dz);
+          const s = k / (dSq * Math.sqrt(dSq));
+          const fx = dx * s;
+          const fy = dy * s;
+          const fz = dz * s;
+          vax += fx; vay += fy; vaz += fz;
+          vx[j] -= fx; vy[j] -= fy; vz[j] -= fz;
+        }
+        vx[i] = vax; vy[i] = vay; vz[i] = vaz;
+        if (deadline !== Infinity && (i & 15) === 15 && performance.now() >= deadline) {
+          this.row = i + 1;
+          return false;
+        }
       }
-      const p = pos.get(n.id)!;
-      const v = vel.get(n.id)!;
-      p[0] = (p[0] + v[0]) * 0.995;
-      p[1] = (p[1] + v[1]) * 0.995;
-      p[2] = (p[2] + v[2]) * 0.995;
-      v[0] *= 0.6;
-      v[1] *= 0.6;
-      v[2] *= 0.6;
+      this.row = 0;
+
+      // Spring attraction
+      for (let e = 0; e < edgeCount; e++) {
+        const s = es[e], t = et[e];
+        const dx = px[t] - px[s];
+        const dy = py[t] - py[s];
+        const dz = pz[t] - pz[s];
+        const dist = Math.max(0.1, Math.hypot(dx, dy, dz));
+        const pull = (dist - eideal[e]) * 0.045 * alpha;
+        const fx = (dx / dist) * pull;
+        const fy = (dy / dist) * pull;
+        const fz = (dz / dist) * pull;
+        const shareS = eshareS[e], shareT = eshareT[e];
+        vx[s] += fx * shareS; vy[s] += fy * shareS; vz[s] += fz * shareS;
+        vx[t] -= fx * shareT; vy[t] -= fy * shareT; vz[t] -= fz * shareT;
+      }
+
+      // Centering + integrate
+      for (let i = 0; i < n; i++) {
+        if (i === homeIndex) {
+          px[i] = 0; py[i] = 0; pz[i] = 0;
+          continue;
+        }
+        px[i] = (px[i] + vx[i]) * 0.995;
+        py[i] = (py[i] + vy[i]) * 0.995;
+        pz[i] = (pz[i] + vz[i]) * 0.995;
+        vx[i] *= 0.6; vy[i] *= 0.6; vz[i] *= 0.6;
+      }
+      this.iter++;
     }
+    return true;
   }
 
-  for (const n of nodes) {
-    clusters.set(n.id, pos.get(n.id) ?? [0, 0, 0]);
+  result(): Map<string, [number, number, number]> {
+    const clusters = new Map<string, [number, number, number]>();
+    for (let i = 0; i < this.n; i++) clusters.set(this.nodes[i].id, [this.px[i], this.py[i], this.pz[i]]);
+    return clusters;
   }
+}
 
-  return { sectors, roadColumns, roadMetrics, globe, road, clusters };
+/** Runs the whole relaxation at once. */
+export function relaxClusters(
+  nodes: readonly SiteNode[],
+  edges: readonly SiteEdge[],
+  homeNode: SiteNode | undefined,
+  globe: ReadonlyMap<string, [number, number, number]>
+): Map<string, [number, number, number]> {
+  const job = new ClusterRelaxation(nodes, edges, homeNode, globe);
+  job.step(Infinity);
+  return job.result();
 }
 
 /**
