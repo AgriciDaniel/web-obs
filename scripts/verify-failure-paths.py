@@ -267,5 +267,53 @@ class PromotionWithoutSignalMask(unittest.TestCase):
         self.assertIs(signal.getsignal(signal.SIGINT), signal.default_int_handler)
 
 
+class PolledPipe(unittest.TestCase):
+    """On Windows the reader polls its pipe and reads only bytes already waiting."""
+
+    def setUp(self):
+        sys.path.insert(0, str(ROOT / 'engine'))
+        import cancel_channel
+        self.channel = cancel_channel
+        cancel_channel._finished.clear()
+
+    def poll(self, chunks):
+        """Feed the chunks one per peek; None means nothing is waiting yet, and the end closes the pipe."""
+        chunks, reads = list(chunks), []
+
+        def peek():
+            while chunks and chunks[0] is None:
+                chunks.pop(0)
+                return 0
+            if not chunks:
+                raise BrokenPipeError
+            return len(chunks[0])
+
+        def read(size):
+            reads.append(size)
+            return chunks.pop(0)
+
+        self.channel._poll_pipe(peek, read, interval=0.01)
+        return chunks, reads
+
+    def test_a_cancel_line_split_across_reads_stops_the_reader(self):
+        left, reads = self.poll([None, b'can', None, b'cel\n', b'never read'])
+        self.assertEqual(left, [b'never read'])
+        self.assertEqual(reads, [3, 4])
+
+    def test_other_lines_are_ignored_until_the_pipe_closes(self):
+        left, _ = self.poll([b'hello\n', b'cancelled\n', None])
+        self.assertEqual(left, [])
+
+    def test_the_end_of_the_capture_stops_an_idle_reader(self):
+        threading.Timer(0.05, self.channel.finish).start()
+        started = time.perf_counter()
+        self.channel._poll_pipe(lambda: 0, lambda size: self.fail('nothing was waiting'), interval=0.01)
+        self.assertLess(time.perf_counter() - started, 5)
+
+    def test_other_systems_read_the_stream_directly(self):
+        if os.name != 'nt':
+            self.assertIsNone(self.channel._windows_pipe(sys.stdin))
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=1)

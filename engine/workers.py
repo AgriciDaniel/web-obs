@@ -220,7 +220,7 @@ def _stop_owned(process, known=None):
         if os.name == 'nt':
             import subprocess
             subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
-                           capture_output=True, timeout=3, check=False)
+                           stdin=subprocess.DEVNULL, capture_output=True, timeout=3, check=False)
         else:
             # Browser launchers can create their own process group. Kill each
             # verified owned group as well as individual descendants.

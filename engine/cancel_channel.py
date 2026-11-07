@@ -39,13 +39,64 @@ def _wait(stream) -> None:
         # A thread that does not block them would take them and run the handler mid-swap.
         signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGINT, signal.SIGTERM})
     try:
-        for line in stream:
-            if line.strip() == 'cancel':
-                break
+        pipe = _windows_pipe(stream)
+        if pipe:
+            _poll_pipe(*pipe)
+        else:
+            for line in stream:
+                if line.strip() == 'cancel':
+                    break
     except (OSError, ValueError):
         pass
     if not _finished.is_set():
         _interrupt()
+
+
+def _windows_pipe(stream):
+    """Peek and read functions for a Windows pipe, or None for anything else.
+
+    On Windows a read that waits on a pipe holds up other calls on the same handle, and Python
+    passes standard input to every child process it starts. Waiting in a read froze the engine
+    there, so a pipe is polled instead and read only when bytes are waiting.
+    """
+    if os.name != 'nt':
+        return None
+    try:
+        import _winapi
+        import msvcrt
+        fd = stream.fileno()
+        handle = msvcrt.get_osfhandle(fd)
+        _winapi.PeekNamedPipe(handle, 0)
+    except BrokenPipeError:
+        return (lambda: _raise_eof(), lambda size: b'')
+    except (AttributeError, ImportError, OSError, ValueError):
+        return None  # a file or a console, not a pipe
+    return (lambda: _winapi.PeekNamedPipe(handle, 0)[0], lambda size: os.read(fd, size))
+
+
+def _raise_eof():
+    raise BrokenPipeError
+
+
+def _poll_pipe(peek, read, interval: float = 0.2) -> None:
+    """Return once a "cancel" line arrives, the writer closes the pipe, or the capture ends."""
+    pending = b''
+    while not _finished.is_set():
+        try:
+            waiting = peek()
+        except BrokenPipeError:
+            return
+        if not waiting:
+            _finished.wait(interval)
+            continue
+        data = read(waiting)
+        if not data:
+            return
+        pending += data
+        while b'\n' in pending:
+            line, pending = pending.split(b'\n', 1)
+            if line.strip() == b'cancel':
+                return
 
 
 def _interrupt() -> None:
