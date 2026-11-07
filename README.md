@@ -43,7 +43,7 @@ Three optional packages unlock extra checks: `dnspython` (email DNS), `pyspellch
 
 Pages that need JavaScript to show anything are handled by an optional browser step. The same browser runs the browser sample. To turn it on, also run `~/web-obs-python/bin/pip install playwright` and then `~/web-obs-python/bin/playwright install chromium` (on Windows, the same two programs are in `web-obs-python\Scripts\`). You can skip this and still capture most sites.
 
-Web-Obs is built for Obsidian on desktop and does not work on mobile. It is tested on Linux, and its automated checks also pass on macOS. Windows support is newer: captures, links and images work there, but a few of its automated checks still fail. If something misbehaves on your system, please [open an issue](https://github.com/AgriciDaniel/web-obs/issues/new/choose).
+Web-Obs is built for Obsidian on desktop and does not work on mobile. It is tested on Linux, and its automated checks also pass on macOS and Windows. Windows support is the newest of the three. If something misbehaves on your system, please [open an issue](https://github.com/AgriciDaniel/web-obs/issues/new/choose).
 
 ## Install
 

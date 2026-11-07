@@ -11,6 +11,7 @@ Safer page reading, cleaner logos in notes, and a proper cancel on Windows.
 
 ### Changed
 - **A more careful explanation of the 0.2.1 fix.** The 0.2.1 notes said libxml2 before 2.14 drops content after `</html>`. What was shown is narrower: on GitHub's Windows runner, lxml 6.1.3 with its bundled libxml2 2.11.9 dropped it, while the Linux runner kept it. Other libxml2 versions keep it, so the fix is described as covering any parser that drops it.
+- **Every automated check now passes on Windows.** The test suite itself had a few spots that only ran on Linux and macOS, and the README now says Windows passes too.
 
 ## 0.2.1 - 2026-11-06
 
