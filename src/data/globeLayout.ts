@@ -241,6 +241,13 @@ export function computeSiteLayouts(manifest: SiteGraphManifest): ComputedSiteLay
   const vel = new Map<string, [number, number, number]>();
   for (const id of idList) vel.set(id, [0, 0, 0]);
 
+  // Divide each link's spring by the busier endpoint's link count (as d3-force does), so a
+  // hub with hundreds of links cannot overshoot and drive the relaxation unstable.
+  const degree = new Map<string, number>();
+  for (const e of activeEdges) {
+    degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
+    degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
+  }
   const iterations = Math.min(90, Math.max(40, Math.round(1400 / Math.max(12, nodes.length))));
   for (let iter = 0; iter < iterations; iter++) {
     const alpha = 1 - iter / iterations;
@@ -281,7 +288,8 @@ export function computeSiteLayouts(manifest: SiteGraphManifest): ComputedSiteLay
       const dy = pT[1] - pS[1];
       const dz = pT[2] - pS[2];
       const dist = Math.max(0.1, Math.hypot(dx, dy, dz));
-      const pull = (dist - ideal) * 0.045 * alpha;
+      const stiffness = 0.045 * Math.min(1, 8 / Math.max(degree.get(e.source) ?? 1, degree.get(e.target) ?? 1));
+      const pull = (dist - ideal) * stiffness * alpha;
       const fx = (dx / dist) * pull;
       const fy = (dy / dist) * pull;
       const fz = (dz / dist) * pull;
