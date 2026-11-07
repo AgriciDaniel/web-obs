@@ -541,7 +541,9 @@ async function runEndToEndMockCrawlTest() {
 }
 
 function checkBuildAndVaultParity() {
-  execFileSync('npx', ['tsc', '-b'], { stdio: 'inherit' });
+  // The project's own TypeScript through Node: Windows cannot start npx without a shell, and npx may
+  // fetch a package through the npm cache.
+  execFileSync(process.execPath, [path.join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc'), '-b'], { stdio: 'inherit' });
   // A fresh clone has no build output yet.
   execFileSync(process.execPath, ['esbuild.config.mjs'], { stdio: 'inherit' });
 
