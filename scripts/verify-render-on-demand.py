@@ -69,12 +69,21 @@ def main():
             if sample.count():
                 sample.click()
             page.wait_for_selector('.wo-canvas-stage', timeout=30000)
-            page.wait_for_timeout(5000)
 
             def counters(ms):
                 page.evaluate('() => { window.__p.draws = 0; window.__p.dim = 0; }')
                 page.wait_for_timeout(ms)
                 return page.evaluate('() => ({ ...window.__p })')
+
+            def quiet(key, what, limit=30):
+                """Wait for a full second with no new count. A slow runner may still be placing labels at first;
+                a map that keeps measuring or drawing never goes quiet, and fails here."""
+                for _ in range(limit):
+                    if counters(1000)[key] == 0:
+                        return
+                raise AssertionError(f'{what} for {limit} s: {counters(1000)}')
+
+            quiet('dim', 'label sizes were still being read')
 
             def pills():
                 return page.evaluate("() => [...document.querySelectorAll('.wo-node-pill')].filter(p => !p.classList.contains('is-hidden')).length")
@@ -88,7 +97,7 @@ def main():
             toggle.first.click()
             assert toggle.first.get_attribute('aria-checked') == 'false'
             page.keyboard.press('Escape')
-            page.wait_for_timeout(1500)
+            quiet('draws', 'the map with Light Flow off kept drawing')
             settled = counters(3000)
             assert settled['draws'] == 0, f'a settled map with Light Flow off must not draw: {settled}'
             assert settled['dim'] == 0, settled
@@ -105,6 +114,7 @@ def main():
             after = page.evaluate("() => ({ layer: document.querySelector('.wo-css2d-layer').classList.contains('is-hovering-node'), target: document.querySelectorAll('.wo-node-pill.is-hover-target').length })")
             assert not after['layer'] and after['target'] == 0, f'hover must clear: {after}'
             assert pills() == rest, (pills(), rest)
+            quiet('draws', 'the map kept drawing after hover')
             idle_after = counters(2000)
             assert idle_after['draws'] == 0, f'map must settle again after hover: {idle_after}'
 
