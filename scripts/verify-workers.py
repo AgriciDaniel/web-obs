@@ -398,7 +398,10 @@ class LocalTests(unittest.TestCase):
                     self.fail('TaskDeadlineExceeded not raised')
                 for pid, started in owned.items():
                     if _same_process(pid, started):
-                        state = Path(f'/proc/{pid}/stat').read_text(encoding='utf-8').rsplit(')', 1)[1].split()[0]
+                        try:
+                            state = Path(f'/proc/{pid}/stat').read_text(encoding='utf-8').rsplit(')', 1)[1].split()[0]
+                        except FileNotFoundError:
+                            continue  # it exited between the two reads, which is what this test wants
                         self.assertEqual(state, 'Z', f'Owned browser process {pid} remains running')
                 self.assertEqual(dispatcher.stats()['active'], 0)
                 return

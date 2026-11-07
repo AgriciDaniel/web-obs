@@ -48,6 +48,9 @@ class FakeChild extends EventEmitter {
   signalCode = null;
   killed = false;
   signals = [];
+  pid = 4242;
+  stdinText = [];
+  stdin = { once() { return this; }, end: (text) => { this.stdinText.push(text); } };
   kill(signal) { this.killed = true; this.signals.push(signal); return true; }
   close(code = 0, signal = null) {
     this.exitCode = code;
@@ -57,7 +60,7 @@ class FakeChild extends EventEmitter {
   write(text) { this.stdout.emit('data', Buffer.from(text)); }
 }
 
-async function hostHarness({ deferred = false, manifest = fixture, spawnError = false, settings = {} } = {}) {
+async function hostHarness({ deferred = false, manifest = fixture, spawnError = false, settings = {}, platform = 'linux' } = {}) {
   const children = [], spawnCalls = [], ready = [], readinessCalls = [], progress = [], saved = [], notices = [], timers = new Set();
   let host, mounts = 0;
   class Adapter { getBasePath() { return '/synthetic-vault'; } }
@@ -68,6 +71,8 @@ async function hostHarness({ deferred = false, manifest = fixture, spawnError = 
     }
     registerEvent() {}
   }
+  const childProcess = { spawn: (command, args, options) => { spawnCalls.push({ command, args, options }); if (spawnError) throw new Error('synthetic spawn refusal'); const child = new FakeChild(); children.push(child); return child; } };
+  const engineStop = loadSource('src/plugin/engineStop.ts', { 'node:child_process': childProcess, 'node:process': { platform } });
   const stubs = {
     'node:fs': { existsSync: () => true, readdirSync: () => [{ name: fixture.siteId, isDirectory: () => true }], readFileSync: () => JSON.stringify(manifest) },
     'node:path': path,
@@ -75,7 +80,8 @@ async function hostHarness({ deferred = false, manifest = fixture, spawnError = 
       setTimeout: (callback) => { const timer = { callback, unref() {} }; timers.add(timer); return timer; },
       clearTimeout: (timer) => timers.delete(timer),
     },
-    'node:child_process': { spawn: (command, args, options) => { spawnCalls.push({ command, args, options }); if (spawnError) throw new Error('synthetic spawn refusal'); const child = new FakeChild(); children.push(child); return child; } },
+    'node:child_process': childProcess,
+    './engineStop': engineStop,
     obsidian: { ItemView, FileSystemAdapter: Adapter, Notice: class { constructor(message) { notices.push(message); } }, TFile: class {}, normalizePath: (value) => value },
     '../App': {},
     '../obsidian/hostAdapter': {
@@ -227,6 +233,34 @@ await test('owned children that ignore termination receive a bounded escalation'
   for (const timer of h.timers) timer.callback();
   assert.deepEqual(child.signals, ['SIGTERM', 'SIGKILL']);
   child.close(null, 'SIGKILL');
+  assert.equal(h.timers.size, 0);
+  assert.equal(h.progress.at(-1).phase, 'cancelled');
+});
+
+await test('every capture can be cancelled through standard input', async () => {
+  const h = await hostHarness();
+  const job = h.view.runCrawlFromPlugin(options); await flush();
+  assert.ok(h.spawnCalls[0].args.includes('--cancel-on-stdin'));
+  h.children[0].write(complete()); h.children[0].close();
+  assert.ok(await job);
+  const linkJob = h.host.startCrawl({ url: 'https://example.test', continueLinksSiteId: 'example.test' }); await flush();
+  assert.ok(h.spawnCalls[1].args.includes('--cancel-on-stdin'));
+  h.children[1].write(complete({ operation: 'continue-links' })); h.children[1].close();
+  assert.ok(await linkJob);
+});
+
+await test('on Windows a cancel is written to standard input, then the whole process tree is ended', async () => {
+  const h = await hostHarness({ platform: 'win32' });
+  const job = h.view.runCrawlFromPlugin(options); await flush();
+  const child = h.children[0]; h.host.cancelCrawl();
+  assert.equal(await job, null);
+  assert.deepEqual(child.signals, [], 'no SIGTERM, which Windows turns into an instant kill');
+  assert.deepEqual(child.stdinText, ['cancel\n']);
+  for (const timer of h.timers) timer.callback();
+  const killer = h.spawnCalls.at(-1);
+  assert.equal(killer.command, 'taskkill');
+  assert.deepEqual(killer.args, ['/PID', '4242', '/T', '/F']);
+  child.close(1);
   assert.equal(h.timers.size, 0);
   assert.equal(h.progress.at(-1).phase, 'cancelled');
 });
