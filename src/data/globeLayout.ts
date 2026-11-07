@@ -241,6 +241,14 @@ export function computeSiteLayouts(manifest: SiteGraphManifest): ComputedSiteLay
   const vel = new Map<string, [number, number, number]>();
   for (const id of idList) vel.set(id, [0, 0, 0]);
 
+  // Each end of a link moves by the spring divided by that end's own link count (above 8), so a
+  // hub with hundreds of links cannot overshoot and drive the relaxation unstable, while a page
+  // with few links keeps its full pull toward the hub.
+  const degree = new Map<string, number>();
+  for (const e of activeEdges) {
+    degree.set(e.source, (degree.get(e.source) ?? 0) + 1);
+    degree.set(e.target, (degree.get(e.target) ?? 0) + 1);
+  }
   const iterations = Math.min(90, Math.max(40, Math.round(1400 / Math.max(12, nodes.length))));
   for (let iter = 0; iter < iterations; iter++) {
     const alpha = 1 - iter / iterations;
@@ -285,12 +293,14 @@ export function computeSiteLayouts(manifest: SiteGraphManifest): ComputedSiteLay
       const fx = (dx / dist) * pull;
       const fy = (dy / dist) * pull;
       const fz = (dz / dist) * pull;
-      vS[0] += fx;
-      vS[1] += fy;
-      vS[2] += fz;
-      vT[0] -= fx;
-      vT[1] -= fy;
-      vT[2] -= fz;
+      const shareS = Math.min(1, 8 / (degree.get(e.source) ?? 1));
+      const shareT = Math.min(1, 8 / (degree.get(e.target) ?? 1));
+      vS[0] += fx * shareS;
+      vS[1] += fy * shareS;
+      vS[2] += fz * shareS;
+      vT[0] -= fx * shareT;
+      vT[1] -= fy * shareT;
+      vT[2] -= fz * shareT;
     }
 
     // Centering + integrate
