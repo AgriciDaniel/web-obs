@@ -9,7 +9,7 @@ If you run a website and found WebObs in your logs, this page explains what it s
 Every HTTP request carries this user agent, where the version follows the release:
 
 ```
-Mozilla/5.0 (compatible; WebObs/0.2.1; +https://github.com/AgriciDaniel/web-obs/blob/main/docs/CRAWLER.md)
+Mozilla/5.0 (compatible; WebObs/0.2.2; +https://github.com/AgriciDaniel/web-obs/blob/main/docs/CRAWLER.md)
 ```
 
 - The robots.txt product token is `WebObs` (matched without regard to case).

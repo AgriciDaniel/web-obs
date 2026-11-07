@@ -9,6 +9,7 @@ import re
 import shutil
 import time
 import signal
+import threading
 import tempfile
 import uuid
 from note_safety import make_notes_network_free
@@ -70,14 +71,27 @@ def write_json(file, data):
 @contextmanager
 def promotion_signals():
     # Keep the two directory renames indivisible with respect to ordinary cancellation.
-    previous = None
     if hasattr(signal, 'pthread_sigmask'):
         previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM, signal.SIGINT})
+        try:
+            yield
+        finally:
+            signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+        return
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    # Windows has no signal mask: hold a cancel that arrives here and deliver it after the renames.
+    pending = []
+    saved = {number: signal.signal(number, lambda signum, _frame: pending.append(signum))
+             for number in (signal.SIGINT, signal.SIGTERM)}
     try:
         yield
     finally:
-        if previous is not None:
-            signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+        for number, handler in saved.items():
+            signal.signal(number, handler)
+        if pending:
+            signal.raise_signal(pending[0])
 
 
 

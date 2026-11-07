@@ -465,7 +465,7 @@ class PipelineTests(unittest.TestCase):
 
 
 class TrailingContent(unittest.TestCase):
-    """Content after </html> is part of the page, as in a browser, whichever libxml2 lxml bundles (2.11 on Windows)."""
+    """Content after </html> is part of the page, as in a browser, whichever parser reads it."""
 
     def test_content_after_the_closing_tags_is_moved_into_the_body(self):
         from html_tail import keep_trailing_content

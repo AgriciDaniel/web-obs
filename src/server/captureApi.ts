@@ -5,6 +5,7 @@ import { StringDecoder } from 'node:string_decoder';
 import type { PluginOption } from 'vite';
 import { JsonlDecoder } from '../data/jsonl';
 import { isSafeSiteId, parseSiteManifest } from '../data/validateManifest';
+import { askEngineToStop, CANCEL_ON_STDIN, forceEngineStop } from '../plugin/engineStop';
 
 const SITE_IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg', '.ico', '.avif']);
 export const MAX_SITE_IMAGE_BYTES = 4 * 1024 * 1024;
@@ -37,7 +38,7 @@ export function webObsDevApiPlugin(): PluginOption {
   return {
     name: 'web-obs-dev-api',
     configureServer(server) {
-      server.httpServer?.once('close', () => { for (const child of children) child.kill('SIGTERM'); });
+      server.httpServer?.once('close', () => { for (const child of children) askEngineToStop(child); });
       server.middlewares.use((req, res, next) => {
         if (!req.url?.startsWith('/__web_obs/')) return next();
         const url = new URL(req.url, 'http://localhost');
@@ -127,6 +128,7 @@ export function webObsDevApiPlugin(): PluginOption {
             ? [script, options.continueLinksSiteId!, '--vault', vaultRoot, '--continue-links']
             : [script, options.url, '--vault', vaultRoot, '--max-pages', String(options.maxPages), '--render', options.renderMode, '--image-mode', options.imageMode];
           if (!options.downloadImages) args.push('--no-images');
+          args.push(CANCEL_ON_STDIN);
           if (!options.continueLinksSiteId) {
             if (!options.browserAudit) args.push('--no-browser-audit');
             if (options.spellCheck) args.push('--spell-check');
@@ -146,8 +148,8 @@ export function webObsDevApiPlugin(): PluginOption {
           let forceTimer: ReturnType<typeof setTimeout> | undefined;
           const stop = () => {
             if (child.exitCode !== null || child.signalCode !== null) return;
-            child.kill('SIGTERM');
-            forceTimer ??= setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); }, 3000);
+            askEngineToStop(child);
+            forceTimer ??= setTimeout(() => { if (child.exitCode === null && child.signalCode === null) forceEngineStop(child); }, 3000);
             forceTimer.unref();
           };
           const finish = (event: Record<string, unknown>) => {

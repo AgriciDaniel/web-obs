@@ -170,6 +170,42 @@ class ConverterRegions(unittest.TestCase):
         self.assertNotIn('**Talk to us**:', self.md)
 
 
+class ImagesInsideLinks(unittest.TestCase):
+    """A logo inside the home link stays an image; it does not become text in the link label."""
+
+    PAGE = ('<html><head><title>Northwind</title></head><body>'
+            '<header><a href="/"><img src="/logo.png" alt="Northwind Coffee logo"> Northwind Coffee</a>'
+            '<nav><a href="/menu/">Menu</a> <a href="/about/">About</a></nav></header>'
+            '<main><h1>Coffee</h1><p>Visit <a href="/shop/"><span><img src="/cart(1).png" alt="cart"></span> Shop</a> today.</p>'
+            '<p><a href="/gallery/"><img src="/only.png" alt="Gallery"></a></p></main></body></html>')
+
+    def test_images_come_before_the_link_and_labels_are_text(self):
+        regions = []
+        md = convert_html_to_markdown(self.PAGE, 'https://northwind.test/', regions_out=regions)
+        header = next(r for r in regions if r['kind'] == 'header')['markdown']
+        everything = md + '\n' + header
+        self.assertNotIn('[!(', everything, 'an image squashed into a label reads as a callout in a quote')
+        self.assertIn('![Northwind Coffee logo](https://northwind.test/logo.png)', header)
+        self.assertIn('[Northwind Coffee](https://northwind.test/)', header)
+        self.assertIn('![cart](https://northwind.test/cart(1).png)', md)
+        self.assertIn('[Shop](https://northwind.test/shop/) today.', md)
+        self.assertIn('![Gallery](https://northwind.test/only.png)', md)
+
+    def test_formatting_around_the_image_and_image_like_text(self):
+        def link(inner):
+            return convert_html_to_markdown(f'<html><body><main><h1>T</h1><p>Go <a href="/x">{inner}</a> now.</p></main></body></html>',
+                                            'https://n.test/')
+        bold = link('<strong><img src="/l.png" alt="L">Name</strong>')
+        self.assertIn('![L](https://n.test/l.png)', bold)
+        self.assertIn('[**Name**](https://n.test/x)', bold)
+        self.assertNotIn('[**', link('<b><img src="/l.png" alt="L"></b>'), 'no empty bold link')
+        spaced = link('<img src="/my logo.png" alt="Logo"> Name')
+        self.assertIn('[Name](https://n.test/x)', spaced)
+        self.assertNotIn('[!(', spaced)
+        text = link('See ![x](https://t.example/p.png) now')
+        self.assertNotIn('![x](https://t.example/p.png)', text, 'image-like text in a label must not become an image')
+
+
 class PageAuditScreenshot(unittest.TestCase):
     def test_browser_screenshot_embed_uses_the_full_vault_path(self):
         from audit_outputs import page_audit_section

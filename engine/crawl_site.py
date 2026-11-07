@@ -48,6 +48,7 @@ _ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
 if _ENGINE_DIR not in sys.path:
     sys.path.insert(0, _ENGINE_DIR)
 
+import cancel_channel
 from capture_store import CaptureTransaction
 from note_safety import make_notes_network_free
 from evidence_export import (build_pages_base_yaml, compute_internal_pagerank,
@@ -2042,6 +2043,8 @@ def crawl_website_to_vault(
 
 
 def _cancel_capture(_signum, _frame) -> None:
+    if cancel_channel.finished():
+        return  # the work is done and saved; a late stop changes nothing
     raise KeyboardInterrupt("Capture cancelled.")
 
 
@@ -2084,7 +2087,11 @@ def main() -> int:
         default=0.15,
         help="Polite delay in seconds between page requests (default: 0.15)",
     )
+    parser.add_argument("--cancel-on-stdin", action="store_true",
+                        help="Cancel when standard input reads 'cancel' or closes (Windows has no SIGTERM)")
     args = parser.parse_args()
+    if args.cancel_on_stdin:
+        signal.signal(signal.SIGINT, _cancel_capture)
 
     if args.deadline is not None and not (1 <= args.deadline <= 86400):
         emit_event("error", message="--deadline must be between 1 and 86400 seconds.")
@@ -2094,10 +2101,13 @@ def main() -> int:
         emit_event("error", message=f"Vault directory does not exist: {vault_dir}")
         return 1
 
+    if args.cancel_on_stdin:
+        cancel_channel.listen()
     try:
         if args.continue_links:
             from link_recheck import continue_link_checks
             continue_link_checks(args.url, vault_dir, emit_event)
+            cancel_channel.finish()
             return 0
         crawl_website_to_vault(
             target_url=args.url,
@@ -2111,6 +2121,7 @@ def main() -> int:
             delay_sec=max(0.0, min(10.0, args.delay)),
             tls_check=not args.no_tls_check, tasks=not args.no_tasks, deadline_sec=args.deadline,
         )
+        cancel_channel.finish()
         return 0
     except KeyboardInterrupt:
         emit_event("cancelled", message="Capture cancelled.")
@@ -2118,6 +2129,8 @@ def main() -> int:
     except Exception as exc:
         emit_event("error", message=str(exc))
         return 1
+    finally:
+        cancel_channel.finish()
 
 
 if __name__ == "__main__":

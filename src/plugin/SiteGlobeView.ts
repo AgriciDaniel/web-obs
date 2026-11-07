@@ -1,4 +1,5 @@
 import { friendlyEngineError, friendlySpawnError } from './crawlErrors';
+import { askEngineToStop, CANCEL_ON_STDIN, forceEngineStop } from './engineStop';
 import { applyPipelineProgress } from '../data/crawlProgress';
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -198,15 +199,13 @@ export class SiteGlobeView extends ItemView {
   private stopNativeChild(child: ChildProcessWithoutNullStreams): void {
     if (this.stoppingChildren.has(child) || child.exitCode !== null || child.signalCode !== null) return;
     this.stoppingChildren.add(child);
-    // SIGTERM allows backend cleanup; escalate only for this still-running owned child.
+    // Asking first allows backend cleanup; escalate only for this still-running owned child.
     const timer = setNodeTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) {
-        try { child.kill('SIGKILL'); } catch { /* The child may already have exited. */ }
-      }
+      if (child.exitCode === null && child.signalCode === null) forceEngineStop(child);
     }, 2500);
     timer.unref();
     child.once('close', () => clearNodeTimeout(timer));
-    try { child.kill('SIGTERM'); } catch { /* The child may have failed to spawn. */ }
+    askEngineToStop(child);
   }
 
   private cancelActiveCrawl(notify: boolean): void {
@@ -299,6 +298,7 @@ export class SiteGlobeView extends ItemView {
       ? [scriptPath, continuing, '--vault', vaultBase, '--continue-links']
       : [scriptPath, target, '--vault', vaultBase, '--max-pages', String(maxPages), '--render', renderMode, '--image-mode', (options.imageMode ?? this.plugin.settings.imageMode) === 'all' ? 'all' : 'preferred'];
     if (!downloadImages) args.push('--no-images');
+    args.push(CANCEL_ON_STDIN);
     if (!continuing) {
       if (!(options.browserAudit ?? this.plugin.settings.browserAudit ?? true)) args.push('--no-browser-audit');
       if (options.spellCheck ?? this.plugin.settings.spellCheck ?? false) args.push('--spell-check');

@@ -588,7 +588,8 @@ def _render_card_anchor(a_tag: Tag, base_url: str) -> str:
     return f"- **[{safe_title}]({full_url})**"
 
 
-def _render_inline_node(node: Tag | NavigableString, base_url: str) -> str:
+def _render_inline_node(node: Tag | NavigableString, base_url: str, images: list[str] | None = None) -> str:
+    """Inline Markdown for node. With images, pictures are added to that list instead of the text."""
     if isinstance(node, NavigableString):
         text = str(node)
         if not text.strip():
@@ -611,6 +612,9 @@ def _render_inline_node(node: Tag | NavigableString, base_url: str) -> str:
         if not img_url:
             return ""
         alt = _escape_link_label(str(node.get("alt") or ""))
+        if images is not None:
+            images.append(f"![{alt}]({img_url})")
+            return ""
         return f"\n\n![{alt}]({img_url})\n\n"
 
     if name == "code":
@@ -620,38 +624,41 @@ def _render_inline_node(node: Tag | NavigableString, base_url: str) -> str:
         return f"`{txt}`"
 
     if name in ("strong", "b"):
-        inner = _collapse_ws(_render_inline_children(node, base_url))
+        inner = _collapse_ws(_render_inline_children(node, base_url, images))
         return f"**{inner}**" if inner else ""
 
     if name in ("em", "i"):
-        inner = _collapse_ws(_render_inline_children(node, base_url))
+        inner = _collapse_ws(_render_inline_children(node, base_url, images))
         return f"*{inner}*" if inner else ""
 
     if name == "a":
         raw_href = (node.get("href") or "").strip()
         if _has_block_descendant(node):
             return "\n\n" + _render_card_anchor(node, base_url) + "\n\n"
-        inner = _collapse_ws(_render_inline_children(node, base_url))
+        # Images inside the link (a logo beside the site name) go before it, not into its label,
+        # where escaping the brackets would turn them into text such as "[!(logo)(url) Name]".
+        pictures: list[str] = []
+        inner = _collapse_ws(_render_inline_children(node, base_url, pictures))
+        lead = "\n\n" + "\n\n".join(pictures) + "\n\n" if pictures else ""
+        if images is not None:  # a link inside a link: its pictures go to the outer one
+            images.extend(pictures)
+            lead = ""
         if not inner:
-            img = node.find("img")
-            if isinstance(img, Tag):
-                img_md = _render_inline_node(img, base_url).strip()
-                return f"\n\n{img_md}\n\n" if img_md else ""
-            return ""
+            return lead
         if not raw_href or raw_href.startswith(("#", "javascript:")):
-            return inner
+            return lead + inner
         full_url = urljoin(base_url, raw_href)
         safe_label = _escape_link_label(inner[:120])
-        return f"[{safe_label}]({full_url})"
+        return f"{lead}[{safe_label}]({full_url})"
 
-    return _render_inline_children(node, base_url)
+    return _render_inline_children(node, base_url, images)
 
 
-def _render_inline_children(parent: Tag, base_url: str) -> str:
+def _render_inline_children(parent: Tag, base_url: str, images: list[str] | None = None) -> str:
     parts: list[str] = []
     previous: Tag | NavigableString | None = None
     for child in parent.children:
-        rendered = _render_inline_node(child, base_url)
+        rendered = _render_inline_node(child, base_url, images)
         if not rendered:
             continue
         # "<span>Person</span>Jake" is a label styled as its own block; keep the words apart.

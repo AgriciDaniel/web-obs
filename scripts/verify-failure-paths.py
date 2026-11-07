@@ -71,10 +71,17 @@ class Site(BaseHTTPRequestHandler):
         return self._send(404, b'<html><body>not found</body></html>')
 
 
+class QuietServer(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        # A cancelled capture hangs up mid-reply; that is the point of those tests, not an error.
+        if not isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError)):
+            super().handle_error(request, client_address)
+
+
 class FailurePaths(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.server = ThreadingHTTPServer(('127.0.0.1', 0), Site)
+        cls.server = QuietServer(('127.0.0.1', 0), Site)
         cls.port = cls.server.server_address[1]
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -165,23 +172,99 @@ class FailurePaths(unittest.TestCase):
         self.assertEqual(event['event'], 'error')
         self.assertIn('Vault directory does not exist', event['message'])
 
-    def test_sigterm_cancels_without_a_traceback(self):
+    def cancel_mid_capture(self, stop, *extra):
+        """Start a slow capture, stop it after its first event, and check it ended as a cancel."""
         Site.scenario = 'huge-sitemap'
         with tempfile.TemporaryDirectory() as vault:
             Path(vault, '.obsidian').mkdir()
             env = {**os.environ, 'WEB_OBS_LOCAL_TARGETS': f'127.0.0.1:{self.port}'}
             proc = subprocess.Popen(
                 [PYTHON, str(ROOT / 'engine' / 'crawl_site.py'), f'http://127.0.0.1:{self.port}', '--vault', vault,
-                 '--max-pages', '8', '--render', 'never', '--delay', '2'],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
+                 '--max-pages', '8', '--render', 'never', '--delay', '2', *extra],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env,
             )
             first = proc.stdout.readline()
             self.assertIn('"start"', first)
-            proc.send_signal(signal.SIGTERM)
+            started = time.monotonic()
+            stop(proc)
             out, err = proc.communicate(timeout=30)
             self.assertNotIn('Traceback', err)
             self.assertIn('"cancelled"', first + out)
-            self.assertIn(proc.returncode, (130, -signal.SIGTERM))
+            self.assertLess(time.monotonic() - started, 20, 'the cancel must not wait for the capture to end')
+            self.assertFalse(Path(vault, 'sites').exists() and any(Path(vault, 'sites').iterdir()),
+                             'a cancelled capture publishes nothing')
+            return proc.returncode
+
+    @unittest.skipIf(os.name == 'nt', 'Windows has no SIGTERM; the standard input tests cover cancelling there')
+    def test_sigterm_cancels_without_a_traceback(self):
+        code = self.cancel_mid_capture(lambda proc: proc.send_signal(signal.SIGTERM))
+        self.assertIn(code, (130, -signal.SIGTERM))
+
+    def test_cancel_line_on_standard_input_cancels_on_every_system(self):
+        def stop(proc):
+            proc.stdin.write('cancel\n')
+            proc.stdin.flush()
+        self.assertEqual(self.cancel_mid_capture(stop, '--cancel-on-stdin'), 130)
+
+    def test_closed_standard_input_cancels_when_the_parent_goes_away(self):
+        self.assertEqual(self.cancel_mid_capture(lambda proc: proc.stdin.close(), '--cancel-on-stdin'), 130)
+
+
+PROMOTION_PROBE = r'''
+import signal, sys, time
+sys.path.insert(0, sys.argv[1])
+import cancel_channel, capture_store
+def stop(_signum, _frame):
+    raise KeyboardInterrupt
+signal.signal(signal.SIGTERM, stop)
+cancel_channel.listen()
+try:
+    with capture_store.promotion_signals():
+        print('renaming', flush=True)
+        time.sleep(1)
+        print('renames finished', flush=True)
+    time.sleep(5)
+except KeyboardInterrupt:
+    print('cancelled', flush=True)
+'''
+
+
+class PromotionWithCancelReader(unittest.TestCase):
+    """The standard input reader must not take a signal the main thread is holding back."""
+
+    @unittest.skipIf(os.name == 'nt', 'Windows has no signal mask; PromotionWithoutSignalMask covers it')
+    def test_a_cancel_during_promotion_waits_for_the_renames(self):
+        for stop in ('close input', 'sigterm'):
+            with self.subTest(stop):
+                proc = subprocess.Popen([PYTHON, '-c', PROMOTION_PROBE, str(ROOT / 'engine')], stdin=subprocess.PIPE,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                self.assertEqual(proc.stdout.readline().strip(), 'renaming')
+                if stop == 'close input':
+                    proc.stdin.close()
+                else:
+                    proc.send_signal(signal.SIGTERM)
+                out, err = proc.communicate(timeout=20)
+                self.assertEqual(out.split(), ['renames', 'finished', 'cancelled'], err)
+
+
+class PromotionWithoutSignalMask(unittest.TestCase):
+    """Windows has no signal mask; a cancel during the two folder renames waits until they are done."""
+
+    def test_a_cancel_during_promotion_is_delivered_after_it(self):
+        sys.path.insert(0, str(ROOT / 'engine'))
+        import types
+        from unittest.mock import patch
+        import capture_store
+        no_mask = types.SimpleNamespace(**{name: getattr(signal, name) for name in dir(signal) if name != 'pthread_sigmask'})
+        steps = []
+        with patch.object(capture_store, 'signal', no_mask):
+            with self.assertRaises(KeyboardInterrupt):
+                with capture_store.promotion_signals():
+                    signal.raise_signal(signal.SIGINT)
+                    time.sleep(0.05)
+                    steps.append('renames finished')
+        self.assertEqual(steps, ['renames finished'])
+        self.assertIs(signal.getsignal(signal.SIGINT), signal.default_int_handler)
 
 
 if __name__ == '__main__':
