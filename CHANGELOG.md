@@ -5,7 +5,7 @@
 Safer page reading, cleaner logos in notes, and a proper cancel on Windows.
 
 ### Fixed
-- **Closing tag text inside a page is left alone.** 0.2.1 deleted the text `</body>` or `</html>` wherever it appeared, so a tutorial titled "How to close </body> tags" was captured as "How to close  tags". Only the page's real closing tags are moved now. Text in titles, attributes, comments, scripts, styles and templates is kept as written, and a page that ends with a comment, such as a cache plugin's note, is not rewritten at all.
+- **Closing tag text inside a page is left alone.** 0.2.1 deleted the text `</body>` or `</html>` wherever it appeared, so a tutorial titled "How to close </body> tags" was captured as "How to close  tags". Only the page's real closing tags are moved now. Text in titles, attributes, comments, scripts, styles and templates is kept as written, and a page that ends with a comment, such as a cache plugin's note, is not rewritten at all. One limit remains on Windows: the parser there reads `</body>` inside a title as a tag itself, so that title still loses the text.
 - **A logo inside a link stays an image.** A header logo inside the home link was written into the link text as `[!(logo)(address) Name]`, which Obsidian can even read as the start of a callout. The image now comes first and the link keeps its text.
 - **Cancelling a capture on Windows cleans up.** Windows has no SIGTERM, so cancelling ended the engine at once and could leave its workers and browser running. The plugin now asks the engine to stop through its standard input, the engine finishes the folder swap it may be in the middle of, and if it does not exit in time the whole process tree is ended. The engine also stops on its own if Obsidian quits during a capture.
 

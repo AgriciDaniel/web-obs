@@ -24,6 +24,11 @@ if os.environ.get('TAIL_HELPER') == 'off':
     for module in (extractor, markdown_converter, brand_and_dns):
         module.keep_trailing_content = lambda html: html
 
+try:
+    from lxml.etree import LIBXML_VERSION as _LIBXML_VERSION
+except ImportError:
+    _LIBXML_VERSION = (0,)
+
 keep = html_tail.keep_trailing_content
 _FIRST_CLOSER = re.compile(r'</(?:body|html)\s*>', re.I)
 _RealSoup = bs4.BeautifulSoup
@@ -125,11 +130,16 @@ class MovedInside(unittest.TestCase):
             keep(page)
             self.assertLess(time.perf_counter() - started, 3.0, page[:20])
 
-    def test_the_title_reaches_the_capture_unchanged(self):
+    def test_the_title_reaches_the_parser_unchanged(self):
         page = ('<html><head><title>How to close </body> tags</title></head>'
                 '<body><h1>Closing tags</h1><p>Some words here.</p></body></html>')
         data = extractor.extract_page_data(page, 'https://tail.test/', 'tail.test', {})
-        self.assertEqual(data['title'], 'How to close </body> tags')
+        with patch.object(extractor, 'keep_trailing_content', lambda html: html):
+            as_parsed = extractor.extract_page_data(page, 'https://tail.test/', 'tail.test', {})
+        self.assertEqual(data['title'], as_parsed['title'], 'the helper must not change the title')
+        # libxml2 before 2.14 (lxml's Windows build) reads </body> in a title as a tag; newer keeps the text.
+        if extractor._HTML_PARSER != 'lxml' or _LIBXML_VERSION >= (2, 14):
+            self.assertEqual(data['title'], 'How to close </body> tags')
 
 
 class DroppingParser(unittest.TestCase):
