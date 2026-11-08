@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Orb opacity and highlight: translucent orbs at rest, selection dims everything not linked, tuning overrides work.
+"""Orb look: solid orbs by default, and the "Translucent orbs" layer switches to translucent orbs that dim on selection.
 
 Runs the standalone app on a synthetic 400 page capture in Chromium with explicit software WebGL (SwiftShader) and
 compares the mean brightness of the map before, during and after a selection. Evidence class: standalone browser,
@@ -51,7 +51,18 @@ def settled(page, probe):
     raise AssertionError('the map never settled')
 
 
-def measure(browser, port, visuals):
+def choose_translucent(page):
+    """Turns on the Translucent orbs layer, the way a user does."""
+    page.get_by_role('button', name='Map layers').click()
+    item = page.get_by_role('menuitemcheckbox', name='Translucent orbs').first
+    assert item.get_attribute('aria-checked') != 'true', 'Translucent orbs must be off by default'
+    item.click()
+    page.keyboard.press('Escape')
+    page.wait_for_function("() => localStorage.getItem('web-obs:node-look') === 'translucent'", timeout=15000)
+    page.wait_for_timeout(1500)
+
+
+def measure(browser, port, visuals, translucent=False):
     """Mean brightness at rest, with a page selected, and after the selection is cleared."""
     page = browser.new_page(viewport={'width': 1440, 'height': 900})
     probe = browser.new_page()
@@ -64,6 +75,8 @@ def measure(browser, port, visuals):
     page.get_by_role('button', name='Map layers').click()
     page.get_by_role('menuitemcheckbox', name='Light flow').first.click()
     page.keyboard.press('Escape')
+    if translucent:
+        choose_translucent(page)
     page.get_by_role('button', name='Reset camera').first.click()
     page.mouse.move(3, 3)
     page.wait_for_timeout(6000)
@@ -85,22 +98,30 @@ def main():
     large_map = load_large_map()
     with large_map.serve(large_map.synthetic_site(400)) as port, sync_playwright() as pw:
         browser = pw.chromium.launch(args=['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'])
-        rest, selected, restored = measure(browser, port, None)
-        print(f'defaults:        rest {rest:.1f}, selected {selected:.1f}, cleared {restored:.1f}')
-        assert selected < rest * 0.8, f'selecting a page must dim the orbs that are not linked to it ({rest:.1f} -> {selected:.1f})'
-        assert abs(restored - rest) < rest * 0.08, f'clearing the selection must restore the map ({rest:.1f} -> {restored:.1f})'
+        # Default: the original solid orbs. Selecting a page still fades edges, halos and labels, but not the orbs.
+        solid_rest, solid_selected, solid_restored = measure(browser, port, None)
+        print(f'default (solid): rest {solid_rest:.1f}, selected {solid_selected:.1f}, cleared {solid_restored:.1f}')
+        assert solid_selected > solid_rest * 0.85, f'by default selecting a page must not dim the orbs ({solid_rest:.1f} -> {solid_selected:.1f})'
+        assert abs(solid_restored - solid_rest) < solid_rest * 0.08, f'clearing the selection must restore the map ({solid_rest:.1f} -> {solid_restored:.1f})'
 
-        flat_rest, flat_selected, _ = measure(browser, port, '{ defaultOpacity: 1, dimOpacity: 1, highlightOpacity: 1 }')
-        print(f'fully opaque:    rest {flat_rest:.1f}, selected {flat_selected:.1f}')
-        assert rest < flat_rest, f'orbs are translucent at rest by default ({rest:.1f} vs {flat_rest:.1f} fully opaque)'
-        assert flat_selected > flat_rest * 0.85, f'dimOpacity: 1 turns the orb dimming off ({flat_rest:.1f} -> {flat_selected:.1f})'
+        # The layer switches to translucent orbs: see-through at rest, and selecting a page dims the unlinked ones.
+        rest, selected, restored = measure(browser, port, None, translucent=True)
+        print(f'translucent:     rest {rest:.1f}, selected {selected:.1f}, cleared {restored:.1f}')
+        assert rest < solid_rest, f'translucent orbs are darker than solid ones at rest ({rest:.1f} vs {solid_rest:.1f})'
+        assert selected < rest * 0.8, f'with translucent orbs, selecting a page must dim the orbs that are not linked to it ({rest:.1f} -> {selected:.1f})'
+        assert abs(restored - rest) < rest * 0.08, f'clearing the selection must restore the map ({rest:.1f} -> {restored:.1f})'
         # Selection also dims edges, halos, glow and labels, so isolate the orbs: the drop with orb dimming on must exceed
-        # the drop with it off by a clear margin.
-        orb_share = (rest - selected) / rest - (flat_rest - flat_selected) / flat_rest
+        # the drop with solid orbs by a clear margin.
+        orb_share = (rest - selected) / rest - (solid_rest - solid_selected) / solid_rest
         assert orb_share > 0.1, f'dimming the orbs themselves must account for part of the drop (share {orb_share:.2f})'
+
+        # The developer override still applies on top of the chosen look.
+        flat_rest, flat_selected, _ = measure(browser, port, '{ defaultOpacity: 1, dimOpacity: 1, highlightOpacity: 1 }', translucent=True)
+        print(f'translucent, overridden to opaque: rest {flat_rest:.1f}, selected {flat_selected:.1f}')
+        assert flat_selected > flat_rest * 0.85, f'dimOpacity: 1 turns the orb dimming off ({flat_rest:.1f} -> {flat_selected:.1f})'
         browser.close()
-    print('[PASS] Orb highlight verified: translucent at rest, selection dims unlinked orbs and clearing restores them, '
-          'and the tuning override changes both.')
+    print('[PASS] Orb look verified: solid by default, the Translucent orbs layer makes orbs see-through and dims unlinked ones, '
+          'and the tuning override applies on top.')
 
 
 if __name__ == '__main__':

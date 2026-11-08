@@ -28,6 +28,7 @@ import type {
 } from '../types/site';
 import type { ViewGizmoHandle } from './ViewGizmo3D';
 import { MapDiscoveryControls } from './MapDiscoveryControls';
+import { resolveNodeVisuals, type NodeLook, type NodeVisualTuning } from './nodeLook';
 
 interface SiteGlobeCanvas3DProps {
   manifest: SiteGraphManifest | null;
@@ -41,6 +42,8 @@ interface SiteGlobeCanvas3DProps {
   showChromeLinks: boolean;
   showAllLinks: boolean;
   showPulses: boolean;
+  /** How orbs look: the original solid orbs (default) or translucent orbs with dimming and hairline halos. */
+  nodeLook?: NodeLook;
   autoRotate: boolean;
   paused?: boolean;
   inspectorOpen: boolean;
@@ -194,58 +197,8 @@ const HALO_PAD = 1.7;
 const ORIGINAL_RING_INNER = 1.32;
 const ORIGINAL_RING_OUTER = 1.65;
 
-/**
- * How nodes look. Everything here can be changed without touching the renderer: set
- * `window.__WO_VISUAL__ = { defaultOpacity: 0.8 }` before the map is built and the given fields override the
- * defaults. That is how sphere detail, opacity and halo weight are tuned against frame rate.
- */
-export interface NodeVisualTuning {
-  /** Sphere tessellation. Fixed by default so a node looks the same at every site size. */
-  sphereWidthSegments: number;
-  sphereHeightSegments: number;
-  /** When true, big sites use coarser spheres (14x10 above 400 nodes, 10x8 above 1200) to save GPU time. */
-  adaptiveSphereDetail: boolean;
-  /** Opacity of an orb at rest. */
-  defaultOpacity: number;
-  /** Opacity of the selected or hovered orb, the orbs linked to it, and search matches. */
-  highlightOpacity: number;
-  /** Opacity of every other orb while something is selected, hovered or searched. */
-  dimOpacity: number;
-  /** Time for an opacity change to settle, in milliseconds. */
-  transitionMs: number;
-  /** Emissive glow strength (the share of the orb's own colour added on top of its lighting). */
-  glowDefault: number;
-  glowSelected: number;
-  glowDim: number;
-  /** Halo ring opacity for the same three states. */
-  haloAlphaDefault: number;
-  haloAlphaSelected: number;
-  haloAlphaDim: number;
-  /** Halo ring width in screen pixels. It is a hairline at every zoom level, however large the orb. */
-  haloWidthPx: number;
-}
-
-export const DEFAULT_NODE_VISUALS: NodeVisualTuning = {
-  sphereWidthSegments: 22,
-  sphereHeightSegments: 22,
-  adaptiveSphereDetail: false,
-  defaultOpacity: 0.69,
-  highlightOpacity: 1,
-  dimOpacity: 0.2,
-  transitionMs: 240,
-  glowDefault: 0.32,
-  glowSelected: 0.85,
-  glowDim: 0.08,
-  haloAlphaDefault: 0.28,
-  haloAlphaSelected: 0.85,
-  haloAlphaDim: 0.05,
-  haloWidthPx: 1,
-};
-
-function resolveNodeVisuals(): NodeVisualTuning {
-  const override = (globalThis as { __WO_VISUAL__?: Partial<NodeVisualTuning> }).__WO_VISUAL__;
-  return { ...DEFAULT_NODE_VISUALS, ...(override ?? {}) };
-}
+export { CLASSIC_NODE_VISUALS, DEFAULT_NODE_LOOK, DEFAULT_NODE_VISUALS, NODE_LOOK_PRESETS, TRANSLUCENT_NODE_VISUALS, resolveNodeVisuals } from './nodeLook';
+export type { NodeLook, NodeVisualTuning } from './nodeLook';
 
 interface BrandBadgeRuntime {
   mark: BrandMark;
@@ -390,6 +343,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
   showChromeLinks,
   showAllLinks,
   showPulses,
+  nodeLook = 'classic',
   autoRotate,
   paused = false,
   inspectorOpen,
@@ -440,6 +394,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
     showChromeLinks,
     showAllLinks,
     showPulses,
+    nodeLook,
     autoRotate,
     inspectorOpen,
   });
@@ -458,6 +413,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
     showChromeLinks,
     showAllLinks,
     showPulses,
+    nodeLook,
     autoRotate,
     inspectorOpen,
   };
@@ -1041,7 +997,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
       // detail drops as the count rises: a few hundred triangles per node is invisible once there are thousands.
       const nodeCount = nextManifest.nodes.length;
       const capacity = Math.max(1, nodeCount);
-      const visuals = resolveNodeVisuals();
+      const visuals = resolveNodeVisuals(stateRef.current.nodeLook);
       const adaptive = visuals.adaptiveSphereDetail;
       const [widthSegs, heightSegs] =
         adaptive && nodeCount > 1200 ? [10, 8]
@@ -1111,6 +1067,16 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
       // The ring keeps the original ring's centre radius; its width is set in screen pixels in the shader.
       const haloPad = HALO_PAD;
       const ringMid = ((ORIGINAL_RING_INNER + ORIGINAL_RING_OUTER) / 2) / haloPad;
+      // Classic: the original band, 1.32 to 1.65 radii, so it grows with the orb. Hairline: a ring of fixed pixel width.
+      const haloRing = visuals.haloStyle === 'ring'
+        ? `float aa = max(fwidth(r), 0.002);
+            float inner = ${(ORIGINAL_RING_INNER / haloPad).toFixed(5)};
+            float outer = ${(ORIGINAL_RING_OUTER / haloPad).toFixed(5)};
+            float a = smoothstep(inner - aa, inner + aa, r) * (1.0 - smoothstep(outer - aa, outer + aa, r));`
+        : `float px = max(fwidth(r), 0.0005);
+            float halfWidth = ${(visuals.haloWidthPx * 0.5).toFixed(3)} * px;
+            float d = abs(r - ${ringMid.toFixed(5)}) - halfWidth;
+            float a = 1.0 - smoothstep(-0.5 * px, 0.5 * px, d);`;
       const haloMat = new THREE.ShaderMaterial({
         transparent: true,
         depthWrite: false,
@@ -1132,13 +1098,9 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
           varying vec2 vUv;
           varying vec4 vColor;
           void main() {
-            // The quad spans ${haloPad.toFixed(3)} radii. The ring is centred where the original ring was and is exactly
-            // haloWidthPx pixels wide (px is one pixel in these units), so it stays a hairline at every zoom.
+            // The quad spans ${haloPad.toFixed(3)} radii.
             float r = length(vUv);
-            float px = max(fwidth(r), 0.0005);
-            float halfWidth = ${(visuals.haloWidthPx * 0.5).toFixed(3)} * px;
-            float d = abs(r - ${ringMid.toFixed(5)}) - halfWidth;
-            float a = 1.0 - smoothstep(-0.5 * px, 0.5 * px, d);
+            ${haloRing}
             if (a < 0.004) discard;
             gl_FragColor = vec4(vColor.rgb, vColor.a * a);
             #include <colorspace_fragment>
@@ -2179,6 +2141,14 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
   useEffect(() => {
     syncGraphRef.current?.(manifest);
   }, [manifest]);
+
+  // Orb shape, opacity and halo are fixed when the nodes are built, so a new look rebuilds them (not the camera).
+  const builtLookRef = useRef(nodeLook);
+  useEffect(() => {
+    if (builtLookRef.current === nodeLook) return;
+    builtLookRef.current = nodeLook;
+    syncGraphRef.current?.(stateRef.current.manifest);
+  }, [nodeLook]);
 
   // Frame the whole layout on a new capture, a layout change or Reset camera.
   useEffect(() => {

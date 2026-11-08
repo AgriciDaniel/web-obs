@@ -23,6 +23,7 @@ import {
 import { PREVIEW_SITE_MANIFEST } from './data/demoSite';
 import { InspectorDrawer } from './components/InspectorDrawer';
 import { SiteGlobeCanvas3D } from './components/SiteGlobeCanvas3D';
+import type { NodeLook } from './components/nodeLook';
 import { SiteIntelDrawer } from './components/SiteIntelDrawer';
 import { SiteAuditPanel } from './components/SiteAuditPanel';
 import { PageExplorer } from './components/PageExplorer';
@@ -49,10 +50,18 @@ interface AppProps {
 }
 
 const EXPLORER_KEY = 'web-obs:explorer-open';
+const NODE_LOOK_KEY = 'web-obs:node-look';
 
 /** Per-viewer convenience only. Storage can be missing or blocked, so every access is guarded. */
 const readExplorerOpen = (): boolean => {
   try { return typeof window !== 'undefined' && window.localStorage?.getItem(EXPLORER_KEY) === '1'; } catch { return false; }
+};
+/** The orb look is a per-viewer choice. Anything but a saved 'translucent' gives the original solid orbs. */
+const readNodeLook = (): NodeLook => {
+  try { return typeof window !== 'undefined' && window.localStorage?.getItem(NODE_LOOK_KEY) === 'translucent' ? 'translucent' : 'classic'; } catch { return 'classic'; }
+};
+const writeNodeLook = (look: NodeLook) => {
+  try { window.localStorage?.setItem(NODE_LOOK_KEY, look); } catch { /* storage unavailable */ }
 };
 const writeExplorerOpen = (open: boolean) => {
   try { window.localStorage?.setItem(EXPLORER_KEY, open ? '1' : '0'); } catch { /* storage unavailable */ }
@@ -115,6 +124,8 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
       ? !window.matchMedia('(prefers-reduced-motion: reduce)').matches
       : true
   );
+  const [nodeLook, setNodeLook] = useState<NodeLook>(readNodeLook);
+  useEffect(() => { writeNodeLook(nodeLook); }, [nodeLook]);
   const [autoRotate, setAutoRotate] = useState<boolean>(false);
   const [resetSignal, setResetSignal] = useState<number>(0);
   const [flyRequest, setFlyRequest] = useState<{ nodeId: string; seq: number } | null>(
@@ -296,7 +307,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
       ['external', 'External', 'wo-dot-ext', showExternal && counts.external > 0],
     ] as const).filter(([, , , shown]) => shown);
   }, [manifest, showExternal, counts.external]);
-  const layersOn = Number(showAllLinks) + Number(showExternal) + Number(showChromeLinks) + Number(showPulses);
+  const layersOn = Number(showAllLinks) + Number(showExternal) + Number(showChromeLinks) + Number(showPulses) + Number(nodeLook === 'translucent');
 
   const showOnboardingCard = initialLoaded && !manifest && !progress.running;
   const selectPage = (id: string) => {
@@ -353,6 +364,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
         showChromeLinks={showChromeLinks}
         showAllLinks={showAllLinks}
         showPulses={showPulses}
+        nodeLook={nodeLook}
         autoRotate={autoRotate}
         paused={paused || auditOpen}
         inspectorOpen={Boolean(selectedNode) || intelOpen}
@@ -692,6 +704,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
             { id: 'external', label: 'External orbit', checked: showExternal, title: 'Show or hide external domains', onSelect: () => setShowExternal((v) => !v) },
             { id: 'nav', label: 'Navigation links', checked: showChromeLinks, title: 'Include header and footer menu links alongside links in the page body', onSelect: () => setShowChromeLinks((v) => !v) },
             { id: 'flow', label: 'Light flow', checked: showPulses, title: 'Subtle directional light moving along links', onSelect: () => setShowPulses((v) => !v) },
+            { id: 'orbs', label: 'Translucent orbs', checked: nodeLook === 'translucent', title: 'Draw orbs see-through, dim the orbs not linked to the selection, and use thin halos. Off keeps the original solid orbs.', onSelect: () => setNodeLook((look) => (look === 'translucent' ? 'classic' : 'translucent')) },
           ]} />
         </div>
       )}
