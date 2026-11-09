@@ -22,6 +22,16 @@ Stored credentials take priority. An available environment ingest secret, when e
 
 HTTPS requests have a timeout and do not follow redirects. Plain HTTP is accepted only for localhost or `127.0.0.1` development targets. Push publishing requests a 72-hour link. Copy the returned link before closing the dialog. Anyone holding a valid private link can read its report until it expires or is revoked on the report server. Archiving a local capture does not revoke a published link.
 
+## A report with a look
+
+A client report can carry an optional **look**: a flat list of checked style slots under `styles` (the accent, a second color, link, text and muted colors, a card color with its own card text, two bundled font names, a heading case, an agency name and a footer line). There is no slot for the page background or the 3D map, so a look cannot change them. A report without `styles` is exactly as before, and the viewer shows its built-in look.
+
+The exporter takes the look as an option and checks it again with the shared function in `src/report/styles/`, which is an exact copy of the report app's code (a test compares each file with the report app's sha256, so a copy that drifts fails). A look that is not valid stops the export with a plain message. The report's integrity seal covers the report without its `styles`.
+
+A report that carries a look is sent to a publish target as **one request with exactly two named parts**, `styles_<hash>` and `data_<hash>`. Both names hold the same hash of the look, so the server can pair them, and the data part is the report without its `styles`. A report without a look is sent as it always was. The look is checked before anything is sent, so a bad one never leaves the computer.
+
+This needs report app **0.1.4 or later** on the server and the ingest. An older server does not know the two-part request and answers that it is not a client report; for a report with a look the plugin turns that into a plain message (update the server and the ingest to 0.1.4, or publish with the default look). A folder target stores the report with its look inside it, and the server checks the look again when it serves the report.
+
 ## Archive and restore
 
 Archive first lists the exact folders and file counts. Type the saved site's ID to confirm. Finish captures or wait for cancellation to complete before archiving. Closing a capture pane does not bypass that wait. A capture awaiting recovery also blocks Archive. Do not run a separate command-line capture against the same vault during an archive.
@@ -42,6 +52,6 @@ The Publish and Archive integration comes from gcollins808's supplied changes ar
 REPORT_SERVER_DIR=/path/to/web-obs-client-report/apps/server node scripts/verify-export-ingest.mjs
 ```
 
-It checks that a plugin-generated report is accepted by ingestion and served by the viewer server. Without that separate source checkout, the test reports an explicit skip. It does not verify a production host, Cloudflare configuration, real credentials, native GPU performance or human approval of report wording.
+It checks that a plugin-generated report is accepted by ingestion and served by the viewer server, and that a report with a look is sent as the two-part request (`styles_<hash>` and `data_<hash>`), accepted, and served with its look. Without that separate source checkout, the test reports an explicit skip. It does not verify a production host, Cloudflare configuration, real credentials, native GPU performance or human approval of report wording.
 
 The dated [native integration acceptance record](NATIVE-INTEGRATION-ACCEPTANCE.md) covers the follow-up native application, capture, report viewer and regression checks.
