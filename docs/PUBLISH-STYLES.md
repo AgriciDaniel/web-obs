@@ -130,3 +130,35 @@ The dialogs are deliberately compact: controls are 28 px high, helper lines are 
 The page is always dark, so Text on the page is lightened until it reads there. Text on cards is separate and is checked against the card color only, so a light card can carry dark text. Fields: **Text on the page**, **Muted on the page**, **Text on cards**, **Muted on cards** (empty: a softer shade of the card text). **Use readable text** fills Text on cards with the better of white and near-black for the chosen card color and shows the ratio. If Text on cards is left empty the page text is used on cards, exactly as before (which is why a light card without it is refused, with a message that names the colors and the numbers).
 
 Profile mapping: `colors.text_on_dark` is the page text; `colors.text` is the text on cards when it reaches 4.5:1 on the profile's card (otherwise it is left out with a note); `colors.muted_on_card` is Muted on cards; `colors.muted` is Muted on the page. The server needs 0.1.6 or later for a look that uses these; an older server refuses the unknown names.
+
+## The screens
+
+These pictures are rendered from the plugin's own dialog code and stylesheet in a browser, with the values of Obsidian's default dark and light themes (`python scripts/render-publish-dialog-states.py <folder> <prefix>`, which uses synthetic data only). They are renders, not screenshots of the Obsidian window, so the surrounding window is a plain test frame. The Obsidian settings tab (the Client reports section and the Style profiles list) uses Obsidian's own setting rows and is described in the text above instead of pictured.
+
+**The Look choice.** The dialog starts on the look the Default look setting picks, with Approved by beside it. A saved look has Edit profile under it.
+
+![The Publish dialog with the Look choice, dark theme](screenshots/client-reports-publish-dialog-look-choice-dark.png)
+
+![The same dialog in the light theme](screenshots/client-reports-publish-dialog-look-choice-light.png)
+
+**Creating a profile.** A look that has no file yet opens the form: name, footer, colors with pickers, text colors and fonts. Nothing is written until Save is pressed.
+
+![The create profile form](screenshots/client-reports-look-create-form.png)
+
+**Readable text.** A card color that its text cannot read is flagged next to the field, with both colors and the ratio, and one click fills in the better text color.
+
+![A light card with unreadable page text: the note and the Use readable text button](screenshots/client-reports-look-readable-text.png)
+
+![After pressing Use readable text](screenshots/client-reports-look-readable-text-fixed.png)
+
+**Editing a saved profile.** Edit profile opens the same form filled from the file. Save changes writes in place and keeps one .bak copy; Save changes and publish saves first.
+
+![Edit profile: the form filled from the saved file](screenshots/client-reports-look-edit-profile.png)
+
+**On a narrow pane, after publishing, and Archive.** The dialog stacks on a narrow pane and keeps its buttons visible; the result of a publish and the Archive confirmation use the same layout.
+
+![The Publish dialog on a narrow pane](screenshots/client-reports-publish-dialog-narrow.png)
+
+![The result of Approve and create report](screenshots/client-reports-publish-created.png)
+
+![The Archive audit confirmation](screenshots/client-reports-archive-dialog.png)

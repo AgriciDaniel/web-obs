@@ -24,4 +24,12 @@ ok('every relative link and image in the two pages points at a file that exists'
     }
   }
 });
+ok('every image the pages show exists in docs/screenshots and is small enough to keep the repository light', () => {
+  let count = 0;
+  for (const text of [reports, styles]) for (const m of text.matchAll(/!\[[^\]]*\]\(screenshots\/([^)]+)\)/g)) {
+    const file = path.join('docs', 'screenshots', m[1]); assert.ok(fs.existsSync(file), file); assert.ok(fs.statSync(file).size < 250 * 1024, file + ' is under 250 KB'); count++;
+    assert.match(m[1], /^client-reports-[a-z0-9-]+\.png$/, 'a plain name with no client or agency in it: ' + m[1]);
+  }
+  assert.ok(count >= 13, 'both pages show their pictures: ' + count);
+});
 console.log(`Look docs OK: ${n} checks passed.`);

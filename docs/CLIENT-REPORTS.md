@@ -26,6 +26,18 @@ HTTPS requests have a timeout and do not follow redirects. Plain HTTP is accepte
 
 A client report can carry an optional **look**: a short, checked list of style slots under `styles`. A report without `styles` is exactly as before, and the viewer shows its built in look. The person chooses the look in the Publish dialog (the **Look** choice, with profile files in the vault); that side is explained in [Publish with a look](PUBLISH-STYLES.md). This section covers what travels, its limits and what each server version needs. The destination, publish target, Publish secret and Cloudflare Access settings above are unchanged and apply to a report with a look as they do to any report.
 
+### How a report looks with and without a look
+
+The same synthetic report ("Example Co"), published through the plugin's own publish code to a report server at 0.1.7 and opened in the viewer. Without a look the viewer shows its built in dark look; with a look it takes the accent, a light card with dark text, Oswald headings, Inter body text and the agency footer line. The dark map stage never changes.
+
+![The viewer with no look](screenshots/client-reports-viewer-default.png)
+
+![The viewer with a look: light card, dark card text, Oswald headings and an agency footer](screenshots/client-reports-viewer-with-look.png)
+
+![A tour step with the look: cards with dark text on a light card](screenshots/client-reports-viewer-with-look-step.png)
+
+![The same report with the look at phone width](screenshots/client-reports-viewer-with-look-phone.png)
+
 ### What the look contains and its limits
 
 | Slot | Value | Limit |
