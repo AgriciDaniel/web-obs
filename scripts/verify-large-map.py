@@ -16,7 +16,7 @@ import tempfile
 import time
 import urllib.request
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, expect
 
 ROOT = Path(__file__).resolve().parents[1]
 PAGES = 1500
@@ -248,17 +248,27 @@ def run(port):
         page.keyboard.press('Escape')
         page.wait_for_timeout(500)
         for tab in ('Road', 'Clusters', 'Globe'):
-            page.get_by_role('tab', name=tab).click()
+            button = page.get_by_role('tab', name=tab, exact=True)
+            page.evaluate('() => { window.__p.draws = 0; }')
+            button.click()
+            expect(button).to_have_attribute('aria-selected', 'true')
+            # A transitioning view can briefly retain the preceding layout's labels. Observe its redraw,
+            # then require the expected label count to remain visible for two seconds before asserting it.
+            # Camera animation may continue; this check concerns labels, not redraw policy in every layout.
+            page.wait_for_function('() => window.__p.draws > 0', timeout=30000)
+            page.evaluate('() => { window.__p.labelsReadySince = 0; }')
+            page.wait_for_function("""(minimum) => {
+              const count = [...document.querySelectorAll('.wo-node-pill')]
+                .filter(p => !p.classList.contains('is-hidden') && p.dataset.nodeId).length;
+              if (count < minimum) { window.__p.labelsReadySince = 0; return false; }
+              if (!window.__p.labelsReadySince) window.__p.labelsReadySince = performance.now();
+              return performance.now() - window.__p.labelsReadySince >= 2000;
+            }""", arg=1 if tab == 'Road' else 4, polling=100, timeout=40000)
             if tab == 'Road':
-                # The Road scales to the site: at 1,500 pages it is far longer than the screen, so only the home label rests
-                # in view. Wait for the switch to finish, then check the home label is there. Counting more labels here would
-                # read the globe's labels before they are released.
-                page.wait_for_timeout(3000)
+                # At 1,500 pages the Road is far longer than the screen, so only the home label rests in view.
                 assert visible_pills() >= 1, 'Road view must show the home label'
-                continue
-            # Nodes travel to their new positions over many frames; wait for labels instead of sleeping.
-            page.wait_for_function("() => [...document.querySelectorAll('.wo-node-pill')].filter(p => !p.classList.contains('is-hidden') && p.dataset.nodeId).length > 3", timeout=30000)
-            assert visible_pills() > 3, f'{tab} view must show labels'
+            else:
+                assert visible_pills() > 3, f'{tab} view must show labels'
         assert not errors, errors
         browser.close()
     print(f'[PASS] Large map verified on {PAGES} pages: constant draw calls, pooled labels, settled map stops drawing, '
