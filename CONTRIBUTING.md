@@ -15,7 +15,7 @@ engine/.venv/bin/pip install -r engine/requirements.txt
 npm run verify
 ```
 
-`npm run lint` runs the pinned official Obsidian recommended source rules. It requires zero errors and warnings, with browser/Node scopes and product terminology documented in `eslint.config.mjs`. Use Node.js 22.13 or newer for the development toolchain. The lockfile overrides affected lint-tool minimatch releases with 11.0.1 and pins moment to 2.31.0 for the official lint plugin. These overrides do not enter the plugin bundle.
+`npm run lint` runs the pinned official Obsidian recommended source rules. It requires zero errors and warnings, with browser/Node scopes and product terminology documented in `eslint.config.mjs`. Use Node.js 22.13 or newer for the development toolchain. The lockfile overrides affected lint-tool minimatch releases with 11.0.1 and pins moment to 2.31.0 for the official lint plugin. The minimatch selector includes its patched target version so npm 10 and npm 11 resolve the same lockfile. These overrides do not enter the plugin bundle.
 
 `npm run verify` includes lint and is the one check that must pass before a pull request. It builds the plugin, runs the crawler against local test sites and runs every test.
 
