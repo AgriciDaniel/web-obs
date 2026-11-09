@@ -24,6 +24,18 @@ Type a domain. Web-Obs reads the public pages, saves each one as a clean Markdow
 
 Captures run on your computer. There is no account, no tracking, no AI service and no API key needed for captures. Web-Obs talks to the website you ask it to capture and to the links found on it when it checks them. The optional email DNS check asks your own DNS resolver about the domain; you can turn it off in settings. Publishing a client report is a separate action: it can send the approved report to a server you configure. Your capture notes stay in your vault.
 
+### Network use
+
+Web-Obs connects to the website you ask it to capture and to the links it finds there, to check them. The optional email DNS check asks your DNS resolver about that domain. Publishing a client report, only when you choose to, sends the approved report to the server or SSH host you set up. Nothing else: no tracking, no analytics, no AI service.
+
+### Requires an external program
+
+Captures run in Python 3.14 or newer, which you install yourself (see below). The optional browser step uses Playwright with Chromium. Web-Obs starts these as local processes, which is why it is desktop only.
+
+### Files outside the vault
+
+Captures, images and reports are saved inside your vault. Outside it, Web-Obs only writes a short-lived temp folder while publishing a client report, and the report itself to the folder or server you choose for publishing.
+
 ## Before you start
 
 Web-Obs needs **Python 3.14 or newer** on your computer. It does not install anything for you, so set it up once:
@@ -48,12 +60,10 @@ Web-Obs is built for Obsidian on desktop and does not work on mobile. It is test
 
 ## Install
 
-Web-Obs is not in the Obsidian community list yet, so for now you install it by hand:
+1. In Obsidian, open **Settings, Community plugins, Browse**, search for **Web-Obs Site Globe**, then click Install and Enable. On first start Web-Obs unpacks its capture engine next to its plugin files. You do not need to copy anything else.
+2. Open the Web-Obs settings and set **Python executable** to the one you just made, for example `~/web-obs-python/bin/python3`, or on Windows `C:\Users\YOU\web-obs-python\Scripts\python.exe`.
 
-1. Download `main.js`, `manifest.json` and `styles.css` from the latest [release](../../releases).
-2. Put them in a folder named `web-obs` inside `YOUR-VAULT/.obsidian/plugins/`.
-3. In Obsidian, open **Settings, Community plugins**, and turn on **Web-Obs Site Globe**. On first start Web-Obs unpacks its capture engine next to these files. You do not need to copy anything else.
-4. Open the Web-Obs settings and set **Python executable** to the one you just made, for example `~/web-obs-python/bin/python3`, or on Windows `C:\Users\YOU\web-obs-python\Scripts\python.exe`.
+Prefer to install by hand? Download `main.js`, `manifest.json` and `styles.css` from the latest [release](https://github.com/AgriciDaniel/web-obs/releases/latest) into a folder named `web-obs` inside `YOUR-VAULT/.obsidian/plugins/`, then turn it on in **Settings, Community plugins**.
 
 ## Your first capture
 
