@@ -42,7 +42,7 @@ export function MenuButton({ label, icon, text, items, placement = 'below', clas
 
   const close = (refocus: boolean) => {
     setOpen(false);
-    if (refocus) requestAnimationFrame(() => buttonRef.current?.focus({ preventScroll: true }));
+    if (refocus) window.requestAnimationFrame(() => buttonRef.current?.focus({ preventScroll: true }));
   };
   const move = (delta: number) => {
     const current = itemRefs.current.findIndex((el) => el === document.activeElement);

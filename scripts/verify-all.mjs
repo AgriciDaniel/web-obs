@@ -588,6 +588,8 @@ async function main() {
   checkDashHygiene();
   checkNoPrivateBranding();
   checkPythonSyntax();
+  execFileSync(process.execPath, ['node_modules/eslint/bin/eslint.js', 'src', '--max-warnings', '0'], { stdio: 'inherit', timeout: 60_000 });
+  console.log('[PASS] Official Obsidian recommended source lint with documented runtime-specific scopes.');
   execFileSync(process.execPath, ['scripts/verify-resource-validation.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-site-audit.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-compare-sites.mjs'], { stdio: 'inherit', timeout: 60_000 });
@@ -598,13 +600,19 @@ async function main() {
   execFileSync(process.execPath, ['scripts/verify-engine-bundle.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-map-discovery.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-cluster-layout.mjs'], { stdio: 'inherit', timeout: 60_000 });
+  execFileSync(process.execPath, ['scripts/verify-audit-actions.mjs'], { stdio: 'inherit', timeout: 60_000 });
+  execFileSync(process.execPath, ['scripts/verify-publish-target.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-road-layout.mjs'], { stdio: 'inherit', timeout: 60_000 });
+  execFileSync(process.execPath, ['scripts/verify-cluster-prefetch.mjs'], { stdio: 'inherit', timeout: 60_000 });
+  execFileSync(process.execPath, ['scripts/verify-node-look.mjs'], { stdio: 'inherit', timeout: 60_000 });
+  execFileSync(process.execPath, ['scripts/verify-export-ingest.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-capture-host.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-native-lifecycle.mjs'], { stdio: 'inherit', timeout: 60_000 });
   // A cold macOS runner spends most of a minute starting this suite (47 s for the whole suite on a passing run),
   // so 60 s timed out with no fault in the code.
   execFileSync(pythonCommand(ROOT), ['scripts/verify-no-api.py'], { stdio: 'inherit', timeout: 180_000 });
-  for (const script of ['scripts/verify-browser-runtime.py', 'scripts/verify-link-policy.py', 'scripts/verify-evidence.py', 'scripts/verify-recapture.py', 'scripts/verify-system.py', 'scripts/verify-resources.py', 'scripts/verify-workers.py', 'scripts/verify-pipeline.py', 'scripts/verify-html-tail.py', 'scripts/verify-canvas-export.py', 'scripts/verify-link-continuation.py', 'scripts/verify-failure-paths.py', 'scripts/verify-trailing-slash.py', 'scripts/verify-render-on-demand.py', 'scripts/verify-transport-checks.py', 'scripts/verify-audit-expansion.py', 'scripts/verify-browser-audit.py', 'scripts/verify-crawler-identity.py', 'scripts/verify-note-structure.py', 'scripts/verify-brand-logo.py', 'scripts/verify-page-snapshots.py', 'scripts/verify-capture-switches.py', 'scripts/verify-llms-txt.py', 'scripts/verify-seo-r2.py', 'scripts/verify-note-privacy.py', 'scripts/verify-note-render.py', 'scripts/verify-manifest-switches.py']) {
+  execFileSync(pythonCommand(ROOT), ['scripts/verify-audit-actions-ui.py'], { stdio: 'inherit', timeout: 180_000 });
+  for (const script of ['scripts/verify-browser-runtime.py', 'scripts/verify-link-policy.py', 'scripts/verify-evidence.py', 'scripts/verify-recapture.py', 'scripts/verify-system.py', 'scripts/verify-resources.py', 'scripts/verify-workers.py', 'scripts/verify-pipeline.py', 'scripts/verify-html-tail.py', 'scripts/verify-canvas-export.py', 'scripts/verify-link-continuation.py', 'scripts/verify-failure-paths.py', 'scripts/verify-trailing-slash.py', 'scripts/verify-render-on-demand.py', 'scripts/verify-large-map.py', 'scripts/verify-orb-highlight.py', 'scripts/verify-transport-checks.py', 'scripts/verify-audit-expansion.py', 'scripts/verify-browser-audit.py', 'scripts/verify-crawler-identity.py', 'scripts/verify-note-structure.py', 'scripts/verify-brand-logo.py', 'scripts/verify-page-snapshots.py', 'scripts/verify-capture-switches.py', 'scripts/verify-llms-txt.py', 'scripts/verify-seo-r2.py', 'scripts/verify-note-privacy.py', 'scripts/verify-note-render.py', 'scripts/verify-manifest-switches.py']) {
     // A guard against a hung suite, not a speed test: on GitHub's macOS runners the switch suite took 84 s of the
     // old 90 s when it passed, and a slower runner timed out with no test failing.
     execFileSync(pythonCommand(ROOT), [script, ...(script.endsWith('verify-pipeline.py') ? ['--benchmark'] : [])], { stdio: 'inherit', timeout: 300_000 });

@@ -93,7 +93,7 @@ export const InspectorDrawer: React.FC<InspectorDrawerProps> = ({
   const issues = useMemo(() => (node.seoIssues ?? []).map((issue) => {
     const slug = issue.replace(/\s*\(\d+\)$/, '');
     const entry = manifest.issueCatalog?.[slug];
-    return { id: issue, label: issueLabel(manifest, issue), tone: (entry?.tone ?? 'review') as EngineFindingTone, explanation: entry?.explanation };
+    return { id: issue, label: issueLabel(manifest, issue), tone: (entry?.tone ?? 'review'), explanation: entry?.explanation };
   }), [manifest, node.seoIssues]);
 
   const siteFindings = useMemo(() => {

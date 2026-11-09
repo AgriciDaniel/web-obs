@@ -68,7 +68,7 @@ export const MapDiscoveryControls = memo(function MapDiscoveryControls({
   };
   const close = () => {
     setOpen(false);
-    requestAnimationFrame(() => launcherRef.current?.focus({ preventScroll: true }));
+    window.requestAnimationFrame(() => launcherRef.current?.focus({ preventScroll: true }));
   };
 
   return <div className="wo-discovery-layer">

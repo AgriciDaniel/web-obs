@@ -60,7 +60,7 @@ export function llmsRow(ai: AiIntel, llms: LlmsTxtValidation | undefined): Disco
   if (!ai.endpoints.llmsTxt) {
     // Optional: Google Search ignores it and Lighthouse marks a 404 as not applicable. Only a server error is a problem.
     const serverError = probe?.state === 'unavailable' && (probe.statusCode ?? 0) >= 500;
-    const detail = serverError ? `The server fails with HTTP ${probe!.statusCode} when asked for it.`
+    const detail = serverError ? `The server fails with HTTP ${probe.statusCode} when asked for it.`
       : probe?.state === 'html' ? 'The address serves a web page instead of a markdown file.'
       : probe?.state === 'refused' ? 'Not checked: robots.txt does not allow fetching it.'
       : probe?.state === 'unavailable' ? `Not checked: the site answered ${probe.detail ?? 'with an error'}`
@@ -151,7 +151,7 @@ export function buildDiscoveryChecklist(manifest: SiteGraphManifest): { rows: Di
   });
 
   if (ai) {
-    rows.push(llmsRow(ai, v('llmsTxt') as LlmsTxtValidation | undefined));
+    rows.push(llmsRow(ai, v('llmsTxt')));
     const markdown = markdownRow(ai);
     if (markdown) rows.push(markdown);
     rows.push({

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { AlertTriangle, ArrowUpRight, CheckSquare, ChevronDown, FileSpreadsheet, FileText, Link2, Search, X, XCircle } from 'lucide-react';
-import type { SiteGraphManifest } from '../types/site';
+import type { AuditActions, SiteGraphManifest } from '../types/site';
+import { useAuditActions } from './AuditActionsBar';
 import { captureDate } from '../data/sitePresentation';
 import { AUDIT_CATEGORIES, buildSiteAudit, filterAuditFindings } from '../data/siteAudit';
 import type { AuditBucket, AuditCategory, AuditFinding } from '../data/siteAudit';
@@ -15,6 +16,10 @@ export interface SiteAuditPanelProps {
   onOpenNote: (path: string) => void;
   onContinueLinks?: () => void;
   onOpenExternalUrl: (url: string) => void;
+  /** Optional: Publish audit and Archive audit (Obsidian desktop only). */
+  actions?: AuditActions;
+  /** After a capture was archived, so the view can refresh its list of sites. */
+  onArchived?: () => void;
 }
 
 type FindingTone = AuditFinding['tone'];
@@ -83,7 +88,7 @@ function ContentAndBrowser({ manifest }: { manifest: SiteGraphManifest }) {
   pages.forEach(page => page.thirdParty?.hosts.forEach(host => hosts.set(host.host, (hosts.get(host.host) ?? 0) + host.requests)));
   const rules = new Map<string, number>();
   pages.forEach(page => page.a11y?.violations?.forEach(rule => rules.set(rule.help, (rules.get(rule.help) ?? 0) + 1)));
-  const found = (value: string | null | undefined): { value: string; status: Status } => value ? { value: 'Found', status: 'good' } : { value: 'Not found', status: 'warning' };
+  const found = (value: string | null | undefined): { value: string; status: Status } => value ? { value: 'Found', status: 'good' as const } : { value: 'Not found', status: 'warning' as const };
   return <>
     {audit && (dup || fresh || trust) && <Disclosure summary="Content summary">
       <KeyValueList rows={[
@@ -118,7 +123,7 @@ function ContentAndBrowser({ manifest }: { manifest: SiteGraphManifest }) {
   </>;
 }
 
-export function SiteAuditPanel({ manifest, onClose, onInspectPage, onOpenNote, onContinueLinks, onOpenExternalUrl }: SiteAuditPanelProps) {
+export function SiteAuditPanel({ manifest, onClose, onInspectPage, onOpenNote, onContinueLinks, onOpenExternalUrl, actions, onArchived }: SiteAuditPanelProps) {
   const audit = useMemo(() => buildSiteAudit(manifest), [manifest]);
   const [category, setCategory] = useState<AuditCategory | 'all'>('all');
   const [query, setQuery] = useState('');
@@ -147,7 +152,7 @@ export function SiteAuditPanel({ manifest, onClose, onInspectPage, onOpenNote, o
   const broken = audit.linkDistribution.find(bucket => bucket.id === 'broken')?.count ?? 0;
 
   const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
-  const filterBy = (value: AuditCategory) => { setCategory(value); setQuery(''); requestAnimationFrame(() => scrollTo('wo-audit-findings')); };
+  const filterBy = (value: AuditCategory) => { setCategory(value); setQuery(''); window.requestAnimationFrame(() => scrollTo('wo-audit-findings')); };
   const captureStatus: { status: Status; label: string } = manifest.captureStatus === 'partial'
     ? { status: 'warning', label: 'Partial collection' }
     : manifest.captureStatus === 'complete' ? { status: 'good', label: 'Capture saved' } : { status: 'neutral', label: 'Legacy capture' };
@@ -158,6 +163,8 @@ export function SiteAuditPanel({ manifest, onClose, onInspectPage, onOpenNote, o
     { label: 'Duplicate groups', value: extras.duplicateGroups, hint: 'Titles, descriptions and content' },
     ...(audit.imageMetricPages ? [{ label: 'Images without alt text', value: audit.imagesMissingAlt, hint: `From ${audit.imageMetricPages} pages with recorded metrics` }] : []),
   ] : [];
+
+  const auditUi = useAuditActions({ manifest, actions, onOpenUrl: onOpenExternalUrl, onArchived: onArchived ?? (() => {}) });
 
   return <section className="wo-audit-panel" aria-label={`Site audit for ${manifest.domain}`}>
     <header className="wo-audit-header">
@@ -170,9 +177,11 @@ export function SiteAuditPanel({ manifest, onClose, onInspectPage, onOpenNote, o
         {extras?.tasks && <button type="button" className="wo-audit-button" onClick={() => onOpenNote(notePath('_tasks.md'))}><CheckSquare size={14} aria-hidden="true" /> Task list</button>}
         <button type="button" className="wo-audit-button" onClick={() => onOpenNote(notePath('_findings.csv'))}><FileSpreadsheet size={14} aria-hidden="true" /> Findings CSV</button>
         <button type="button" className="wo-audit-button" onClick={() => onOpenNote(notePath('_link-health.md'))}><Link2 size={14} aria-hidden="true" /> Link report</button>
+        {auditUi.buttons}
       </div>
       <button type="button" className="wo-audit-close" onClick={onClose} aria-label="Close audit" title="Close audit"><X size={18} aria-hidden="true" /></button>
     </header>
+    {auditUi.dialogs}
 
     <div className="wo-audit-body">
       <div className="wo-audit-content">
@@ -262,8 +271,8 @@ export function SiteAuditPanel({ manifest, onClose, onInspectPage, onOpenNote, o
         <div className="wo-audit-more">
           {audit.headers && (audit.headers.present.length > 0 || audit.headers.missing.length > 0) && <Disclosure summary="Homepage response headers" count={audit.headers.present.length + audit.headers.missing.length}>
             <KeyValueList rows={[
-              ...audit.headers.present.map(header => ({ label: header, value: 'Present', status: 'good' as Status })),
-              ...audit.headers.missing.map(header => ({ label: header, value: 'Not observed', status: 'warning' as Status })),
+              ...audit.headers.present.map(header => ({ label: header, value: 'Present', status: 'good' as const })),
+              ...audit.headers.missing.map(header => ({ label: header, value: 'Not observed', status: 'warning' as const })),
             ]} />
           </Disclosure>}
           {audit.mediaTypes.length > 0 && <Disclosure summary="Resource types" count={audit.mediaTypes.length}>

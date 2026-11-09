@@ -20,7 +20,7 @@ export interface ResyncAdapter {
   reconcileInternalFile?: (path: string) => Promise<unknown>;
   queue?: (task: () => Promise<unknown>) => Promise<unknown>;
   watchers?: Record<string, unknown>;
-  startWatchPath?: (path: string) => Promise<unknown> | unknown;
+  startWatchPath?: (path: string) => unknown;
   stopWatchPath?: (path: string) => void;
 }
 

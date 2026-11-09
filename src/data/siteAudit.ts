@@ -59,7 +59,7 @@ export function buildSiteAudit(manifest: SiteGraphManifest) {
     findings.set(id, finding);
   };
   const catalog = manifest.issueCatalog ?? {};
-  const engineFindings = Array.isArray(manifest.audit?.findings) ? manifest.audit!.findings : null;
+  const engineFindings = Array.isArray(manifest.audit?.findings) ? manifest.audit.findings : null;
   const pageByKey = new Map(pages.map(page => [urlKey(page.url), page]));
   const findPage = (url?: string) => url ? pageByUrl.get(url) ?? pageByKey.get(urlKey(url)) : undefined;
   const totals = new Map<string, number>();

@@ -29,6 +29,17 @@ const md = buildComparisonMarkdown(a, b, '2026-11-03T00:00:00Z');
 assert.match(md, /\| Pages captured \| 2 \| 1 \|/);
 assert.match(md, /Only a\.com:\*\* WebSite/);
 assert.match(md, /Only b\.com:\*\* Organization/);
+// Explicit null browser measurements are unavailable, never a measured zero.
+{
+  const unavailable = structuredClone(a);
+  unavailable.siteIntel.browserAudit.pages = [{ lab: { lcpMs: null } }];
+  unavailable.nodes[0].pageChecks.textRatio = null;
+  unavailable.nodes[0].pageChecks.readability.fleschReadingEase = null;
+  const metrics = siteMetrics(unavailable);
+  assert.equal(metrics.rows['Browser sample median LCP (lab ms)'], 'No data');
+  assert.equal(metrics.rows['Median text to HTML ratio'], 'No data');
+  assert.equal(metrics.rows['Median Flesch reading ease'], 'No data');
+}
 const banned = [String.fromCharCode(0x2013), String.fromCharCode(0x2014)];
 assert.ok(!banned.some((ch) => md.includes(ch)), 'no dashes in generated text');
 assert.equal(comparisonNotePath('a.com', 'b.com'), 'sites/_compare/a.com-vs-b.com.md');

@@ -1,5 +1,5 @@
 import { applyPipelineProgress } from '../data/crawlProgress';
-import { createElement } from 'react';
+import { createElement, type ComponentType } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { JsonlDecoder } from '../data/jsonl';
 import { parseSiteManifest } from '../data/validateManifest';
@@ -16,12 +16,16 @@ import type {
 export const WEB_OBS_VIEW_TYPE = 'web-obs-site-globe';
 export const DEFAULT_VAULT_NAME = 'web-obs';
 
+const eventText = (value: unknown, fallback = ''): string => typeof value === 'string' ? value : fallback;
+
 const UNSAFE_SCHEME_RE = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+// eslint-disable-next-line no-control-regex -- Strip control bytes from URI display text.
 const CTRL_CHAR_RE = /[\x00-\x1f\x7f-\x9f]/g;
 
 export function sanitizeVaultRelativePath(rawPath: unknown): string | null {
   if (typeof rawPath !== 'string') return null;
   if (rawPath.length === 0 || rawPath.length > 300) return null;
+  // eslint-disable-next-line no-control-regex -- Reject control bytes before path or URL normalization.
   if (/[\x00-\x1f\x7f]/.test(rawPath)) return null;
 
   const candidate = rawPath.replace(/\\/g, '/').trim();
@@ -35,6 +39,7 @@ export function sanitizeVaultRelativePath(rawPath: unknown): string | null {
   }
 
   for (const check of [candidate, decoded]) {
+    // eslint-disable-next-line no-control-regex -- Reject control bytes before path or URL normalization.
     if (!check || /[\x00-\x1f\x7f]/.test(check)) return null;
     if (check.startsWith('/') || check.startsWith('~')) return null;
     if (UNSAFE_SCHEME_RE.test(check)) return null;
@@ -53,6 +58,7 @@ export function sanitizeExternalHttpUrl(rawUrl: unknown): string | null {
   if (typeof rawUrl !== 'string' || rawUrl.length === 0 || rawUrl.length > 1024) {
     return null;
   }
+  // eslint-disable-next-line no-control-regex -- Reject control bytes before path or URL normalization.
   if (/[\x00-\x1f\x7f]/.test(rawUrl)) return null;
   let candidate = rawUrl.trim();
   if (!/^https?:\/\//i.test(candidate)) {
@@ -148,17 +154,17 @@ export function createStandaloneHost(vaultName = DEFAULT_VAULT_NAME): SiteHostAd
         const decoder = new JsonlDecoder((ev) => {
           if (activeRun !== run || controller.signal.aborted) return;
           if (completedSiteId) throw new Error('Crawler returned events after completion.');
-          if (ev.event === 'error') throw new Error(String(ev.message ?? 'Crawl failed'));
+          if (ev.event === 'error') throw new Error(eventText(ev.message, 'Crawl failed'));
           if (applyPipelineProgress(state, ev)) {
             // Independent lanes are already applied.
           } else if (ev.event === 'phase') {
             state.currentUrl = '';
-            if (['sitemap', 'crawl', 'compile'].includes(String(ev.phase))) state.phase = ev.phase as CrawlProgressState['phase'];
-            state.message = String(ev.message ?? '');
+            if (['sitemap', 'crawl', 'compile'].includes(eventText(ev.phase))) state.phase = ev.phase as CrawlProgressState['phase'];
+            state.message = eventText(ev.message);
           } else if (ev.event === 'sitemap_progress') {
             state.sitemapsFound = Number(ev.sitemapsFound ?? state.sitemapsFound);
             state.sitemapUrlsCount = Number(ev.urlsDiscovered ?? state.sitemapUrlsCount);
-            state.currentUrl = String(ev.sitemapUrl ?? '');
+            state.currentUrl = eventText(ev.sitemapUrl);
           } else if (ev.event === 'sitemap_done') {
             state.sitemapsFound = Number(ev.sitemapsCount ?? 0);
             state.sitemapUrlsCount = Number(ev.sitemapUrlsCount ?? 0);
@@ -166,10 +172,10 @@ export function createStandaloneHost(vaultName = DEFAULT_VAULT_NAME): SiteHostAd
             state.phase = 'crawl';
             state.currentPage = Number(ev.current ?? state.currentPage);
             state.maxPages = Number(ev.maxPages ?? state.maxPages);
-            state.currentUrl = String(ev.url ?? '');
+            state.currentUrl = eventText(ev.url);
             state.message = `Crawling page ${state.currentPage} of ${state.maxPages}`;
           } else if (ev.event === 'complete') {
-            completedSiteId = String(ev.siteId ?? '');
+            completedSiteId = eventText(ev.siteId);
             if (!completedSiteId) throw new Error('Crawler completed without a site ID.');
             partial = ev.captureStatus === 'partial';
             state.phase = 'compile';
@@ -244,7 +250,7 @@ export interface MountedSiteGlobeView {
 export function mountSiteGlobeApp(
   containerEl: HTMLElement,
   host: SiteHostAdapter,
-  AppComponent: React.ComponentType<{ host: SiteHostAdapter; initialTheme?: ThemeMode }>
+  AppComponent: ComponentType<{ host: SiteHostAdapter; initialTheme?: ThemeMode }>
 ): MountedSiteGlobeView {
   const root: Root = createRoot(containerEl);
   root.render(createElement(AppComponent, { host, initialTheme: host.initialTheme }));

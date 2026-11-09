@@ -352,7 +352,7 @@ export interface BrowserAuditPage {
 }
 
 export interface BrowserAuditResult {
-  state: 'ok' | 'skipped' | 'partial' | string;
+  state: string;
   detail?: string;
   elapsedSec?: number;
   sampledUrls?: string[];
@@ -573,9 +573,26 @@ export interface HostEventHandlers {
   onThemeChange?: (theme: ThemeMode) => void;
   onPauseChange?: (paused: boolean) => void;
   onSitesChanged?: (sites: SiteSummaryItem[], latestManifest?: SiteGraphManifest) => void;
+  onSiteArchived?: (siteId: string) => void;
   onCrawlProgress?: (progress: CrawlProgressState) => void;
   onCommand?: (command: GlobePluginCommand) => void;
 }
+
+/** What the audit view's buttons need from the host. */
+export interface AuditActions {
+  /** Name to pre-fill in the approval box. */
+  approver: string;
+  /** True when a reports folder is set, so Publish audit can write a file. */
+  publishReady: boolean;
+  /** The host the report would be sent to (publish target), or null when it is saved to the folder. */
+  readonly publishTargetLabel?: string | null;
+  publish: (siteId: string, approvedBy: string) => Promise<PublishAuditResult>;
+  previewArchive: (siteId: string) => Promise<ArchivePlan>;
+  archive: (siteId: string, confirm: string) => Promise<ArchiveResult>;
+}
+export interface PublishAuditResult { file: string | null; folder: string | null; /** Set when the report was sent to a publish target instead of saved: the host it went to and when the link stops working. */ pushedTo?: string; expires?: string; link: string | null; sizeKb: number; clientName: string; findings: number; top: string[] }
+export interface ArchivePlan { domain: string; items: Array<{ label: string; rel: string; files: number; bytes: number }>; files: number; bytes: number }
+export interface ArchiveResult { domain: string; trash: string; files: number }
 
 export interface SiteHostAdapter {
   mode: 'obsidian' | 'standalone';
@@ -598,4 +615,6 @@ export interface SiteHostAdapter {
   onOpenExternalUrl: (url: string) => void;
   subscribeHostEvents?: (handlers: HostEventHandlers) => () => void;
   onWebGLContextLost?: () => void;
+  /** Optional (Obsidian desktop): the audit view's Publish audit and Archive audit buttons. Without it the buttons are not shown. */
+  auditActions?: AuditActions;
 }

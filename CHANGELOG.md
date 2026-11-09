@@ -2,7 +2,18 @@
 
 ## Unreleased
 
+### Added
+- **Publish and Archive in Site Audit.** Approve a client report and save it locally or send it to your own report server. Reports exclude vault paths, raw page text, resource lists and agency notes. Publish credentials use Obsidian secret storage where available, with a session prompt fallback for the ingest secret. Environment secrets require an explicit setting. Archive moves a capture, its history, proposals and unfinished site files into a unique recoverable folder with restore instructions. Thanks to [gcollins808](https://github.com/gcollins808).
+- **Optional translucent orbs.** Map layers includes a saved per-viewer choice for translucent orbs, animated highlights and thin halos. The original solid appearance remains the default.
+
+### Changed
+- **Reproducible plugin lint.** The pinned official recommended checks now run through `npm run lint` and the full verification gate, with explicit scopes for shared browser and Node code. Settings also appear in modern Obsidian settings search.
+- **Faster large maps.** Cluster layouts compute on demand with background time slices. Instanced nodes and edges, pooled labels and a two-tier frame loop reduce rendering work. Includes the changes from Garrett's PRs #9, #10 and draft #11, integrated and verified with the plugin changes.
+
 ### Fixed
+- **Typed capture and comparison boundaries.** Saved-site comparisons validate manifests and leave unavailable measurements as no data. Capture requests reject invalid JSON value types. Async command and child-exit callbacks handle failures, plugin paths follow the vault configuration directory, and view activation supports hosts before Obsidian 1.7.2 through an API guard.
+- **Native report and archive follow-up.** Client exports omit local logo paths. Environment credentials are checked before prompting, rejected uploads get accurate guidance, and confirmation forms stay scrollable in short panes. Archiving refreshes every open Web-Obs pane. A closing capture continues to block Archive until its child process exits, including after the owning pane closes.
+- **Archive integration safeguards.** Refuse archiving during a capture in any open Web-Obs view, include actual transaction staging paths and preserved proposals, reject linked directory destinations, avoid trash name collisions, and restore moved folders after a failed move. A pending capture recovery must finish first.
 - **Clusters no longer fly apart on densely linked sites.** On a site where pages carry dozens of links, the Clusters layout could push pages out without limit. Each link's pull is now shared out by how many links a page has, so busy pages stay steady while small sites lay out exactly as before. Thanks to [gcollins808](https://github.com/gcollins808).
 - **The Road view scales to the site, and Road and Clusters zoom out fully.** Road spacing follows the number of pages and the length of their labels, and the camera can now pull back far enough to show a large site whole. Thanks to [gcollins808](https://github.com/gcollins808).
 

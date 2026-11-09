@@ -1,4 +1,4 @@
-import { FileSystemAdapter, Modal, Notice, Plugin, Setting, type WorkspaceLeaf } from 'obsidian';
+import { FileSystemAdapter, Modal, Notice, Plugin, Setting, requireApiVersion, type WorkspaceLeaf } from 'obsidian';
 import { WEB_OBS_VIEW_TYPE } from '../obsidian/hostAdapter';
 import type { GlobeViewMode } from '../types/site';
 import {
@@ -12,12 +12,13 @@ import { runDoctor } from './doctor';
 import { installEngine } from './engineBundle';
 import { buildComparisonMarkdown, comparisonNotePath } from './compareSites';
 import path from 'node:path';
+import { parseSiteManifest } from '../data/validateManifest';
 
 class QuickCaptureModal extends Modal {
-  private onSubmitUrl: (url: string) => void;
+  private onSubmitUrl: (url: string) => Promise<void>;
   private value = '';
 
-  constructor(plugin: Plugin, onSubmitUrl: (url: string) => void) {
+  constructor(plugin: Plugin, onSubmitUrl: (url: string) => Promise<void>) {
     super(plugin.app);
     this.onSubmitUrl = onSubmitUrl;
   }
@@ -25,7 +26,7 @@ class QuickCaptureModal extends Modal {
   override onOpen(): void {
     const { contentEl } = this;
     contentEl.empty();
-    contentEl.createEl('h3', { text: 'Capture Website' });
+    contentEl.createEl('h3', { text: 'Capture website' });
 
     new Setting(contentEl)
       .setName('Website domain or URL')
@@ -39,7 +40,9 @@ class QuickCaptureModal extends Modal {
             ev.preventDefault();
             const target = this.value.trim();
             this.close();
-            this.onSubmitUrl(target);
+            void this.onSubmitUrl(target).catch((error: unknown) => {
+              new Notice(`Capture failed: ${error instanceof Error ? error.message : 'Unexpected error.'}`);
+            });
           }
         });
         window.setTimeout(() => text.inputEl.focus(), 20);
@@ -52,7 +55,9 @@ class QuickCaptureModal extends Modal {
             if (!this.value.trim()) return;
             const target = this.value.trim();
             this.close();
-            this.onSubmitUrl(target);
+            void this.onSubmitUrl(target).catch((error: unknown) => {
+              new Notice(`Capture failed: ${error instanceof Error ? error.message : 'Unexpected error.'}`);
+            });
           })
       );
   }
@@ -66,7 +71,7 @@ class CompareSitesModal extends Modal {
   private left = '';
   private right = '';
 
-  constructor(plugin: Plugin, private sites: string[], private onCompare: (left: string, right: string) => void) {
+  constructor(plugin: Plugin, private sites: string[], private onCompare: (left: string, right: string) => Promise<void>) {
     super(plugin.app);
     this.left = sites[0] ?? '';
     this.right = sites[1] ?? '';
@@ -88,7 +93,9 @@ class CompareSitesModal extends Modal {
         return;
       }
       this.close();
-      this.onCompare(this.left, this.right);
+      void this.onCompare(this.left, this.right).catch((error: unknown) => {
+        new Notice(`Comparison failed: ${error instanceof Error ? error.message : 'Unexpected error.'}`);
+      });
     }));
   }
 
@@ -123,7 +130,7 @@ export default class WebObsPlugin extends Plugin {
 
     this.addCommand({
       id: 'capture-website',
-      name: 'Capture Website into Vault',
+      name: 'Capture website into vault',
       callback: () => {
         new QuickCaptureModal(this, async (url) => {
           const view = await this.activateView('globe');
@@ -196,7 +203,7 @@ export default class WebObsPlugin extends Plugin {
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) return;
     try {
-      const pluginAbs = path.join(adapter.getBasePath(), this.manifest.dir ?? '.obsidian/plugins/web-obs');
+      const pluginAbs = path.join(adapter.getBasePath(), this.manifest.dir ?? `${this.app.vault.configDir}/plugins/web-obs`);
       const result = installEngine(pluginAbs);
       if (result.state === 'installed') new Notice('Web-Obs: capture engine installed. Run diagnostics to check your Python setup.');
     } catch (error) {
@@ -209,7 +216,7 @@ export default class WebObsPlugin extends Plugin {
       const adapter = this.app.vault.adapter;
       return runDoctor({
         vaultBase: adapter instanceof FileSystemAdapter ? adapter.getBasePath() : null,
-        pluginDir: this.manifest.dir ?? '.obsidian/plugins/web-obs',
+        pluginDir: this.manifest.dir ?? `${this.app.vault.configDir}/plugins/web-obs`,
         pluginVersion: this.manifest.version,
         pythonBinary: this.settings.pythonBinary || 'python3.14',
         renderMode: this.settings.renderMode,
@@ -241,7 +248,7 @@ export default class WebObsPlugin extends Plugin {
     }
     new CompareSitesModal(this, sites.sort(), async (left, right) => {
       try {
-        const read = async (id: string) => JSON.parse(await adapter.read(`sites/${id}/_site-graph.json`));
+        const read = async (id: string) => parseSiteManifest(JSON.parse(await adapter.read(`sites/${id}/_site-graph.json`)));
         const markdown = buildComparisonMarkdown(await read(left), await read(right));
         const target = comparisonNotePath(left, right);
         if (!(await adapter.exists('sites/_compare'))) await adapter.mkdir('sites/_compare');
@@ -279,7 +286,11 @@ export default class WebObsPlugin extends Plugin {
       });
     }
 
-    await workspace.revealLeaf(leaf);
+    if (requireApiVersion('1.7.2')) {
+      await workspace.revealLeaf(leaf);
+    } else {
+      workspace.setActiveLeaf(leaf, { focus: true });
+    }
 
     if (leaf.view instanceof SiteGlobeView) {
       if (modeOverride) {

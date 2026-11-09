@@ -16,12 +16,13 @@ Type a domain. Web-Obs reads the public pages, saves each one as a clean Markdow
 - **A task list.** Every finding becomes a checkbox in `_tasks.md`. Your ticks survive the next capture, and tasks close by themselves once the problem is gone.
 - **A browser sample.** Up to five pages open in a headless browser for lab timings, automated accessibility rules, screenshots and the third parties that load before anyone clicks.
 - **Site comparison.** Put two captured sites side by side in one note.
+- **Client reports.** Approve a report from Site Audit, then save it locally or send it to your own report server for a private link. Archive a capture into a recoverable folder when you no longer need it. See [Client reports](docs/CLIENT-REPORTS.md).
 
 ![Site Intel with the health card](docs/screenshots/site-intel-dark.png)
 
 ## Private by design
 
-Everything runs on your computer. There is no account, no tracking, no AI service and no API key. Web-Obs only talks to the website you ask it to capture, and to the links found on it when it checks them. The one exception is the optional email DNS check, which asks your own DNS resolver about the domain; you can turn it off in settings. Your notes stay in your vault.
+Captures run on your computer. There is no account, no tracking, no AI service and no API key needed for captures. Web-Obs talks to the website you ask it to capture and to the links found on it when it checks them. The optional email DNS check asks your own DNS resolver about the domain; you can turn it off in settings. Publishing a client report is a separate action: it can send the approved report to a server you configure. Your capture notes stay in your vault.
 
 ## Before you start
 
@@ -89,7 +90,7 @@ Stuck? Run **Web-Obs: Run diagnostics** from the command palette. It checks your
 
 ## Contributors
 
-Thanks to everyone who has improved Web-Obs, including [gcollins808](https://github.com/gcollins808) for the Clusters and Road view fixes. The full list is on the [contributors page](https://github.com/AgriciDaniel/web-obs/graphs/contributors).
+Thanks to everyone who has improved Web-Obs, including [gcollins808](https://github.com/gcollins808) for the Clusters and Road view fixes, map performance improvements, optional translucent orbs, and client report publishing and archive controls. The full list is on the [contributors page](https://github.com/AgriciDaniel/web-obs/graphs/contributors).
 
 ## License
 

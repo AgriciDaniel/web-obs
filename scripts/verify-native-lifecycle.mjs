@@ -66,7 +66,7 @@ async function hostHarness({ deferred = false, manifest = fixture, spawnError = 
   class Adapter { getBasePath() { return '/synthetic-vault'; } }
   class ItemView {
     constructor() {
-      this.app = { vault: { adapter: new Adapter(), getName: () => 'Synthetic' }, workspace: { on: () => ({}) } };
+      this.app = { vault: { adapter: new Adapter(), getName: () => 'Synthetic' }, workspace: { on: () => ({}), getLeavesOfType: () => [] } };
       this.contentEl = { empty() {}, addClass() {}, clientWidth: 640, clientHeight: 400, ownerDocument: { defaultView: {} } };
     }
     registerEvent() {}
@@ -84,6 +84,7 @@ async function hostHarness({ deferred = false, manifest = fixture, spawnError = 
     './engineStop': engineStop,
     obsidian: { ItemView, FileSystemAdapter: Adapter, Notice: class { constructor(message) { notices.push(message); } }, TFile: class {}, normalizePath: (value) => value },
     '../App': {},
+    '../report/exportAudit': {}, './auditActions': { planArchive: (_vault, domain) => ({ domain }) }, './publishTarget': {}, './publishSecrets': {}, './publishSecretsUi': {}, './publishDestinationUi': {},
     '../obsidian/hostAdapter': {
       WEB_OBS_VIEW_TYPE: 'web-obs-site-globe', sanitizeExternalHttpUrl: () => null,
       sanitizeVaultRelativePath: (value) => value,
@@ -116,6 +117,47 @@ async function test(name, run) {
   passed += 1;
   console.log(`[PASS] ${name}`);
 }
+
+await test('archiving refuses while capture preparation is still running', async () => {
+  const h = await hostHarness({ deferred: true });
+  const job = h.host.startCrawl(options);
+  await flush();
+  await assert.rejects(h.host.auditActions.previewArchive(fixture.siteId), /running capture/);
+  await assert.rejects(h.host.auditActions.archive(fixture.siteId, fixture.siteId), /running capture/);
+  h.host.cancelCrawl();
+  h.ready[0].resolve({ pythonBin: 'synthetic-python' });
+  await job;
+});
+
+await test('archive waits for a cancelled child to close and checks other Web-Obs views', async () => {
+  const h = await hostHarness();
+  const job = h.host.startCrawl(options);
+  await flush();
+  h.host.cancelCrawl();
+  await assert.rejects(h.host.auditActions.previewArchive(fixture.siteId), /cancellation to complete/);
+  h.children[0].close(1);
+  await job;
+  assert.equal((await h.host.auditActions.previewArchive(fixture.siteId)).domain, fixture.siteId);
+  const peer = Object.create(Object.getPrototypeOf(h.view));
+  peer.activeCrawlController = new AbortController();
+  h.view.app.workspace.getLeavesOfType = () => [{ view: peer }];
+  await assert.rejects(h.host.auditActions.previewArchive(fixture.siteId), /running capture/);
+});
+
+await test('closing the capture owner keeps archiving blocked in a replacement view until the child exits', async () => {
+  const h = await hostHarness();
+  const job = h.host.startCrawl(options);
+  await flush();
+  await h.view.onClose();
+  const replacement = new h.view.constructor({}, h.view.plugin);
+  await replacement.onOpen();
+  const actions = replacement.buildAuditActions();
+  await assert.rejects(actions.previewArchive(fixture.siteId), /cancellation to complete/);
+  h.children[0].close(1);
+  await job;
+  assert.equal((await actions.previewArchive(fixture.siteId)).domain, fixture.siteId);
+  await replacement.onClose();
+});
 
 await test('saved-link continuation passes the saved ID and needs HTTP-only readiness', async () => {
   const h = await hostHarness({ settings: { renderMode: 'auto' } });

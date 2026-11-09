@@ -24,3 +24,8 @@ id_ed25519*
 
 # Local release output
 release/
+
+# Desktop metadata
+.directory
+.DS_Store
+Thumbs.db

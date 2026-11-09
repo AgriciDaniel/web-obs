@@ -20,7 +20,7 @@ export const formatCount = (value: number | null | undefined): string => {
 };
 
 /** Icon plus word. Colour never carries the meaning alone. */
-export const StatusPill: React.FC<{ status: Status; label: string; title?: string }> = ({ status, label, title }) => {
+export const StatusPill: React.FC<{ status: Status; label: React.ReactNode; title?: string }> = ({ status, label, title }) => {
   const Icon = STATUS_ICON[status];
   return <span className={`wo-ui-pill is-${status}`} title={title}><Icon size={12} aria-hidden /> {label}</span>;
 };
@@ -61,7 +61,7 @@ export const KeyValueList: React.FC<{ rows: KeyValue[] }> = ({ rows }) =>
   <dl className="wo-ui-kv">
     {rows.map((row) => <div key={row.label} className="wo-ui-kv-row" title={row.title}>
       <dt>{row.label}</dt>
-      <dd>{row.status ? <StatusPill status={row.status} label={typeof row.value === 'string' ? row.value : String(row.value ?? '')} /> : row.value}</dd>
+      <dd>{row.status ? <StatusPill status={row.status} label={row.value} /> : row.value}</dd>
     </div>)}
   </dl>;
 

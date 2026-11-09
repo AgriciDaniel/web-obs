@@ -47,7 +47,7 @@ export function mapSummary(manifest: SiteGraphManifest): MapSummary {
   const items = (tone: string) => findings.filter((f) => f.tone === tone)
     .reduce((sum, f) => sum + (f.totalTargets ?? f.targets.length), 0);
   const brokenPages = manifest.nodes.filter(isBrokenPage).length;
-  const brokenTargets = Array.isArray(manifest.linkHealth?.brokenLinks) ? manifest.linkHealth!.brokenLinks.length : 0;
+  const brokenTargets = Array.isArray(manifest.linkHealth?.brokenLinks) ? manifest.linkHealth.brokenLinks.length : 0;
   const parts = [plural(brokenTargets, 'linked target returned 404 or 410', 'linked targets returned 404 or 410'), plural(brokenPages, 'captured page failed to load', 'captured pages failed to load')];
   return {
     pages: manifest.stats.pagesCrawled,

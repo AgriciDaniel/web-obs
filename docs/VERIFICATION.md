@@ -1,5 +1,7 @@
 # Web-Obs verified implementation checkpoint
 
+The [client report integration acceptance](NATIVE-INTEGRATION-ACCEPTANCE.md) records the 2026-11-09 artifact, full regression, lint and native evidence. This document retains its earlier dated checkpoint.
+
 The later [Obsidian design follow-up](DESIGN-VERIFICATION.md) records the current visual theme, browser/native checks and updated artifact hashes.
 
 Verified on 2026-11-02. The installed Web-Obs plugin includes capture, Globe/Road/Clusters, map discovery, Site Intel and the native Site audit view.

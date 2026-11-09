@@ -262,6 +262,14 @@ try {
   }
   assert.equal((await fetch(endpoint + '/__web_obs/site?id=..%2Fsecret')).status, 400);
   assert.equal((await fetch(endpoint + '/__web_obs/crawl', { method: 'POST', body: '{}' })).status, 400);
+  for (const options of [null, [], { url: 'https://example.test', maxPages: '10' },
+    { url: 'https://example.test', maxPages: {} }, { url: 'https://example.test', renderMode: {} },
+    { url: 'https://example.test', imageMode: ['all'] }, { url: 'https://example.test', deadlineSec: '10' }]) {
+    const response = await fetch(endpoint + '/__web_obs/crawl', { method: 'POST', body: JSON.stringify(options) });
+    assert.equal(response.status, 400, 'Untrusted request values must be rejected before starting a capture');
+    assert.equal(typeof (await response.json()).error, 'string');
+  }
+
   assert.equal((await fetch(endpoint + '/__web_obs/crawl', { method: 'POST', headers: { Origin: 'https://outside.example' }, body: '{}' })).status, 403);
   assert.equal((await fetch(endpoint + '/__web_obs/crawl', { method: 'POST', body: 'x'.repeat(17000) })).status, 413);
   console.log('[PASS] Actual local preview streams crawl and continuation, reuses saved pages, and rejects unsafe IDs, image modes and cross-site requests.');

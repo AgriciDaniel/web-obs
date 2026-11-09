@@ -15,7 +15,7 @@ import {
   normalizePath,
 } from 'obsidian';
 import App from '../App';
-import { type ResyncAdapter, resyncVaultFolder } from './vaultResync';
+import { resyncVaultFolder } from './vaultResync';
 import {
   type MountedSiteGlobeView,
   WEB_OBS_VIEW_TYPE,
@@ -23,7 +23,14 @@ import {
   sanitizeExternalHttpUrl,
   sanitizeVaultRelativePath,
 } from '../obsidian/hostAdapter';
+import { exportClientReport } from '../report/exportAudit';
+import { archiveToTrash, planArchive, reportLink, writeReportFile } from './auditActions';
+import { describeTarget, parsePublishTarget, publishToTarget } from './publishTarget';
+import { makeSecretProvider, type SecretStore } from './publishSecrets';
+import { askIngestSecret } from './publishSecretsUi';
+import { askDestination } from './publishDestinationUi';
 import type {
+  AuditActions,
   CrawlOptions,
   CrawlProgressState,
   GlobePluginCommand,
@@ -47,9 +54,12 @@ const MAP_ASSET_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg'
 export interface WebObsPluginBridge {
   manifest: { dir?: string };
   settings: WebObsPluginSettings;
+  saveSettings?: () => Promise<void>;
 }
 
 export class SiteGlobeView extends ItemView {
+  private static readonly stoppingByPlugin = new WeakMap<WebObsPluginBridge, Set<ChildProcessWithoutNullStreams>>();
+  private readonly pluginStoppingChildren: Set<ChildProcessWithoutNullStreams>;
   navigation = false;
   private plugin: WebObsPluginBridge;
   private mounted: MountedSiteGlobeView | null = null;
@@ -61,13 +71,19 @@ export class SiteGlobeView extends ItemView {
   private crawlGeneration = 0;
   private activeCrawlController: AbortController | null = null;
   private activeCrawlProgress: CrawlProgressState | null = null;
-  private readonly stoppingChildren = new WeakSet<ChildProcessWithoutNullStreams>();
+  private readonly stoppingChildren = new Set<ChildProcessWithoutNullStreams>();
   private closed = false;
   private latestManifestCache: SiteGraphManifest | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: WebObsPluginBridge) {
     super(leaf);
     this.plugin = plugin;
+    let pending = SiteGlobeView.stoppingByPlugin.get(plugin);
+    if (!pending) {
+      pending = new Set();
+      SiteGlobeView.stoppingByPlugin.set(plugin, pending);
+    }
+    this.pluginStoppingChildren = pending;
   }
 
   getViewType(): string {
@@ -138,7 +154,7 @@ export class SiteGlobeView extends ItemView {
   }
 
   private resolveEngineScriptPath(vaultBase: string): string | null {
-    const pluginRel = this.plugin.manifest.dir ?? '.obsidian/plugins/web-obs';
+    const pluginRel = this.plugin.manifest.dir ?? `${this.app.vault.configDir}/plugins/web-obs`;
     const bundled = path.join(vaultBase, pluginRel, 'engine', 'crawl_site.py');
     if (fs.existsSync(bundled)) return bundled;
     const workspaceDirect = path.join(vaultBase, 'engine', 'crawl_site.py');
@@ -199,12 +215,13 @@ export class SiteGlobeView extends ItemView {
   private stopNativeChild(child: ChildProcessWithoutNullStreams): void {
     if (this.stoppingChildren.has(child) || child.exitCode !== null || child.signalCode !== null) return;
     this.stoppingChildren.add(child);
+    this.pluginStoppingChildren.add(child);
     // Asking first allows backend cleanup; escalate only for this still-running owned child.
     const timer = setNodeTimeout(() => {
       if (child.exitCode === null && child.signalCode === null) forceEngineStop(child);
     }, 2500);
     timer.unref();
-    child.once('close', () => clearNodeTimeout(timer));
+    child.once('close', () => { clearNodeTimeout(timer); this.stoppingChildren.delete(child); this.pluginStoppingChildren.delete(child); });
     askEngineToStop(child);
   }
 
@@ -392,40 +409,42 @@ export class SiteGlobeView extends ItemView {
         if (isCurrent() && !settled) stderrText = (stderrText + chunk.toString('utf8')).slice(-8192);
       });
       child.on('error', (error) => finish(null, friendlySpawnError(ready.pythonBin, error.message)));
-      child.on('close', async (code, signal) => {
-        if (settled) return;
-        if (!isCurrent()) { finish(null); return; }
-        if (this.activeChild === child) this.activeChild = null;
-        try {
-          if (!terminalError) decoder.finish();
-          if (terminalError) { finish(null, terminalError); return; }
-          if (code !== 0) {
-            finish(null, friendlyEngineError(stderrText, `Crawler exited with ${signal ? `signal ${signal}` : `code ${code}`}.`));
-            return;
+      child.on('close', (code, signal) => {
+        void (async () => {
+          if (settled) return;
+          if (!isCurrent()) { finish(null); return; }
+          if (this.activeChild === child) this.activeChild = null;
+          try {
+            if (!terminalError) decoder.finish();
+            if (terminalError) { finish(null, terminalError); return; }
+            if (code !== 0) {
+              finish(null, friendlyEngineError(stderrText, `Crawler exited with ${signal ? `signal ${signal}` : `code ${code}`}.`));
+              return;
+            }
+            if (!completedSiteId) { finish(null, 'Crawler exited without a completion record.'); return; }
+            const manifest = await this.loadVaultSiteManifest(completedSiteId);
+            if (!isCurrent()) { finish(null); return; }
+            if (!manifest) { finish(null, 'Crawler reported completion, but its saved capture could not be validated.'); return; }
+            await this.resyncSiteFolder(completedSiteId);
+            if (!isCurrent()) { finish(null); return; }
+            const sites = await this.listVaultSites();
+            if (!isCurrent()) { finish(null); return; }
+            state.running = false;
+            state.phase = 'done';
+            state.message = continuing ? 'Saved link checks updated.' : partialCapture ? 'Partial capture saved; some collection gaps remain.' : 'Capture complete.';
+            state.error = null;
+            this.emitCrawlProgress({ ...state });
+            for (const listener of this.listeners) {
+              if (!isCurrent()) break;
+              listener.onSitesChanged?.(sites, manifest);
+            }
+            if (!isCurrent()) { finish(null); return; }
+            new Notice(`${partialCapture ? 'Partial capture' : 'Captured'} ${manifest.domain} (${manifest.stats.pagesCrawled} pages).`);
+            finish(manifest);
+          } catch (error) {
+            finish(null, error instanceof Error ? error.message : 'Could not load the saved capture.');
           }
-          if (!completedSiteId) { finish(null, 'Crawler exited without a completion record.'); return; }
-          const manifest = await this.loadVaultSiteManifest(completedSiteId);
-          if (!isCurrent()) { finish(null); return; }
-          if (!manifest) { finish(null, 'Crawler reported completion, but its saved capture could not be validated.'); return; }
-          await this.resyncSiteFolder(completedSiteId);
-          if (!isCurrent()) { finish(null); return; }
-          const sites = await this.listVaultSites();
-          if (!isCurrent()) { finish(null); return; }
-          state.running = false;
-          state.phase = 'done';
-          state.message = continuing ? 'Saved link checks updated.' : partialCapture ? 'Partial capture saved; some collection gaps remain.' : 'Capture complete.';
-          state.error = null;
-          this.emitCrawlProgress({ ...state });
-          for (const listener of this.listeners) {
-            if (!isCurrent()) break;
-            listener.onSitesChanged?.(sites, manifest);
-          }
-          if (!isCurrent()) { finish(null); return; }
-          new Notice(`${partialCapture ? 'Partial capture' : 'Captured'} ${manifest.domain} (${manifest.stats.pagesCrawled} pages).`);
-          finish(manifest);
-        } catch (error) {
-          finish(null, error instanceof Error ? error.message : 'Could not load the saved capture.');
-        }
+        })().catch((error: unknown) => finish(null, error instanceof Error ? error.message : 'Could not finish the capture.'));
       });
     });
   }
@@ -435,7 +454,7 @@ export class SiteGlobeView extends ItemView {
     const adapter = this.app.vault.adapter;
     if (!(adapter instanceof FileSystemAdapter)) return;
     try {
-      const result = await resyncVaultFolder(adapter as unknown as ResyncAdapter, normalizePath(`sites/${siteId}`));
+      const result = await resyncVaultFolder(adapter, normalizePath(`sites/${siteId}`));
       if (result.state === 'unsupported') new Notice('Capture saved. If new snapshots or notes do not show yet, reload Obsidian once.');
     } catch {
       new Notice('Capture saved. If new snapshots or notes do not show yet, reload Obsidian once.');
@@ -458,6 +477,7 @@ export class SiteGlobeView extends ItemView {
 
     const host: SiteHostAdapter = {
       mode: 'obsidian',
+      auditActions: this.buildAuditActions(),
       vaultName: this.app.vault.getName(),
       initialTheme: this.resolveCurrentTheme(),
       initialViewMode: this.pendingViewMode ?? this.plugin.settings.defaultViewMode,
@@ -503,6 +523,71 @@ export class SiteGlobeView extends ItemView {
     };
 
     this.mounted = mountSiteGlobeApp(this.contentEl, host, App);
+  }
+
+  /** Publish audit and Archive audit for the audit view. Desktop only: it needs real folders. */
+  /** Secrets typed in the prompt this session. Memory only: never written anywhere. */
+  private readonly publishSecretMemory = new Map<string, string>();
+
+  private buildAuditActions(): AuditActions | undefined {
+    const adapter = this.app.vault.adapter;
+    if (!(adapter instanceof FileSystemAdapter)) return undefined;
+    const vaultRoot = adapter.getBasePath();
+    const settings = () => this.plugin.settings;
+    const openViews = () => [...new Set([this, ...this.app.workspace.getLeavesOfType(WEB_OBS_VIEW_TYPE)
+      .map((leaf) => leaf.view).filter((view): view is SiteGlobeView => view instanceof SiteGlobeView)])];
+    const assertArchiveIdle = () => {
+      if (this.pluginStoppingChildren.size > 0 || openViews().some((view) => view.activeCrawlController)) {
+        throw new Error('Finish the running capture or wait for cancellation to complete before archiving.');
+      }
+    };
+    return {
+      get approver() { return settings().clientApproverName; },
+      get publishReady() { return true; }, // with nothing set, Publish opens the destination dialog
+      get publishTargetLabel() { try { const p = parsePublishTarget(settings().publishTarget); return p.kind === 'none' ? null : describeTarget(p); } catch { return null; } },
+      publish: async (siteId, approvedBy) => {
+        const s = settings();
+        // Publish with push: when a publish target is set the report is sent there and the link comes back; the file is not also saved locally.
+        let target = parsePublishTarget(s.publishTarget);
+        let folder = s.clientReportsFolder.trim();
+        if (target.kind === 'none' && !folder) {
+          // Nothing is set: ask where this report goes. The choice is remembered only if the user says so, and only as an address or a folder path.
+          const choice = await askDestination(this.app);
+          if (!choice) throw new Error('Publishing was cancelled.');
+          if (choice.destination.kind === 'folder') { folder = choice.destination.dir; if (choice.remember) s.clientReportsFolder = folder; }
+          else { target = choice.destination.target; if (choice.remember) s.publishTarget = choice.destination.remember; }
+          if (choice.remember) await this.plugin.saveSettings?.();
+        }
+        const manifest = await this.loadVaultSiteManifest(siteId);
+        if (!manifest) throw new Error('That capture could not be read.');
+        const result = await exportClientReport(manifest, { approvedBy, feedbackTo: s.clientFeedbackEmail || undefined });
+        if (target.kind !== 'none') {
+          const store = (this.app as unknown as { secretStorage?: SecretStore }).secretStorage;
+          const secret = makeSecretProvider({ store, session: this.publishSecretMemory,
+            ask: () => s.publishEnvSecrets && process.env.WEBOBS_INGEST_SECRET ? Promise.resolve(null) : askIngestSecret(this.app) });
+          const pushed = await publishToTarget(target, result.json, { hours: 72, linkBase: s.publishLinkBase, deps: { secret, env: s.publishEnvSecrets ? process.env : undefined } });
+          return { file: null, folder: null, pushedTo: pushed.via, expires: pushed.expires, link: pushed.link, sizeKb: result.sizeKb, clientName: result.clientName, findings: result.findings, top: result.top };
+        }
+        const { file } = writeReportFile(folder, result.json);
+        return { file, folder, link: s.clientReportLinkBase.trim() ? reportLink(s.clientReportLinkBase, file) : null, sizeKb: result.sizeKb, clientName: result.clientName, findings: result.findings, top: result.top };
+      },
+      previewArchive: async (siteId) => { assertArchiveIdle(); return planArchive(vaultRoot, siteId); },
+      archive: async (siteId, confirm) => {
+          assertArchiveIdle();
+          const result = archiveToTrash(vaultRoot, siteId, confirm);
+          if (this.latestManifestCache?.siteId === siteId) this.latestManifestCache = null;
+          const sites = await this.listVaultSites();
+          for (const view of openViews()) {
+            if (view.latestManifestCache?.siteId === siteId) view.latestManifestCache = null;
+            for (const listener of view.listeners) {
+              listener.onSitesChanged?.(sites);
+              listener.onSiteArchived?.(siteId);
+            }
+          }
+          new Notice(`Archived ${siteId}. Restore instructions: ${result.trash}/REMOVED.txt`);
+          return result;
+        },
+    };
   }
 
   private rebuild(): void {

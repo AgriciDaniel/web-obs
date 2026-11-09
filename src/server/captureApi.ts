@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { setTimeout, clearTimeout } from 'node:timers';
 import { StringDecoder } from 'node:string_decoder';
 import type { PluginOption } from 'vite';
 import { JsonlDecoder } from '../data/jsonl';
@@ -15,6 +16,7 @@ export const MAX_SITE_IMAGE_BYTES = 4 * 1024 * 1024;
  * traversal, other file types, oversized files and symlinks that lead outside the capture.
  */
 export function resolveSiteImage(sitesRoot: string, requested: string | null): string | null {
+  // eslint-disable-next-line no-control-regex -- Reject control bytes in untrusted asset paths.
   if (typeof requested !== 'string' || requested.length > 300 || /[\x00-\x1f\x7f\\]/.test(requested)) return null;
   const parts = requested.split('/');
   if (parts.length < 3 || parts[0] !== 'sites' || !isSafeSiteId(parts[1]) || parts.some((part) => !part || part === '.' || part === '..')) return null;
@@ -97,25 +99,27 @@ export function webObsDevApiPlugin(): PluginOption {
           if (bodyBytes > 16 * 1024) { oversized = true; json(413, { error: 'Capture request is too large.' }); }
         });
         req.on('end', () => {
-          if (oversized || res.destroyed || req.aborted) return;
+          if (oversized || res.destroyed) return;
           body += bodyDecoder.end();
           const continuing = url.pathname === '/__web_obs/continue-links';
           let options: { url: string; maxPages: number; renderMode: 'auto' | 'always' | 'never'; downloadImages: boolean; imageMode: 'preferred' | 'all'; continueLinksSiteId?: string; browserAudit: boolean; spellCheck: boolean; dnsChecks: boolean; pageSnapshots: boolean; snapshotLimit: number; snapshotHtml: boolean; tlsCheck: boolean; taskList: boolean; deadlineSec: number | null };
           try {
-            const data = JSON.parse(body || '{}');
+            const parsed: unknown = JSON.parse(body || '{}');
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid capture request.');
+            const data = parsed as Record<string, unknown>;
             if (!data || typeof data !== 'object' || Array.isArray(data) || typeof data.url !== 'string' || !data.url.trim() || data.url.length > 2048) throw new Error('Enter a website URL.');
             const maxPages = data.maxPages ?? 250;
-            if (!Number.isInteger(maxPages) || maxPages < 1 || maxPages > 1000) throw new Error('Page limit must be between 1 and 1000.');
+            if (typeof maxPages !== 'number' || !Number.isInteger(maxPages) || maxPages < 1 || maxPages > 1000) throw new Error('Page limit must be between 1 and 1000.');
             const renderMode = data.renderMode ?? 'auto';
-            if (!['auto', 'always', 'never'].includes(renderMode)) throw new Error('Invalid rendering mode.');
+            if (renderMode !== 'auto' && renderMode !== 'always' && renderMode !== 'never') throw new Error('Invalid rendering mode.');
             const imageMode = data.imageMode ?? 'preferred';
-            if (!['preferred', 'all'].includes(imageMode)) throw new Error('Invalid image variant mode.');
+            if (imageMode !== 'preferred' && imageMode !== 'all') throw new Error('Invalid image variant mode.');
             if (continuing && !isSafeSiteId(data.continueLinksSiteId)) throw new Error('Invalid saved site ID.');
             const deadlineSec = data.deadlineSec ?? null;
             if (deadlineSec !== null && (typeof deadlineSec !== 'number' || !Number.isFinite(deadlineSec) || deadlineSec < 0 || deadlineSec > 86400)) throw new Error('Capture time limit must be between 0 and 86400 seconds.');
-            options = { url: data.url.trim(), maxPages, renderMode, imageMode, downloadImages: data.downloadImages !== false, continueLinksSiteId: continuing ? data.continueLinksSiteId : undefined,
+            options = { url: data.url.trim(), maxPages, renderMode, imageMode, downloadImages: data.downloadImages !== false, continueLinksSiteId: continuing && isSafeSiteId(data.continueLinksSiteId) ? data.continueLinksSiteId : undefined,
               browserAudit: data.browserAudit !== false, spellCheck: data.spellCheck === true, dnsChecks: data.dnsChecks !== false,
-              pageSnapshots: data.pageSnapshots !== false, snapshotLimit: Number.isInteger(data.snapshotLimit) ? Math.max(1, Math.min(500, data.snapshotLimit)) : 25, snapshotHtml: data.snapshotHtml === true,
+              pageSnapshots: data.pageSnapshots !== false, snapshotLimit: typeof data.snapshotLimit === 'number' && Number.isInteger(data.snapshotLimit) ? Math.max(1, Math.min(500, data.snapshotLimit)) : 25, snapshotHtml: data.snapshotHtml === true,
               tlsCheck: data.tlsCheck !== false, taskList: data.taskList !== false, deadlineSec: deadlineSec ? Math.max(1, Math.round(deadlineSec)) : null };
           } catch (error) { return json(400, { error: error instanceof Error ? error.message : 'Invalid capture request.' }); }
 

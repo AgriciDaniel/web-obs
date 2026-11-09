@@ -17,7 +17,7 @@ export function parseSiteManifest(value: unknown): SiteGraphManifest {
   if (typeof value.schemaVersion !== 'string' || !/^1\.\d+\.\d+$/.test(value.schemaVersion)) return fail('unsupported schema version');
   if (!isSafeSiteId(value.siteId) || typeof value.domain !== 'string' || !value.domain || typeof value.origin !== 'string' || !/^https?:\/\//i.test(value.origin)) return fail('invalid site identity');
   if (typeof value.capturedAt !== 'string' || !Number.isFinite(Date.parse(value.capturedAt)) || !count(value.elapsedSec)) return fail('invalid capture date or duration');
-  if (value.captureStatus !== undefined && !['complete', 'partial'].includes(String(value.captureStatus))) return fail('invalid capture status');
+  if (value.captureStatus !== undefined && value.captureStatus !== 'complete' && value.captureStatus !== 'partial') return fail('invalid capture status');
   if (value.preservationStatus !== undefined && value.preservationStatus !== 'conflicts') return fail('invalid preservation status');
   if (value.captureWarnings !== undefined && !strings(value.captureWarnings)) return fail('invalid coverage warnings');
   if (value.captureFindings !== undefined && !strings(value.captureFindings)) return fail('invalid capture findings');
@@ -98,7 +98,7 @@ export function parseSiteManifest(value: unknown): SiteGraphManifest {
       if (!object(tech) || !Array.isArray(tech.analyticsAndPixels) || tech.analyticsAndPixels.some((entry) => !object(entry) || typeof entry.name !== 'string' || typeof entry.category !== 'string') || !strings(tech.cmsOrFramework) || !strings(tech.hostingAndCdn)) return fail('invalid technology observations');
       if (!object(tech.measurementIds) || ['ga4', 'gtm', 'googleAds'].some((key) => !strings((tech.measurementIds as ObjectValue)[key]))) return fail('invalid measurement IDs');
       if (!object(tech.securityHeaders) || !strings(tech.securityHeaders.present) || !strings(tech.securityHeaders.missing)) return fail('invalid header observations');
-      const consistency = (tech.securityHeaders as ObjectValue).consistency;
+      const consistency = (tech.securityHeaders).consistency;
       if (consistency !== undefined && (!object(consistency) || !count(consistency.sampledPages) || !strings(consistency.inconsistent) || !strings(consistency.notes) || !Array.isArray(consistency.headers) || consistency.headers.some((row) => !object(row) || typeof row.header !== 'string' || !count(row.presentOn) || !count(row.of) || !['all', 'some', 'none'].includes(String(row.state)) || !strings(row.missingOn)))) return fail('invalid header consistency');
       const coverage = tech.coverage;
       if (coverage !== undefined && (!object(coverage) || !count(coverage.sampledPages) || !count(coverage.capturedHtmlPages) || !strings(coverage.sourceUrls) || typeof coverage.selection !== 'string' || typeof coverage.securityHeadersScope !== 'string')) return fail('invalid technology coverage');

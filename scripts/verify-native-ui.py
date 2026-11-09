@@ -91,6 +91,9 @@ def main():
             page.evaluate("async mode => { delete require('process').env.PLAYWRIGHT_BROWSERS_PATH; await app.plugins.disablePlugin('web-obs'); await app.plugins.enablePlugin('web-obs'); const plugin=app.plugins.plugins['web-obs']; plugin.settings.renderMode=mode; plugin.settings.downloadImages=false; await plugin.saveSettings(); app.commands.executeCommandById('web-obs:open-site-globe'); }", args.render_mode)
             errors = []
             page.on('pageerror', lambda error: errors.append(str(error)))
+            capture_input = page.get_by_placeholder('websiteexample.com', exact=True)
+            if not capture_input.count() or not capture_input.is_visible():
+                page.get_by_role('button', name='Capture a website', exact=True).click()
             page.get_by_placeholder('websiteexample.com', exact=True).wait_for(timeout=15000)
             if args.expect_no_webgl:
                 page.get_by_text('3D view unavailable', exact=True).wait_for()
@@ -125,7 +128,8 @@ def main():
             passed('Native UI starts Python, enforces robots and loads saved capture')
             if not args.expect_no_webgl:
                 page.locator('.wo-canvas-stage canvas').wait_for()
-                assert page.locator('.wo-kind-home .wo-pill-label').inner_text() == manifest['domain']
+                page.wait_for_function("domain => [...document.querySelectorAll('.wo-kind-home:not(.is-hidden) .wo-pill-label')].some(label => label.textContent === domain)", arg=manifest['domain'])
+                assert page.locator('.wo-kind-home:not(.is-hidden) .wo-pill-label').inner_text() == manifest['domain']
                 passed('Native 3D renderer draws the captured graph with its domain label')
             page.get_by_role('button', name='Site Intel', exact=True).click()
             intel = page.get_by_role('complementary', name='Site Intelligence')

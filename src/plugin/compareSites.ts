@@ -1,10 +1,10 @@
 /** Side-by-side comparison of two saved captures. Pure: reads two manifests, returns Markdown. */
 import { botsUnknown } from '../data/aiCrawlers';
 
-type Json = Record<string, any>;
+import type { SiteGraphManifest, SiteNode } from '../types/site';
 
-const pagesOf = (m: Json): Json[] => (Array.isArray(m.nodes) ? m.nodes : []).filter((n: Json) => n && n.kind !== 'external-domain');
-const ok = (n: Json) => typeof n.statusCode === 'number' && n.statusCode >= 200 && n.statusCode < 300;
+const pagesOf = (m: SiteGraphManifest): SiteNode[] => (Array.isArray(m.nodes) ? m.nodes : []).filter((n: SiteNode) => n && n.kind !== 'external-domain');
+const ok = (n: SiteNode) => typeof n.statusCode === 'number' && n.statusCode >= 200 && n.statusCode < 300;
 const median = (values: number[]) => {
   const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
   if (!sorted.length) return null;
@@ -12,8 +12,8 @@ const median = (values: number[]) => {
   return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
 };
 const pct = (part: number, whole: number) => (whole ? `${Math.round((part / whole) * 100)}%` : 'No data');
-const show = (value: unknown) => (value === null || value === undefined || value === '' ? 'No data' : String(value));
-const cell = (value: unknown) => show(value).replace(/\|/g, '\\|').replace(/\n/g, ' ');
+const show = (value: string | number | boolean | null | undefined) => (value === null || value === undefined || value === '' ? 'No data' : String(value));
+const cell = (value: string | number | boolean | null | undefined) => show(value).replace(/\|/g, '\\|').replace(/\n/g, ' ');
 /** Site text (labels, schema types) shown as text: no raw HTML or image embed that Obsidian would load. */
 // "<%" is a Templater command. A zero-width space after "!" keeps "![" from being an image even when the site
 // text already has a backslash before it ("\\![" would be an escaped backslash and then a live image).
@@ -27,7 +27,7 @@ export interface SiteMetrics {
   schemaTypes: string[];
 }
 
-export function siteMetrics(m: Json): SiteMetrics {
+export function siteMetrics(m: SiteGraphManifest): SiteMetrics {
   const pages = pagesOf(m);
   const good = pages.filter(ok);
   // Pages in languages written without spaces have no word count (pageChecks.wordsMeasured false).
@@ -35,23 +35,23 @@ export function siteMetrics(m: Json): SiteMetrics {
   const words = counted.map((n) => Number(n.wordCount) || 0);
   const thin = counted.filter((n) => (Number(n.wordCount) || 0) < 200).length;
   const withSchema = good.filter((n) => Array.isArray(n.schemaTypes) && n.schemaTypes.length).length;
-  const ratios = good.map((n) => Number(n.pageChecks?.textRatio)).filter(Number.isFinite).map((v) => Math.round(v * 1000) / 10);
-  const flesch = good.map((n) => Number(n.pageChecks?.readability?.fleschReadingEase)).filter(Number.isFinite);
-  const audit = m.audit ?? {};
-  const findings: Json[] = Array.isArray(audit.findings) ? audit.findings : [];
+  const ratios = good.map((n) => n.pageChecks?.textRatio).filter((v): v is number => typeof v === 'number' && Number.isFinite(v)).map((v) => Math.round(v * 1000) / 10);
+  const flesch = good.map((n) => n.pageChecks?.readability?.fleschReadingEase).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  const audit: Partial<NonNullable<SiteGraphManifest['audit']>> = m.audit ?? {};
+  const findings = Array.isArray(audit.findings) ? audit.findings : [];
   const byCategory = new Map<string, number>();
   for (const f of findings) byCategory.set(f.category, (byCategory.get(f.category) ?? 0) + (f.targetCount ?? f.targets?.length ?? 0));
-  const intel = m.siteIntel ?? {};
-  const ai = intel.aiReadiness ?? {};
-  const headers = intel.techStack?.securityHeaders ?? {};
-  const tls = intel.transport?.tls ?? {};
-  const browserPages: Json[] = (intel.browserAudit?.pages ?? []).filter((p: Json) => !p.error);
-  const lcp = median(browserPages.map((p) => Number(p.lab?.lcpMs)).filter(Number.isFinite));
+  const intel: Partial<NonNullable<SiteGraphManifest['siteIntel']>> = m.siteIntel ?? {};
+  const ai: Partial<NonNullable<typeof intel.aiReadiness>> = intel.aiReadiness ?? {};
+  const headers = intel.techStack?.securityHeaders;
+  const tls = intel.transport?.tls;
+  const browserPages = (intel.browserAudit?.pages ?? []).filter((p) => !p.error);
+  const lcp = median(browserPages.map((p) => p.lab?.lcpMs).filter((v): v is number => typeof v === 'number' && Number.isFinite(v)));
   const axe = browserPages.reduce((sum, p) => sum + (p.a11y?.violations?.length ?? 0), 0);
-  const thirdParty = new Set(browserPages.flatMap((p) => (p.thirdParty?.hosts ?? []).map((h: Json) => h.host)));
-  const dup = audit.duplicates ?? {};
-  const dupGroups = ['titles', 'descriptions', 'exactContent', 'nearContent'].reduce((sum, k) => sum + (Array.isArray(dup[k]) ? dup[k].length : 0), 0);
-  const sections: Json[] = Array.isArray(m.sections) ? m.sections : [];
+  const thirdParty = new Set(browserPages.flatMap((p) => (p.thirdParty?.hosts ?? []).map((h) => h.host)));
+  const dup: Partial<NonNullable<typeof audit.duplicates>> = audit.duplicates ?? {};
+  const dupGroups = (['titles', 'descriptions', 'exactContent', 'nearContent'] as const).reduce((sum, k) => sum + (Array.isArray(dup[k]) ? dup[k].length : 0), 0);
+  const sections = Array.isArray(m.sections) ? m.sections : [];
   const rows: Record<string, string> = {
     'Captured': show(String(m.capturedAt ?? '').slice(0, 10)),
     'Capture status': show(m.captureStatus),
@@ -63,8 +63,8 @@ export function siteMetrics(m: Json): SiteMetrics {
     'Median Flesch reading ease': show(median(flesch)),
     'Pages with structured data': `${withSchema} (${pct(withSchema, good.length)})`,
     'Median final request (ms)': show(m.stats?.medianResponseTimeMs),
-    'Security headers present': Array.isArray(headers.present) ? String(headers.present.length) : 'No data',
-    'TLS days remaining': show(tls.daysRemaining),
+    'Security headers present': Array.isArray(headers?.present) ? String(headers?.present.length) : 'No data',
+    'TLS days remaining': show(tls?.daysRemaining),
     'llms.txt': ai.endpoints ? (ai.endpoints.llmsTxt ? 'Present' : 'Missing') : 'No data',
     'AI crawlers allowed': !ai.aiBotsPolicy || botsUnknown(ai.aiBotsPolicy) ? 'No data'
       : `${ai.allowedAiBotsCount ?? 0} of ${Object.keys(ai.aiBotsPolicy).length}`,
@@ -85,12 +85,12 @@ export function siteMetrics(m: Json): SiteMetrics {
     label: String(m.brandName || m.domain || m.siteId),
     rows,
     topSections: sections.slice(0, 6).map((s) => `${s.label} (${s.pageCount})`),
-    topPhrases: (audit.keywords?.bigrams ?? []).slice(0, 8).map((k: Json) => String(k.term)),
-    schemaTypes: [...new Set(good.flatMap((n) => (Array.isArray(n.schemaTypes) ? n.schemaTypes : [])))].sort() as string[],
+    topPhrases: (audit.keywords?.bigrams ?? []).slice(0, 8).map((k) => String(k.term)),
+    schemaTypes: [...new Set(good.flatMap((n) => (Array.isArray(n.schemaTypes) ? n.schemaTypes : [])))].sort(),
   };
 }
 
-export function buildComparisonMarkdown(a: Json, b: Json, generatedAt = new Date().toISOString()): string {
+export function buildComparisonMarkdown(a: SiteGraphManifest, b: SiteGraphManifest, generatedAt = new Date().toISOString()): string {
   const left = siteMetrics(a);
   const right = siteMetrics(b);
   const onlyLeft = left.schemaTypes.filter((t) => !right.schemaTypes.includes(t));

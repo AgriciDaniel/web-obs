@@ -12,7 +12,8 @@
     "install:vault": "npm run build:plugin && node scripts/install-obsidian-plugin.mjs --vault \".\" --enable",
     "verify": "node scripts/verify-all.mjs",
     "release": "node scripts/package-release.mjs",
-    "preview": "vite preview --port 4175"
+    "preview": "vite preview --port 4175",
+    "lint": "eslint src --max-warnings 0"
   },
   "dependencies": {
     "lucide-react": "^0.487.0",
@@ -21,19 +22,32 @@
     "three": "^0.175.0"
   },
   "devDependencies": {
+    "@eslint/js": "9.39.4",
     "@types/node": "^22.14.0",
     "@types/react": "^19.0.12",
     "@types/react-dom": "^19.0.4",
     "@types/three": "^0.175.0",
     "@vitejs/plugin-react": "^4.3.4",
     "esbuild": "^0.25.0",
+    "eslint": "10.14.0",
+    "eslint-plugin-obsidianmd": "0.4.2",
     "obsidian": "^1.8.7",
     "typescript": "^5.8.2",
+    "typescript-eslint": "8.72.1",
     "vite": "^6.2.5"
   },
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/AgriciDaniel/web-obs.git" },
-  "bugs": { "url": "https://github.com/AgriciDaniel/web-obs/issues" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AgriciDaniel/web-obs.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AgriciDaniel/web-obs/issues"
+  },
   "homepage": "https://github.com/AgriciDaniel/web-obs#readme",
-  "author": "Daniel Agrici"
+  "author": "Daniel Agrici",
+  "overrides": {
+    "minimatch@>=7.0.0 <11.0.1": "11.0.1",
+    "moment": "2.31.0"
+  }
 }

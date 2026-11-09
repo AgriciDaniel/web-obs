@@ -23,6 +23,7 @@ import {
 import { PREVIEW_SITE_MANIFEST } from './data/demoSite';
 import { InspectorDrawer } from './components/InspectorDrawer';
 import { SiteGlobeCanvas3D } from './components/SiteGlobeCanvas3D';
+import type { NodeLook } from './components/nodeLook';
 import { SiteIntelDrawer } from './components/SiteIntelDrawer';
 import { SiteAuditPanel } from './components/SiteAuditPanel';
 import { PageExplorer } from './components/PageExplorer';
@@ -49,10 +50,18 @@ interface AppProps {
 }
 
 const EXPLORER_KEY = 'web-obs:explorer-open';
+const NODE_LOOK_KEY = 'web-obs:node-look';
 
 /** Per-viewer convenience only. Storage can be missing or blocked, so every access is guarded. */
 const readExplorerOpen = (): boolean => {
   try { return typeof window !== 'undefined' && window.localStorage?.getItem(EXPLORER_KEY) === '1'; } catch { return false; }
+};
+/** The orb look is a per-viewer choice. Anything but a saved 'translucent' gives the original solid orbs. */
+const readNodeLook = (): NodeLook => {
+  try { return typeof window !== 'undefined' && window.localStorage?.getItem(NODE_LOOK_KEY) === 'translucent' ? 'translucent' : 'classic'; } catch { return 'classic'; }
+};
+const writeNodeLook = (look: NodeLook) => {
+  try { window.localStorage?.setItem(NODE_LOOK_KEY, look); } catch { /* storage unavailable */ }
 };
 const writeExplorerOpen = (open: boolean) => {
   try { window.localStorage?.setItem(EXPLORER_KEY, open ? '1' : '0'); } catch { /* storage unavailable */ }
@@ -92,6 +101,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
 
   const [sites, setSites] = useState<SiteSummaryItem[]>([]);
   const [manifest, setManifest] = useState<SiteGraphManifest | null>(null);
+  const activeSiteId = manifest?.siteId;
   const [initialLoaded, setInitialLoaded] = useState<boolean>(false);
 
   const [urlInput, setUrlInput] = useState<string>('');
@@ -115,6 +125,8 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
       ? !window.matchMedia('(prefers-reduced-motion: reduce)').matches
       : true
   );
+  const [nodeLook, setNodeLook] = useState<NodeLook>(readNodeLook);
+  useEffect(() => { writeNodeLook(nodeLook); }, [nodeLook]);
   const [autoRotate, setAutoRotate] = useState<boolean>(false);
   const [resetSignal, setResetSignal] = useState<number>(0);
   const [flyRequest, setFlyRequest] = useState<{ nodeId: string; seq: number } | null>(
@@ -128,7 +140,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
     setSelectedId(null);
     setIntelOpen(false);
     setAuditOpen(false);
-    requestAnimationFrame(() => drawerReturnFocusRef.current?.focus({ preventScroll: true }));
+    window.requestAnimationFrame(() => drawerReturnFocusRef.current?.focus({ preventScroll: true }));
   }, []);
 
   const refreshSitesList = useCallback(
@@ -148,6 +160,13 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
     [activeHost]
   );
 
+  /** After Archive audit: nothing of the archived site may stay loaded. Close panels, drop it from the map, refresh the picker, then show the next site or the empty state. */
+  const handleArchived = useCallback(() => {
+    setSelectedId(null); setHoveredId(null); setIntelOpen(false); setAuditOpen(false);
+    setManifest(null);
+    void refreshSitesList();
+  }, [refreshSitesList]);
+
   useEffect(() => {
     void refreshSitesList();
   }, [refreshSitesList]);
@@ -165,13 +184,16 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
           setSelectedId(null);
         }
       },
+      onSiteArchived: (siteId) => {
+        if (siteId === activeSiteId) handleArchived();
+      },
       onCommand: (cmd) => {
         if (cmd.type === 'set-view-mode') {
           setViewMode(cmd.viewMode);
           setAuditOpen(false);
         } else if (cmd.type === 'focus-capture-input') {
           setCaptureOpen(true);
-          requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => {
             const el = centerInputRef.current ?? urlInputRef.current;
             el?.focus();
             el?.select();
@@ -188,7 +210,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
         }
       },
     });
-  }, [activeHost, refreshSitesList]);
+  }, [activeHost, refreshSitesList, activeSiteId, handleArchived]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -201,7 +223,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [closePanels, selectedId, intelOpen, auditOpen]);
 
-  const handleCaptureSubmit = async (e: React.FormEvent) => {
+  const handleCaptureSubmit = async (e: React.SyntheticEvent<HTMLFormElement>) => {
     e.preventDefault();
     const trimmed = urlInput.trim();
     if (!trimmed || progress.running) return;
@@ -228,7 +250,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
       setProgress(IDLE_PROGRESS);
       if (returnToAudit) {
         setAuditOpen(true);
-        requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.wo-audit-close')?.focus());
+        window.requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.wo-audit-close')?.focus());
       } else setIntelOpen(true);
     }
   };
@@ -296,7 +318,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
       ['external', 'External', 'wo-dot-ext', showExternal && counts.external > 0],
     ] as const).filter(([, , , shown]) => shown);
   }, [manifest, showExternal, counts.external]);
-  const layersOn = Number(showAllLinks) + Number(showExternal) + Number(showChromeLinks) + Number(showPulses);
+  const layersOn = Number(showAllLinks) + Number(showExternal) + Number(showChromeLinks) + Number(showPulses) + Number(nodeLook === 'translucent');
 
   const showOnboardingCard = initialLoaded && !manifest && !progress.running;
   const selectPage = (id: string) => {
@@ -316,7 +338,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
   const openAudit = (event?: React.MouseEvent<HTMLElement>) => {
     drawerReturnFocusRef.current = event?.currentTarget ?? auditButtonRef.current;
     setSelectedId(null); setIntelOpen(false); setAuditOpen(true);
-    requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.wo-audit-close')?.focus());
+    window.requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.wo-audit-close')?.focus());
   };
 
   // The toolbar wraps onto as many rows as the pane needs; panels and the map start just below it.
@@ -353,6 +375,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
         showChromeLinks={showChromeLinks}
         showAllLinks={showAllLinks}
         showPulses={showPulses}
+        nodeLook={nodeLook}
         autoRotate={autoRotate}
         paused={paused || auditOpen}
         inspectorOpen={Boolean(selectedNode) || intelOpen}
@@ -402,7 +425,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
           )}
 
           {manifest && !progress.running && !auditOpen && (captureOpen ? (
-            <form className="wo-inline-capture" onSubmit={handleCaptureSubmit} onKeyDown={(event) => {
+            <form className="wo-inline-capture" onSubmit={(event) => { void handleCaptureSubmit(event); }} onKeyDown={(event) => {
               if (event.key === 'Escape') { event.stopPropagation(); setCaptureOpen(false); }
             }}>
               <Globe size={13} className="wo-capture-icon" />
@@ -465,7 +488,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
               onClick={(event) => {
                 drawerReturnFocusRef.current = event.currentTarget;
                 setSelectedId(null); setIntelOpen(false); setAuditOpen((value) => !value);
-                requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.wo-audit-close')?.focus());
+                window.requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.wo-audit-close')?.focus());
               }} title="Site audit: findings, coverage and charts">
               <ChartNoAxesCombined size={13} /><span>Site audit</span>
             </button>
@@ -548,7 +571,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
               internal and external link mapped onto a 3D Site Globe.
             </p>
 
-            <form className="wo-hero-form" onSubmit={handleCaptureSubmit}>
+            <form className="wo-hero-form" onSubmit={(event) => { void handleCaptureSubmit(event); }}>
               <input
                 ref={centerInputRef}
                 type="text"
@@ -692,6 +715,7 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
             { id: 'external', label: 'External orbit', checked: showExternal, title: 'Show or hide external domains', onSelect: () => setShowExternal((v) => !v) },
             { id: 'nav', label: 'Navigation links', checked: showChromeLinks, title: 'Include header and footer menu links alongside links in the page body', onSelect: () => setShowChromeLinks((v) => !v) },
             { id: 'flow', label: 'Light flow', checked: showPulses, title: 'Subtle directional light moving along links', onSelect: () => setShowPulses((v) => !v) },
+            { id: 'orbs', label: 'Translucent orbs', checked: nodeLook === 'translucent', title: 'Draw orbs see-through, dim the orbs not linked to the selection, and use thin halos. Off keeps the original solid orbs.', onSelect: () => setNodeLook((look) => (look === 'translucent' ? 'classic' : 'translucent')) },
           ]} />
         </div>
       )}
@@ -712,6 +736,8 @@ export const App: React.FC<AppProps> = ({ host, initialTheme = 'dark' }) => {
         onOpenNote={(path) => activeHost.onOpenNote(path, true)}
         onOpenExternalUrl={(url) => activeHost.onOpenExternalUrl(url)}
         onContinueLinks={manifest.siteId === PREVIEW_SITE_MANIFEST.siteId ? undefined : () => { void handleContinueLinks(true); }}
+        actions={manifest.siteId === PREVIEW_SITE_MANIFEST.siteId ? undefined : activeHost.auditActions}
+        onArchived={handleArchived}
       />}
 
       {/* Slide-Over Site Intelligence Drawer */}
