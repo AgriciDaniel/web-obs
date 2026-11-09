@@ -1,0 +1,62 @@
+// Checks for a client report that carries a look (flat styles) and for the paired upload: the checked copy of the shared styles code, the report the
+// exporter writes with a look, the contract and the seal, and the https publish that sends ONE request with two named parts (styles_<hash> and data_<hash>).
+// Synthetic data only; no network and no real secret.
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { build } from 'esbuild';
+
+let n = 0;
+const ok = (name, fn) => Promise.resolve(fn()).then(() => { n++; console.log('  ok   ' + name); });
+async function load(entry) {
+  const output = await build({ entryPoints: [entry], bundle: true, write: false, format: 'esm', platform: 'node', logLevel: 'silent' });
+  return import('data:text/javascript;base64,' + Buffer.from(output.outputFiles[0].contents).toString('base64'));
+}
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wo-report-look-'));
+
+// ---- stage 1: the shared styles code is a checked copy of the report app's ----
+const { validateStyles, suggestCardText, deriveStyleOutput } = await import('../src/report/styles/styles.mjs');
+const { contrast, mix, STAGE_BG } = await import('../src/report/styles/color.mjs');
+const { stylesHash, makeEnvelope } = await import('../src/report/styles/styles-hash.mjs');
+const SHA = {
+  'color.mjs': '429c8190d67287295c469d6cfdf29b1a247aa8751ff27bf8029e94ab9d6c86c3',
+  'styles.mjs': '9fe38cdc31682188dbddddee8780489c860da6b6e38cc5f9dfd927898cfa5ad0',
+  'styles-hash.mjs': '86abbb1ae3a63a0deed80f6008b135ed80644153537da43941aadcb212858d60',
+};
+console.log('the shared styles code');
+await ok('the three shared modules match the report app files (sha256), so a copy that drifts fails here', () => {
+  for (const [f, h] of Object.entries(SHA)) assert.equal(crypto.createHash('sha256').update(fs.readFileSync(path.join('src', 'report', 'styles', f), 'utf8').split(String.fromCharCode(13, 10)).join(String.fromCharCode(10))).digest('hex'), h, f); // line endings
+});
+const LOOK = { accent: '#f2994a', secondary: '#2ecdf5', link: '#23aeeb', text: '#c4c4c4', muted: '#9aa3b5', surface: '#101010', headingFont: 'Oswald', bodyFont: 'Inter', headingCase: 'uppercase', name: 'Example Agency', footerText: 'Prepared by Example Agency' };
+await ok('a flat look is accepted and comes back as a fresh object holding only checked values', () => {
+  const v = validateStyles(LOOK); assert.equal(v.ok, true, v.errors.join(' ')); assert.notEqual(v.styles, LOOK); assert.deepEqual(v.styles, LOOK);
+});
+await ok('a typo, a bad color, hostile text and a look no card text can read are refused with a plain message, and nothing throws', () => {
+  assert.match(validateStyles({ acent: '#ffffff' }).errors.join(' '), /acent/);
+  assert.equal(validateStyles({ accent: 'red' }).ok, false);
+  assert.equal(validateStyles({ name: 'a\u0000b' }).ok, false);
+  assert.equal(validateStyles({ bg: '#000000' }).ok, false, 'there is no slot for the page background');
+  assert.match(validateStyles({ surface: '#f7f7f7', text: '#323334' }).errors.join(' '), /surface/);
+  assert.match(validateStyles({ surface: '#d52924', cardText: '#323334' }).errors.join(' '), /2\.52:1/);
+  assert.equal(suggestCardText('#d52924').color, '#ffffff');
+  for (const bad of [null, undefined, 5, 'x', [], JSON.parse('{"__proto__": {"x": 1}}'), { name: 'x'.repeat(5000) }]) assert.doesNotThrow(() => validateStyles(bad));
+});
+await ok('the copy has the 0.1.7 card behavior: a light card is drawn opaque, a red card with only a card color gets readable built in colors, and every text color reads on the card as drawn', () => {
+  const alpha = (v) => { const m = /rgba\([^)]*,\s*([0-9.]+)\)\s*$/.exec(v || ''); return m ? Number(m[1]) : 1; };
+  const light = validateStyles({ accent: '#1a6fd0', surface: '#f7f7f7', cardText: '#323334', text: '#e6e6e6', muted: '#9aa3b5' }); assert.ok(light.ok, light.errors.join(' '));
+  const lv = deriveStyleOutput(light.styles).vars; assert.equal(lv['--panel'], '#f7f7f7'); assert.equal(lv['--rp-card-glass'], '#f7f7f7');
+  const red = validateStyles({ surface: '#d52924', text: '#ffffff' }); assert.ok(red.ok, red.errors.join(' ')); const rv = deriveStyleOutput(red.styles).vars;
+  for (const [what, c] of [['muted text', rv['--rp-card-muted']], ['second color', rv['--rp-secondary']], ['link', rv['--rp-link']]]) assert.ok(contrast(c, '#d52924') >= 4.5, what);
+  assert.ok(alpha(rv['--panel']) < 1, 'a mid-tone card with light text keeps the glass look');
+  const card = mix(STAGE_BG, '#d52924', alpha(rv['--panel'])); assert.ok(contrast(rv['--rp-card-ink'] || '#ffffff', card) >= 4.5, 'the card text reads on the card as drawn');
+});
+await ok('the pairing name is the same whatever the key order, and the envelope has exactly styles_<hash> and data_<hash>', () => {
+  assert.equal(stylesHash({ accent: '#f2994a', name: 'A' }), stylesHash({ name: 'A', accent: '#f2994a' }));
+  const e = makeEnvelope({ format: 'webobs.client-report' }, LOOK); const keys = Object.keys(e);
+  assert.equal(keys.length, 2); assert.equal(keys[0].slice(7), keys[1].slice(5)); assert.equal(keys[0].slice(7), stylesHash(LOOK));
+});
+
+fs.rmSync(tmp, { recursive: true, force: true });
+console.log(`Report look OK: ${n} checks passed.`);

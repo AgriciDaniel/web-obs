@@ -602,6 +602,7 @@ async function main() {
   execFileSync(process.execPath, ['scripts/verify-cluster-layout.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-audit-actions.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-publish-target.mjs'], { stdio: 'inherit', timeout: 60_000 });
+  execFileSync(process.execPath, ['scripts/verify-report-look.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-road-layout.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-cluster-prefetch.mjs'], { stdio: 'inherit', timeout: 60_000 });
   execFileSync(process.execPath, ['scripts/verify-node-look.mjs'], { stdio: 'inherit', timeout: 60_000 });

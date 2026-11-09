@@ -1,7 +1,10 @@
 import tseslint from 'typescript-eslint';
 import obsidianmd from 'eslint-plugin-obsidianmd';
 
-export default tseslint.config(...obsidianmd.configs.recommended, {
+export default tseslint.config({
+  // Exact copies of the report app's shared styles code (plain JavaScript with type stubs); they are checked by hash, not edited or linted here.
+  ignores: ['src/report/styles/**'],
+}, ...obsidianmd.configs.recommended, {
   files: ['**/*.ts', '**/*.tsx'],
   rules: {
     'obsidianmd/ui/sentence-case': ['warn', {
