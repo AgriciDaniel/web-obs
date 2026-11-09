@@ -65,6 +65,34 @@ const syncPluginAssets = {
   },
 };
 
+// Web-Obs never renders <script> tags, preinits scripts or uses dangerouslySetInnerHTML. React DOM still ships
+// those paths, and they read as script injection and raw HTML sinks to reviewers and scanners, so they are replaced
+// with a hard error at build time. Each pattern must match, so a React upgrade that moves them fails the build.
+const REACT_DOM_CLIENT = /[\\/]node_modules[\\/]react-dom[\\/]cjs[\\/]react-dom-client\.production\.js$/;
+const reactDomHardening = {
+  name: 'react-dom-hardening',
+  setup(build) {
+    build.onLoad({ filter: REACT_DOM_CLIENT }, async (args) => {
+      let source = await fs.promises.readFile(args.path, 'utf8');
+      const unsupported = (what) => `(function () { throw Error("Web-Obs does not render ${what}."); })()`;
+      const replacements = [
+        [/nextResource = ownerDocument\.createElement\("div"\);\s*nextResource\.innerHTML = "<script>\\x3c\/script>";\s*nextResource = nextResource\.removeChild\(\s*nextResource\.firstChild\s*\);/g, 1,
+          `nextResource = ${unsupported('script elements')};`],
+        [/\(domElement\.innerHTML = key\)/g, 2, unsupported('raw HTML')],
+        [/\w+\.createElement\("script"\)/g, 3, unsupported('script elements')],
+      ];
+      for (const [pattern, expected, replacement] of replacements) {
+        const found = source.match(pattern)?.length ?? 0;
+        if (found !== expected) {
+          throw new Error(`React DOM hardening expected ${expected} match(es) of ${pattern}, found ${found} in ${args.path}`);
+        }
+        source = source.replace(pattern, replacement);
+      }
+      return { contents: source, loader: 'js' };
+    });
+  },
+};
+
 const banner = `/*
 GENERATED OBSIDIAN PLUGIN BUNDLE: Web-Obs 3D Site Globe (web-obs)
 Source workspace: web-obs
@@ -103,7 +131,7 @@ const ctx = await esbuild.context({
   treeShaking: true,
   minify: prod,
   outfile: path.join(outDir, 'main.js'),
-  plugins: [syncPluginAssets],
+  plugins: [reactDomHardening, syncPluginAssets],
 });
 
 if (prod) {

@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 - 2026-11-10
+
+Publish and Archive in Site Audit, faster large maps, and a plugin bundle that passes the Obsidian directory checks.
 
 ### Added
 - **Publish and Archive in Site Audit.** Approve a client report and save it locally or send it to your own report server. Reports exclude vault paths, raw page text, resource lists and agency notes. Publish credentials use Obsidian secret storage where available, with a session prompt fallback for the ingest secret. Environment secrets require an explicit setting. Archive moves a capture, its history, proposals and unfinished site files into a unique recoverable folder with restore instructions. Thanks to [gcollins808](https://github.com/gcollins808).
@@ -11,6 +13,7 @@
 - **Faster large maps.** Cluster layouts compute on demand with background time slices. Instanced nodes and edges, pooled labels and a two-tier frame loop reduce rendering work. Includes the changes from Garrett's PRs #9, #10 and draft #11, integrated and verified with the plugin changes.
 
 ### Fixed
+- **No script injection paths in the plugin bundle.** React DOM's code for creating `<script>` elements and setting raw HTML is replaced with a hard error at build time, because Web-Obs never uses it. Obsidian's directory scan flagged it as runtime script creation. The build fails if a React update moves that code. Releases now ship only `main.js`, `manifest.json` and `styles.css`, with signed build provenance.
 - **Typed capture and comparison boundaries.** Saved-site comparisons validate manifests and leave unavailable measurements as no data. Capture requests reject invalid JSON value types. Async command and child-exit callbacks handle failures, plugin paths follow the vault configuration directory, and view activation supports hosts before Obsidian 1.7.2 through an API guard.
 - **Native report and archive follow-up.** Client exports omit local logo paths. Environment credentials are checked before prompting, rejected uploads get accurate guidance, and confirmation forms stay scrollable in short panes. Archiving refreshes every open Web-Obs pane. A closing capture continues to block Archive until its child process exits, including after the owning pane closes.
 - **Archive integration safeguards.** Refuse archiving during a capture in any open Web-Obs view, include actual transaction staging paths and preserved proposals, reject linked directory destinations, avoid trash name collisions, and restore moved folders after a failed move. A pending capture recovery must finish first.
