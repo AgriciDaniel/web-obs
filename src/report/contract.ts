@@ -15,7 +15,7 @@ export const MAP_SITE_FIELDS = ['schemaVersion', 'siteId', 'domain', 'brandName'
 export const MAP_AUDIT_FINDING_FIELDS = ['id', 'category', 'tone', 'title', 'targets'] as const;
 
 /** Top-level fields of a client report. */
-export const REPORT_FIELDS = ['format', 'version', 'meta', 'client', 'feedback', 'labels', 'summary', 'findings', 'glossary', 'map', 'assets', 'modes'] as const;
+export const REPORT_FIELDS = ['format', 'version', 'meta', 'client', 'feedback', 'labels', 'summary', 'findings', 'glossary', 'map', 'assets', 'modes', 'styles'] as const;
 
 // Value checks (types, lengths, http(s) addresses, images, nested unknown keys). Same code as apps/server/ingest/contract-check.mjs.
 export { reportValueProblems, isHttpUrl, REPORT_SPEC, REPORT_MAX_CHARS } from './contractValues';

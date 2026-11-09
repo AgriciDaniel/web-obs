@@ -109,6 +109,8 @@ export interface ClientReport {
   /** The site as the 3D globe draws it: the client's own pages only, already trimmed for sharing. */
   map?: { site: Record<string, unknown> };
   assets: Record<string, string>;
+  /** Optional look for this report: a flat list of validated style slots. Absent = the built-in look. */
+  styles?: Record<string, string>;
   modes: {
     guided: {
       estimatedMinutes: number;
@@ -208,6 +210,8 @@ export interface BuildOptions {
   createdAt: string;
   generator?: string;
   includeMap?: boolean;
+  /** Validated styles to carry in the report. */
+  styles?: Record<string, string>;
   /** Data URIs keyed "logo" or "snap:<nodeId>". */
   images?: Record<string, string>;
   /** Fallbacks for the feedback email (from .env). A per-report address in the walkthrough wins. */
@@ -337,7 +341,7 @@ export function buildClientReport(wIn: Walkthrough, m: SiteGraphManifest, opts: 
     ...(to ? { feedback: { to, subject } } : {}),
     labels: { ...LABEL_TEXT },
     summary: { ...(typeof m.stats?.pagesCrawled === 'number' ? { pagesMapped: m.stats.pagesCrawled } : {}), findingsCount: findings.length, bySeverity },
-    findings, glossary, ...(opts.includeMap === false ? {} : { map: { site: buildSite(m) } }), assets,
+    findings, glossary, ...(opts.includeMap === false ? {} : { map: { site: buildSite(m) } }), assets, ...(opts.styles ? { styles: opts.styles } : {}),
     modes: {
       guided: {
         estimatedMinutes: Math.max(5, tour.length), steps: guided, tour, more,
@@ -367,9 +371,14 @@ function buildSite(m: SiteGraphManifest): Record<string, unknown> {
   return site;
 }
 
-/** Add a content hash so a consumer can detect a file edited after export. `sha` is the caller's SHA-256 (hex). */
+/**
+ * Add a content hash so a consumer can detect a file edited after export. `sha` is the caller's SHA-256 (hex).
+ * The hash covers the report WITHOUT its `styles` (the look): a look can travel as its own part of an upload, bound to the report by its own paired hash,
+ * and is merged back by the ingest, so the seal must not depend on it. To check a seal, remove `styles` and `meta.integrity` and hash JSON.stringify of the rest.
+ */
 export async function sealReport(r: ClientReport, sha: (s: string) => Promise<string>): Promise<ClientReport> {
-  const body = { ...r, meta: { ...r.meta, integrity: undefined } };
+  const { styles: _look, ...plain } = r as ClientReport & { styles?: unknown };
+  const body = { ...plain, meta: { ...r.meta, integrity: undefined } };
   return { ...r, meta: { ...r.meta, integrity: { algorithm: 'sha256', contentSha256: await sha(JSON.stringify(body)) } } };
 }
 

@@ -58,5 +58,34 @@ await ok('the pairing name is the same whatever the key order, and the envelope 
   assert.equal(keys.length, 2); assert.equal(keys[0].slice(7), keys[1].slice(5)); assert.equal(keys[0].slice(7), stylesHash(LOOK));
 });
 
+// ---- stage 2: the report carries an optional look; the contract and the seal ----
+const { exportClientReport } = await load('src/report/exportAudit.ts');
+const { PREVIEW_SITE_MANIFEST } = await load('src/data/demoSite.ts');
+const { reportValueProblems } = await load('src/report/contractValues.ts');
+const { REPORT_FIELDS } = await load('src/report/contract.ts');
+const { validateClientReport } = await load('src/report/package.ts');
+const manifest = structuredClone(PREVIEW_SITE_MANIFEST);
+const AT = '2026-01-01T00:00:00.000Z';
+const withLook = await exportClientReport(manifest, { approvedBy: 'Test Approver', createdAt: AT, styles: LOOK });
+const plain = await exportClientReport(manifest, { approvedBy: 'Test Approver', createdAt: AT });
+console.log('the report with a look');
+await ok('the exporter puts the checked look in the report; without one the report has no styles field; a bad look stops the export', async () => {
+  const r = JSON.parse(withLook.json); assert.equal(r.styles.accent, '#f2994a'); assert.equal(r.styles.name, 'Example Agency'); assert.ok(!('styles' in JSON.parse(plain.json)));
+  await assert.rejects(() => exportClientReport(manifest, { approvedBy: 'x', styles: { accent: 'red' } }), /The look is not valid/);
+  await assert.rejects(() => exportClientReport(manifest, { approvedBy: 'x', styles: { bg: '#000000' } }), /The look is not valid/);
+});
+await ok('the contract names the styles field, checks every slot of it, and a report with a look passes the package check', () => {
+  assert.ok(REPORT_FIELDS.includes('styles'));
+  const r = JSON.parse(withLook.json);
+  assert.deepEqual(reportValueProblems(r), []); assert.deepEqual(validateClientReport(r), []);
+  for (const bad of [{ accent: 'red' }, { bg: '#000000' }, { headingFont: 'Comic Sans' }, { name: 'x'.repeat(500) }]) assert.ok(reportValueProblems({ ...r, styles: bad }).some((p) => /^styles/.test(p.where)), JSON.stringify(bad));
+});
+await ok('the seal does not depend on the look: the same report sealed with and without a look has the same hash, and a seal check that drops styles passes', () => {
+  const a = JSON.parse(withLook.json), b = JSON.parse(plain.json);
+  assert.equal(a.meta.integrity.contentSha256, b.meta.integrity.contentSha256);
+  const { styles, ...rest } = a; void styles; const body = { ...rest, meta: { ...a.meta, integrity: undefined } };
+  assert.equal(crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex'), a.meta.integrity.contentSha256);
+});
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`Report look OK: ${n} checks passed.`);
