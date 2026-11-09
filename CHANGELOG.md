@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 - 2026-11-10
+
+The capture engine now reports the same version as the plugin.
+
+### Fixed
+- **Crawler version.** 0.3.0 shipped a capture engine that still identified itself as `WebObs/0.2.2` in its user agent. It now reports `WebObs/0.3.1`, matching the plugin.
+
 ## 0.3.0 - 2026-11-10
 
 Publish and Archive in Site Audit, faster large maps, and a plugin bundle that passes the Obsidian directory checks.
