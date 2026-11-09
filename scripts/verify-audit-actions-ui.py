@@ -3,7 +3,10 @@
 
 No report is uploaded and no capture is moved. File operations and server integration have separate checks.
 """
+import contextlib
 import json
+import os
+import re
 from pathlib import Path
 import socket
 import subprocess
@@ -16,8 +19,8 @@ from playwright.sync_api import sync_playwright, expect
 
 ROOT = Path(__file__).resolve().parents[1]
 HARNESS = """
-import React from '/node_modules/.vite/deps/react.js';
-import ReactDOM from '/node_modules/.vite/deps/react-dom_client.js';
+import React from 'react';
+import ReactDOM from 'react-dom/client';
 import App from '/src/App.tsx';
 import {PREVIEW_SITE_MANIFEST} from '/src/data/demoSite.ts';
 import '/src/styles/theme.css';
@@ -59,32 +62,62 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
 """
 
 
+@contextlib.contextmanager
+def isolated_ui_server():
+    """Let Vite transform the fixture imports, with a new dependency cache on every run."""
+    scratch_root = ROOT / '.web-obs'
+    scratch_root.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='audit-ui-', dir=scratch_root) as scratch:
+        work = Path(scratch)
+        entry = work / 'harness.mjs'
+        entry.write_text(HARNESS, encoding='utf-8')
+        project_config = os.path.relpath(ROOT / 'vite.config.ts', work).replace(os.sep, '/')
+        config = work / 'vite.config.mjs'
+        config.write_text('import project from ' + json.dumps(project_config) + ';\n'
+                          'export default {...project, cacheDir:' + json.dumps(str(work / 'cache')) + '};\n', encoding='utf-8')
+        with socket.socket() as sock:
+            sock.bind(('127.0.0.1', 0))
+            port = sock.getsockname()[1]
+        url = f'http://127.0.0.1:{port}'
+        server = subprocess.Popen(['node', str(ROOT / 'node_modules/vite/bin/vite.js'),
+                                   '--config', str(config), '--host', '127.0.0.1', '--port', str(port), '--strictPort'],
+                                  cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            for _ in range(100):
+                try:
+                    urllib.request.urlopen(url, timeout=1).close()
+                    break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                raise AssertionError('Local Vite server did not start')
+            yield url, '/' + entry.relative_to(ROOT).as_posix()
+        finally:
+            server.terminate()
+            try:
+                server.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait(timeout=10)
+
+
 def main():
     evidence = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(tempfile.mkdtemp(prefix='wo-audit-ui-'))
     evidence.mkdir(parents=True, exist_ok=True)
-    with socket.socket() as sock:
-        sock.bind(('127.0.0.1', 0))
-        port = sock.getsockname()[1]
-    url = f'http://127.0.0.1:{port}'
-    server = subprocess.Popen(['node', 'node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', str(port), '--strictPort'], cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     errors = []
-    try:
-        for _ in range(100):
-            try:
-                urllib.request.urlopen(url, timeout=1).close()
-                break
-            except OSError:
-                time.sleep(0.1)
-        else:
-            raise AssertionError('Local Vite server did not start')
+    failed_resources = []
+    with isolated_ui_server() as (url, entry):
         with sync_playwright() as pw:
             browser = pw.chromium.launch(args=['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'])
             page = browser.new_page(viewport={'width': 1440, 'height': 1000})
             page.on('pageerror', lambda error: errors.append(str(error)))
             page.on('console', lambda message: print('Browser console:', message.text, flush=True) if message.type == 'error' else None)
-            page.route('**/src/main.tsx', lambda route: route.fulfill(content_type='application/javascript', body=HARNESS))
+            page.on('response', lambda response: failed_resources.append({'url': response.url, 'status': response.status})
+                    if response.status >= 400 and response.url.startswith(url) and not response.url.endswith('/favicon.ico') else None)
+            page.route(re.compile(r'.*/src/main\.tsx(?:\?.*)?$'), lambda route: route.fulfill(
+                content_type='application/javascript', body='import ' + json.dumps(entry) + ';'))
             page.goto(url)
-            page.wait_for_timeout(1500)
+            expect(page.get_by_role('button', name='Site audit', exact=True)).to_be_visible(timeout=30000)
             page.screenshot(path=str(evidence / 'initial.png'))
             assert not errors, errors
             page.get_by_role('button', name='Site audit', exact=True).click()
@@ -130,12 +163,10 @@ def main():
             calls = page.evaluate('window.testCalls')
             assert calls == {'publish': 1, 'archive': 1, 'approver': 'Synthetic Approver'}, calls
             assert not errors, errors
+            assert not failed_resources, failed_resources
             browser.close()
-        (evidence / 'result.json').write_text(json.dumps({'status': 'PASS', 'evidenceClass': 'Chromium with synthetic site and mocked host actions', 'calls': calls, 'pageErrors': errors}, indent=2) + '\n')
+        (evidence / 'result.json').write_text(json.dumps({'status': 'PASS', 'evidenceClass': 'Chromium with synthetic site and mocked host actions', 'calls': calls, 'pageErrors': errors, 'failedResources': failed_resources, 'dependencyCache': 'fresh isolated cache'}, indent=2) + '\n')
         print(f'[PASS] Audit actions UI: approval, pending controls, publish result, typed archive confirmation, narrow layout and clearing the archived site. Evidence: {evidence}')
-    finally:
-        server.terminate()
-        server.wait(timeout=10)
 
 
 if __name__ == '__main__':
