@@ -586,11 +586,31 @@ export interface AuditActions {
   publishReady: boolean;
   /** The host the report would be sent to (publish target), or null when it is saved to the folder. */
   readonly publishTargetLabel?: string | null;
-  publish: (siteId: string, approvedBy: string) => Promise<PublishAuditResult>;
+  /** The Look needs all six of the style members below; a host that has none of them shows no Look choice and publishes as before. */
+  /** The look to send with the report: 'default', 'agency' or 'client:<file>' (from styleChoices). Default sends nothing extra. */
+  publish: (siteId: string, approvedBy: string, styleId?: string) => Promise<PublishAuditResult>;
+  /** The looks the Publish dialog offers (Default, the agency profile, each client profile). */
+  styleChoices?: (domain?: string) => Promise<StyleChoiceInfo[]>;
+  /** What a choice would send: a one-line summary, notes about adjustments, or the problem with the file. */
+  previewStyle?: (styleId: string) => Promise<StylePreview>;
+  /** For a choice with no profile file yet: the starting form, taken from what the audit knows about the site. */
+  styleDraft?: (siteId: string, styleId: string) => Promise<{ form: import('../data/profileForm').StyleForm; hints: string[] }>;
+  /** Writes the profile (only when the person presses Save) and returns the choice id to select. 'exists' means a file is already there; call again with overwrite true after asking. */
+  saveStyleProfile?: (siteId: string, styleId: string, form: import('../data/profileForm').StyleForm, overwrite?: boolean) => Promise<{ ok: boolean; id?: string; code?: string; message?: string }>;
+  /** The choice used last time. */
+  readonly lastStyleId?: string;
+  /** The setting "Default look when publishing": auto, agency, default or last. */
+  readonly stylePreference?: import('../data/defaultLook').DefaultLookPreference;
+  /** Opens a saved profile for editing: its values in the form, and a hash of the file as read. */
+  styleEdit?: (styleId: string) => Promise<{ ok: true; form: import('../data/profileForm').StyleForm; baseHash: string } | { ok: false; message: string }>;
+  /** Saves the changes in place (a backup copy is kept next to the file). Only called by Save changes. */
+  saveStyleEdit?: (styleId: string, initial: import('../data/profileForm').StyleForm, form: import('../data/profileForm').StyleForm, baseHash: string) => Promise<{ ok: boolean; id?: string; backup?: string; code?: string; message?: string }>;
   previewArchive: (siteId: string) => Promise<ArchivePlan>;
   archive: (siteId: string, confirm: string) => Promise<ArchiveResult>;
 }
-export interface PublishAuditResult { file: string | null; folder: string | null; /** Set when the report was sent to a publish target instead of saved: the host it went to and when the link stops working. */ pushedTo?: string; expires?: string; link: string | null; sizeKb: number; clientName: string; findings: number; top: string[] }
+export interface StyleChoiceInfo { id: string; label: string; kind: 'default' | 'agency' | 'client'; ok: boolean; problem?: string; missing?: boolean }
+export interface StylePreview { id: string; label: string; summary: string; notes: string[]; problem?: string }
+export interface PublishAuditResult { lookLabel?: string; file: string | null; folder: string | null; /** Set when the report was sent to a publish target instead of saved: the host it went to and when the link stops working. */ pushedTo?: string; expires?: string; link: string | null; sizeKb: number; clientName: string; findings: number; top: string[] }
 export interface ArchivePlan { domain: string; items: Array<{ label: string; rel: string; files: number; bytes: number }>; files: number; bytes: number }
 export interface ArchiveResult { domain: string; trash: string; files: number }
 
