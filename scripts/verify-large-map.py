@@ -234,9 +234,20 @@ def run(port):
         assert faded > 0, 'labels must fade rather than snap when hover ends'
 
         # Selecting then leaving still works, the map redraws on camera drag, and views switch without errors.
-        page.evaluate("() => document.querySelector('.wo-node-pill:not(.is-hidden)').click()")
-        page.wait_for_timeout(1200)
-        assert page.evaluate("() => document.querySelectorAll('.wo-node-pill.is-active').length") == 1
+        selected_id = page.evaluate("""() => {
+          const pill = [...document.querySelectorAll('.wo-node-pill[data-node-id]')]
+            .find(p => !p.classList.contains('is-hidden'));
+          if (!pill) throw new Error('No bound visible label to select');
+          const id = pill.dataset.nodeId;
+          pill.click();
+          return id;
+        }""")
+        page.wait_for_function("""(id) => {
+          const selected = [...document.querySelectorAll('.wo-node-pill[aria-pressed="true"]')];
+          return selected.length === 1 && selected[0].dataset.nodeId === id;
+        }""", arg=selected_id, timeout=30000)
+        active_ids = page.evaluate("() => [...document.querySelectorAll('.wo-node-pill.is-active')].map(p => p.dataset.nodeId)")
+        assert active_ids == [selected_id], f'Exactly the selected node must be active: {active_ids}'
         page.evaluate('() => { window.__p.draws = 0; }')
         page.mouse.move(700, 500)
         page.mouse.down()
