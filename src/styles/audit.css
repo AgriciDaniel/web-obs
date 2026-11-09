@@ -323,3 +323,10 @@
 .wo-profile-modal { width: min(820px, 94vw); max-width: 820px; }
 .wo-profile-modal .modal-content { padding: 0; }
 .wo-audit-confirm.wo-audit-embedded { max-width: none; margin: 0; border: 0; border-radius: 0; box-shadow: none; max-height: 78vh; }
+
+/* The two small Obsidian dialogs Publish can open (where to send the report, the ingest secret). They keep Obsidian's own look; this only sets the width, the intro text and hides an empty message. */
+.wo-publish-modal { max-width: 520px; }
+.wo-publish-modal .wo-modal-intro { margin: 0 0 12px; color: var(--text-muted); font-size: var(--font-ui-small); line-height: 1.5; }
+.wo-publish-modal .mod-warning:empty { display: none; }
+.wo-publish-modal .mod-warning { margin: 0 0 8px; }
+

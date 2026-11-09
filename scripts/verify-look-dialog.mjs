@@ -93,5 +93,15 @@ const D = await load('src/data/defaultLook.ts');
   fs.rmSync(tmp, { recursive: true, force: true });
 }
 
+{
+  await ok('the destination and ingest secret dialogs carry the same quiet styling: a modal class, a plain intro line, and the matching rules in the stylesheet', () => {
+    for (const f of ['src/plugin/publishDestinationUi.ts', 'src/plugin/publishSecretsUi.ts']) {
+      const s = fs.readFileSync(f, 'utf8'); assert.ok(s.includes("addClass?.('wo-publish-modal')") && s.includes("cls: 'wo-modal-intro'"), f);
+    }
+    const css = fs.readFileSync('src/styles/audit.css', 'utf8');
+    for (const rule of ['.wo-publish-modal { max-width: 520px; }', '.wo-publish-modal .wo-modal-intro', '.wo-publish-modal .mod-warning:empty { display: none; }']) assert.ok(css.includes(rule), rule);
+  });
+}
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`Look dialog source OK: ${n} checks passed.`);

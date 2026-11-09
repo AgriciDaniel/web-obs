@@ -13,8 +13,9 @@ export function askDestination(app: App): Promise<DestinationChoice | null> {
       private finish(v: DestinationChoice | null) { if (!this.done) { this.done = true; resolve(v); } this.close(); }
       onOpen() {
         this.titleEl.setText('Where should this report go?');
+        (this as unknown as { modalEl?: { addClass?: (c: string) => void } }).modalEl?.addClass?.('wo-publish-modal');
         const { contentEl } = this;
-        contentEl.createEl('p', { text: 'Fill in one of the two. A folder saves the file there under a random name and you handle ingestion yourself. An address pushes the report to your report front end, which makes the link.' });
+        contentEl.createEl('p', { cls: 'wo-modal-intro', text: 'Fill in one of the two. A folder saves the file there under a random name and you handle ingestion yourself. An address pushes the report to your report front end, which makes the link.' });
         const state = { folder: '', address: '', remember: false };
         const error = contentEl.createEl('p', { cls: 'mod-warning' });
         new Setting(contentEl).setName('Save in a folder').setDesc('A full folder path.').addText((t) => t.setPlaceholder('C:\\path\\to\\reports').onChange((v) => { state.folder = v; }));
