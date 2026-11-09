@@ -87,5 +87,43 @@ await ok('the seal does not depend on the look: the same report sealed with and 
   assert.equal(crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex'), a.meta.integrity.contentSha256);
 });
 
+// ---- stage 3: the https publish sends a report with a look as two named parts ----
+const { publishToTarget, parsePublishTarget, OLD_SERVER_HINT } = await load('src/plugin/publishTarget.ts');
+const SECRET = 'app-secret-' + 'a'.repeat(30);
+const target = parsePublishTarget('audit.example.com');
+const sent = []; const post = (reply) => async (url, headers, body) => { sent.push({ url, headers, body }); return reply; };
+const created = { status: 201, body: JSON.stringify({ ok: true, link: 'https://audit.example.com/r/abc', linkId: '0123456789', expiresAt: '2030-01-01T00:00:00Z' }) };
+console.log('the paired upload');
+await ok('a report with a look is sent as ONE request: exactly styles_<hash> and data_<hash>, same hash, data part without the styles', async () => {
+  const r = await publishToTarget(target, withLook.json, { hours: 72, deps: { secret: () => SECRET, post: post(created) } });
+  assert.equal(r.link, 'https://audit.example.com/r/abc');
+  const body = JSON.parse(sent[0].body); const keys = Object.keys(body); assert.equal(keys.length, 2);
+  const s = keys.find((k) => k.startsWith('styles_')), d = keys.find((k) => k.startsWith('data_')); assert.ok(s && d);
+  assert.equal(s.slice(7), d.slice(5)); assert.equal(s.slice(7), stylesHash(body[s])); assert.equal(body[d].format, 'webobs.client-report'); assert.ok(!('styles' in body[d]));
+  assert.equal(sent[0].headers.Authorization, 'Bearer ' + SECRET);
+});
+await ok('a plain report is sent exactly as it was before: the same body, no envelope', async () => {
+  sent.length = 0; await publishToTarget(target, plain.json, { hours: 72, deps: { secret: () => SECRET, post: post(created) } });
+  assert.equal(sent[0].body, plain.json);
+});
+await ok('a server older than 0.1.4 that refuses the two-part request is explained plainly (update the server first), and only for a report with a look', async () => {
+  await assert.rejects(() => publishToTarget(target, withLook.json, { hours: 72, deps: { secret: () => SECRET, post: post({ status: 422, body: 'That is not a client report.' }) } }), (e) => e.message === OLD_SERVER_HINT && /0\.1\.4/.test(e.message));
+  await assert.rejects(() => publishToTarget(target, plain.json, { hours: 72, deps: { secret: () => SECRET, post: post({ status: 422, body: 'That is not a client report.' }) } }), (e) => e.message !== OLD_SERVER_HINT);
+});
+await ok('a plain 422 from a newer server is shown to the person (short sentences only)', async () => {
+  await assert.rejects(() => publishToTarget(target, withLook.json, { hours: 72, deps: { secret: () => SECRET, post: post({ status: 422, body: 'The styles are not valid: x.' }) } }), /with its look: The styles are not valid/);
+});
+await ok('bad styles inside a report never leave the computer: no request is made', async () => {
+  const r = JSON.parse(withLook.json); r.styles = { accent: 'red' }; sent.length = 0;
+  await assert.rejects(() => publishToTarget(target, JSON.stringify(r), { hours: 72, deps: { secret: () => SECRET, post: post(created) } }), /The look is not valid/);
+  assert.equal(sent.length, 0);
+});
+await ok('a folder target stores the report with the look inside it (no envelope); the server checks it again when it serves', async () => {
+  const dest = path.join(tmp, 'out'); const r = await publishToTarget({ kind: 'folder', dir: dest }, withLook.json, { hours: 24, linkBase: 'https://r.example.com' });
+  assert.match(r.link, /^https:\/\/r\.example\.com\/r\//);
+  const files = fs.readdirSync(path.join(dest, 'reports')); assert.equal(files.length, 1);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dest, 'reports', files[0]), 'utf8')).styles.accent, '#f2994a');
+});
+
 fs.rmSync(tmp, { recursive: true, force: true });
 console.log(`Report look OK: ${n} checks passed.`);

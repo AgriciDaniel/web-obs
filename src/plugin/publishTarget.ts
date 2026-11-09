@@ -19,6 +19,8 @@ import http from 'node:http';
 import https from 'node:https';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { validateStyles } from '../report/styles/styles.mjs';
+import { makeEnvelope } from '../report/styles/styles-hash.mjs';
 
 export type PublishTarget =
   | { kind: 'none' }
@@ -49,6 +51,7 @@ const INGEST_ROUTE = '/ingest/v1/reports';
 const BARE_HOST = /^(localhost|127\.0\.0\.1|[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+)(:\d{1,5})?\/?$/;
 const DRIVE_PATH = /^[A-Za-z]:[\\/]/;
 const SSH =/^([A-Za-z0-9][A-Za-z0-9._@-]*):(\/[A-Za-z0-9._/~-]*)$/;
+export const OLD_SERVER_HINT = 'This server does not accept a report with a look yet. Update the report server and the ingest to 0.1.4 first, or publish with the Default look.';
 const refused = (status: number) => `The server refused the upload (HTTP ${status}). Check the Publish secret and the Cloudflare Access ID and secret in Web-Obs settings (Client reports), and that the address is right. 3xx = Cloudflare Access login page (token missing or not accepted); 401/403/404 = credentials were rejected, access was blocked, or the route is wrong.`;
 
 export function parsePublishTarget(text: string): PublishTarget {
@@ -116,10 +119,12 @@ function defaultRun(cmd: string, args: string[]): { status: number | null; stder
 
 /** A report that is not on the contract never leaves the machine. The export step already guarantees this; this is the last check. */
 function assertClientReport(json: string): void {
-  let r: { format?: string; meta?: { review?: { state?: string } } };
+  let r: { format?: string; meta?: { review?: { state?: string } }; styles?: unknown };
   try { r = JSON.parse(json) as typeof r; } catch { throw new Error('That is not a report.'); }
   if (r.format !== 'webobs.client-report') throw new Error('That is not a client report.');
   if (r.meta?.review?.state !== 'approved') throw new Error('The report is not approved yet.');
+  // A look the report carries is checked here with the same function the ingest and the report server use, so a bad one never leaves this computer.
+  if (r.styles !== undefined) { const v = validateStyles(r.styles); if (!v.ok) throw new Error(`The look is not valid: ${v.errors[0] ?? 'it failed its checks'}`); }
 }
 
 const sha256hex = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
@@ -140,8 +145,14 @@ export async function publishToTarget(target: PublishTarget, json: string, o: { 
     const cfId = await get(SECRET_NAMES.cfId), cfSecret = await get(SECRET_NAMES.cfSecret);
     if (cfId && cfSecret) { headers['CF-Access-Client-Id'] = cfId; headers['CF-Access-Client-Secret'] = cfSecret; }
     const url = new URL(target.url); url.searchParams.set('hours', String(o.hours));
+    // A report that carries a look is sent as ONE request with two named parts (styles_<hash> and data_<hash>); a plain report is sent as it is.
+    let payload = json, sentEnvelope = false;
+    { const parsed = JSON.parse(json) as Record<string, unknown>; if (parsed.styles && typeof parsed.styles === 'object') { const { styles, ...rest } = parsed; payload = JSON.stringify(makeEnvelope(rest, styles as Record<string, unknown>)); sentEnvelope = true; } }
     let reply: HttpReply;
-    try { reply = await (deps.post ?? defaultPost)(url.toString(), headers, json); } catch { throw new Error('The server could not be reached.'); }
+    try { reply = await (deps.post ?? defaultPost)(url.toString(), headers, payload); } catch { throw new Error('The server could not be reached.'); }
+    // A server older than 0.1.4 does not know the two-part request and answers that it is not a client report.
+    if (sentEnvelope && reply.status === 422 && /not a client report/i.test(reply.body)) throw new Error(OLD_SERVER_HINT);
+    if (sentEnvelope && reply.status === 422 && reply.body.length < 400) throw new Error(`The server did not accept the report with its look: ${reply.body.trim()}`);
     if ([401, 403, 404].includes(reply.status) || (reply.status >= 300 && reply.status < 400)) throw new Error(refused(reply.status));
     if (reply.status === 429) throw new Error('The server says there have been too many uploads. Try again later.');
     type IngestResponse = { ok?: boolean; link?: string | null; linkId?: string; expiresAt?: string };
