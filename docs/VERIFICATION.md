@@ -84,3 +84,15 @@ engine/.venv/bin/python3 scripts/verify-capture-integrity.py --vault . --site ag
 ```
 
 Browser and native acceptance scripts are separate from the default gate. Native scripts require an explicitly isolated test vault and CDP port; they refuse an unexpected vault.
+
+## Client report look checks
+
+Part of `npm run verify`, all with synthetic data:
+
+| Check | Cases | What it covers |
+| --- | ---: | --- |
+| `scripts/verify-report-look.mjs` | 14 | The checked copy of the shared styles code (sha256 pins), the `styles` field in the contract, the exporter and the seal, and the paired upload request, the older server message and a bad look sending nothing |
+| `scripts/verify-style-profiles.mjs` | 66 | Profile files read and mapped to flat styles (size cap, links, hostile content), the choices, creating and editing a profile (no overwrite, `.bak`, unknown keys kept), text colors, and every case of the default look |
+| `scripts/verify-look-dialog.mjs` | 8 | The Publish dialog and settings source: the Look choice, Save and Cancel paths, the profile list, and the small destination and secret dialogs |
+| `scripts/verify-publish-dialog-ui.py` | 151 | Real browser: layout, focus order, contrast, every Save, Edit and Cancel path, and the default look, dark and light at 1000 and 420 px |
+| `scripts/verify-export-ingest.mjs` | optional | With `REPORT_SERVER_DIR` set: a report with a look is sent as the two part request to the real ingest, accepted, stored and served with its look |

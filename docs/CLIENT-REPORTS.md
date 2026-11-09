@@ -24,13 +24,69 @@ HTTPS requests have a timeout and do not follow redirects. Plain HTTP is accepte
 
 ## A report with a look
 
-A client report can carry an optional **look**: a flat list of checked style slots under `styles` (the accent, a second color, link, text and muted colors, a card color with its own card text, two bundled font names, a heading case, an agency name and a footer line). There is no slot for the page background or the 3D map, so a look cannot change them. A report without `styles` is exactly as before, and the viewer shows its built-in look.
+A client report can carry an optional **look**: a short, checked list of style slots under `styles`. A report without `styles` is exactly as before, and the viewer shows its built in look. The person chooses the look in the Publish dialog (the **Look** choice, with profile files in the vault); that side is explained in [Publish with a look](PUBLISH-STYLES.md). This section covers what travels, its limits and what each server version needs. The destination, publish target, Publish secret and Cloudflare Access settings above are unchanged and apply to a report with a look as they do to any report.
 
-The exporter takes the look as an option and checks it again with the shared function in `src/report/styles/`, which is an exact copy of the report app's code (a test compares each file with the report app's sha256, so a copy that drifts fails). A look that is not valid stops the export with a plain message. The report's integrity seal covers the report without its `styles`.
+### What the look contains and its limits
 
-A report that carries a look is sent to a publish target as **one request with exactly two named parts**, `styles_<hash>` and `data_<hash>`. Both names hold the same hash of the look, so the server can pair them, and the data part is the report without its `styles`. A report without a look is sent as it always was. The look is checked before anything is sent, so a bad one never leaves the computer.
+| Slot | Value | Limit |
+| --- | --- | --- |
+| `accent`, `secondary`, `link`, `text`, `muted`, `surface` | a color | `#rrggbb` only |
+| `cardText`, `cardMuted` | the text and small text on cards | `#rrggbb` only; must reach 4.5 to 1 on `surface` |
+| `headingFont`, `bodyFont` | a bundled font name | `Oswald` or `Inter` only; no font file travels, the server has them |
+| `headingCase` | how headings are written | `uppercase`, `none`, `capitalize` or `lowercase` |
+| `name` | the agency name (browser tab title) | plain text, up to 80 characters |
+| `footerText` | one line naming who prepared the report | plain text, up to 120 characters |
 
-This needs report app **0.1.4 or later** on the server and the ingest. An older server does not know the two-part request and answers that it is not a client report; for a report with a look the plugin turns that into a plain message (update the server and the ingest to 0.1.4, or publish with the default look). A folder target stores the report with its look inside it, and the server checks the look again when it serves the report.
+- The whole look is at most 4096 characters. A name that is not in the table is refused and named in the message (a typo such as `acent` is caught).
+- There is no slot for the page background or the 3D map, so a look cannot change them.
+- A look whose card color the text cannot read is refused with both colors and the numbers, for example `cardText: #323334 on the card #d52924 reaches only 2.52:1 and needs 4.5:1. Use light text on this card, for example #ffffff (5.0:1).` The plugin runs the same check before anything is sent.
+- Text values are plain text: no markup, links, control characters or invisible characters.
+
+### An example
+
+A look (synthetic values):
+
+```json
+{
+  "accent": "#2a7fff",
+  "surface": "#f7f7f7",
+  "cardText": "#222222",
+  "headingFont": "Oswald",
+  "bodyFont": "Inter",
+  "headingCase": "uppercase",
+  "name": "Example Agency",
+  "footerText": "Prepared by Example Agency"
+}
+```
+
+The request the plugin sends to the publish target is the same `POST` to `/ingest/v1/reports` as before, with the same headers, and one JSON body with exactly two keys:
+
+```json
+{
+  "styles_3f9a1c5d7e20": { "accent": "#2a7fff", "surface": "#f7f7f7" },
+  "data_3f9a1c5d7e20": { "format": "webobs.client-report", "version": "1.1" }
+}
+```
+
+Both names end in the same short hash of the look, so the server can pair them. The `data_` part is the report without its `styles` (shown shortened here). The integrity seal covers the report without `styles`, so the look can travel as its own part.
+
+### Which report app version is needed
+
+- **The paired request needs report app 0.1.4 or later** on the server and the ingest. An older server does not know it and answers that it is not a client report. For a report with a look the plugin turns that into a plain message: update the report server and the ingest to 0.1.4, or publish with the Default look. A report with the Default look is sent as a plain report and works with any server.
+- **Text on cards (`cardText`, `cardMuted`) needs 0.1.6 or later.** An older server refuses the unknown names.
+- **The shared check the plugin copies is the 0.1.7 code.** It draws light cards opaque, makes the small label chips readable and nudges built in colors on a card that is not dark. 0.1.7 changes how a look is drawn, not what a server accepts, so an older server (0.1.4 or later) accepts the same looks.
+- The copy lives in `src/report/styles/` and is not edited here. `scripts/verify-report-look.mjs` compares each file with the sha256 of the report app's file, so a copy that drifts fails.
+
+### SSH and local folder routes
+
+These routes do not use the two part request. The report is written as one file with the look inside it under `styles`, and the server checks the look again when it serves the report. Everything else about these routes is as described under Publish above.
+
+### What is and is not sent
+
+- **Sent:** only the checked slots in the table, inside the report. Anyone who holds the report link can see them, including the agency name and the footer line, so put no private notes or contact details in a look.
+- **Not sent:** profile files as such, anything in a profile that is not a slot (voice, notes, logo paths, other colors), file paths, font files, and any secret. The Publish secret and the Cloudflare values go only in request headers, as before.
+- **Checked before sending:** a look that does not pass never leaves the computer.
+- A look travels with its report. Links published earlier keep the look they were published with; publish again to change it.
 
 ## Archive and restore
 
