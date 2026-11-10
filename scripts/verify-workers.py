@@ -494,6 +494,21 @@ class MockBrowserTests(unittest.TestCase):
             with self.assertRaisesRegex(workers.WorkerError, 'could not be confirmed'):
                 workers._stop_owned(process)
 
+    @unittest.skipUnless(os.name == 'nt', 'Exercises the Windows taskkill path')
+    def test_slow_taskkill_ends_the_worker_directly_or_reports_it(self):
+        import workers
+        alive, kills = [True], []
+        def kill():
+            kills.append(1); alive[0] = False
+        process = SimpleNamespace(pid=987654, is_alive=lambda: alive[0], kill=kill, join=lambda **kwargs: None)
+        slow = subprocess.TimeoutExpired('taskkill', 10)
+        with patch.object(subprocess, 'run', side_effect=slow):
+            workers._stop_owned(process)
+            self.assertEqual(len(kills), 1)
+            stuck = SimpleNamespace(pid=987654, is_alive=lambda: True, kill=lambda: None, join=lambda **kwargs: None)
+            with self.assertRaisesRegex(workers.WorkerError, 'could not be confirmed'):
+                workers._stop_owned(stuck)
+
     def run_browser(self, *, size=20, foreign=False, calls=1, prior_http=None):
         import page_fetch
         counts = {'starts': 0, 'launches': 0, 'contexts': 0, 'closedContexts': 0, 'browserClosed': 0}
