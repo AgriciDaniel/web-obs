@@ -73,6 +73,7 @@ export const DEFAULT_NODE_VISUALS: NodeVisualTuning = NODE_LOOK_PRESETS[DEFAULT_
 
 /** The look's preset with any `window.__WO_VISUAL__` fields applied on top (a developer override). */
 export function resolveNodeVisuals(look: NodeLook): NodeVisualTuning {
-  const override = (globalThis as { __WO_VISUAL__?: Partial<NodeVisualTuning> }).__WO_VISUAL__;
+  const host = typeof window === 'undefined' ? undefined : (window as { __WO_VISUAL__?: Partial<NodeVisualTuning> });
+  const override = host?.__WO_VISUAL__;
   return { ...NODE_LOOK_PRESETS[look], ...(override ?? {}) };
 }

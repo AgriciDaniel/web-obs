@@ -266,7 +266,7 @@ export function computeSiteLayouts(manifest: SiteGraphManifest): ComputedSiteLay
     },
     prefetchClusters(sliceMs = 4, gapMs = 12) {
       if (clustersCache || nodes.length < PREFETCH_MIN_NODES) return () => {};
-      let timer: ReturnType<typeof setTimeout> | undefined;
+      let timer: number | undefined;
       const tick = () => {
         timer = undefined;
         if (clustersCache) return;
@@ -275,11 +275,11 @@ export function computeSiteLayouts(manifest: SiteGraphManifest): ComputedSiteLay
           clustersCache = job.result();
           return;
         }
-        timer = setTimeout(tick, gapMs);
+        timer = window.setTimeout(tick, gapMs);
       };
-      timer = setTimeout(tick, 300);
+      timer = window.setTimeout(tick, 300);
       return () => {
-        if (timer !== undefined) clearTimeout(timer);
+        if (timer !== undefined) window.clearTimeout(timer);
       };
     },
   };

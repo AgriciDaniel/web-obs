@@ -21,6 +21,7 @@ async function load(entry) {
     module, exports: module.exports, require, process, Buffer, console,
     TextDecoder, TextEncoder, AbortController, URL, setTimeout, clearTimeout,
     fetch: (...args) => fetchImpl(...args),
+    window: { fetch: (...args) => fetchImpl(...args) },
   });
   return module.exports;
 }

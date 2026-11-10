@@ -4,9 +4,9 @@
 #root, .web-obs-view-content { container-type: inline-size; container-name: web-obs; }
 
 .workspace-leaf-content[data-type='web-obs-site-globe'] .view-content {
-  padding: 0 !important;
-  margin: 0 !important;
-  overflow: hidden !important;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
   position: relative;
   width: 100%;
   height: 100%;
@@ -76,7 +76,7 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
-  font-family: var(--font-interface, Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  font-family: var(--font-interface, Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
   color: var(--ink-primary);
   background: var(--bg-outer);
   user-select: none;
@@ -293,14 +293,19 @@
   height: 36px;
   padding: 0 28px 0 12px;
   border-radius: 8px;
-  background: var(--bg-panel) !important;
-  border: 1px solid var(--border-hairline) !important;
-  color: var(--ink-primary) !important;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   backdrop-filter: blur(12px);
   box-shadow: var(--shadow-lg);
+}
+
+/* Element, class and state together outrank Obsidian's own select rules (at most 0,2,1), so they apply without forcing priority. */
+.wo-shell select.wo-site-select,
+.wo-shell select.wo-site-select:is(:hover, :focus, :focus-visible, :active) {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-hairline);
+  color: var(--ink-primary);
 }
 
 .wo-shell .wo-inline-capture {
@@ -328,12 +333,17 @@
 
 .wo-shell .wo-capture-input {
   width: 190px;
-  border: none !important;
-  outline: none !important;
-  background: transparent !important;
-  color: var(--ink-primary) !important;
   font-size: 12.5px;
   padding: 0;
+}
+
+/* Element, class and state together outrank Obsidian's own input rules (at most 0,2,1), so they apply without forcing priority. */
+.wo-shell input.wo-capture-input,
+.wo-shell input.wo-capture-input:is(:hover, :focus, :focus-visible, :active) {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--ink-primary);
 }
 
 .wo-shell .wo-capture-input::placeholder {
@@ -469,12 +479,17 @@
 
 .wo-shell .wo-search-field {
   width: 155px;
-  border: none !important;
-  outline: none !important;
-  background: transparent !important;
-  color: var(--ink-primary) !important;
   font-size: 12px;
   padding: 0;
+}
+
+/* Element, class and state together outrank Obsidian's own input rules (at most 0,2,1), so they apply without forcing priority. */
+.wo-shell input.wo-search-field,
+.wo-shell input.wo-search-field:is(:hover, :focus, :focus-visible, :active) {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--ink-primary);
 }
 
 .wo-shell .wo-search-clear {
@@ -555,12 +570,17 @@
 .wo-shell .wo-hero-input {
   flex: 1;
   min-width: 0;
-  border: none !important;
-  outline: none !important;
-  background: transparent !important;
-  color: var(--ink-primary) !important;
   font-size: 14px;
   padding: 6px 0;
+}
+
+/* Element, class and state together outrank Obsidian's own input rules (at most 0,2,1), so they apply without forcing priority. */
+.wo-shell input.wo-hero-input,
+.wo-shell input.wo-hero-input:is(:hover, :focus, :focus-visible, :active) {
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--ink-primary);
 }
 
 .wo-shell .wo-hero-input::placeholder {
@@ -1344,7 +1364,20 @@
   .wo-shell .wo-icon-btn { width: 30px; height: 30px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .wo-shell *, .wo-shell *::before, .wo-shell *::after { transition-duration: 0s !important; scroll-behavior: auto !important; }
+  /* Every animated theme control and form field (including Obsidian's focus ring), listed explicitly; ui.css and audit.css switch off their own. */
+  .wo-shell .wo-node-pill,
+  .wo-shell .wo-inline-capture,
+  .wo-shell .wo-capture-submit,
+  .wo-shell .wo-mode-btn,
+  .wo-shell .wo-icon-btn,
+  .wo-shell .wo-intel-btn,
+  .wo-shell .wo-hero-form,
+  .wo-shell .wo-ghost-link,
+  .wo-shell .wo-dock-chip,
+  .wo-shell .wo-dock-toggle,
+  .wo-shell .wo-link-row,
+  .wo-shell :is(input, select),
+  .wo-shell :is(input, select):is(:hover, :focus, :focus-visible, :active) { transition: none; }
 }
 
 /* Show the hovered page and its direct connections without unrelated labels. */

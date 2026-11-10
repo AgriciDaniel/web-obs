@@ -48,7 +48,7 @@ export async function decodeLogo(bytes: ArrayBuffer, path: string): Promise<HTML
     await img.decode();
     const iw = img.naturalWidth; const ih = img.naturalHeight;
     const scale = iw > 0 && ih > 0 ? RASTER_PX / Math.max(iw, ih) : 1;
-    const raster = document.createElement('canvas');
+    const raster = createEl('canvas');
     raster.width = iw > 0 && ih > 0 ? Math.max(1, Math.round(iw * scale)) : RASTER_PX;
     raster.height = iw > 0 && ih > 0 ? Math.max(1, Math.round(ih * scale)) : RASTER_PX;
     const ctx = raster.getContext('2d');
@@ -86,7 +86,7 @@ export function backingForInk(ink: string): string {
  */
 export function analyseLogo(img: HTMLCanvasElement): LogoTone {
   const size = 48;
-  const canvas = document.createElement('canvas');
+  const canvas = createEl('canvas');
   canvas.width = size; canvas.height = size;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   if (!ctx) return { backing: LIGHT_BACKING, ownBackground: false, coverage: 1 };

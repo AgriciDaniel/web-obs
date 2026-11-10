@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 
+// The layout and node-look modules use browser window APIs; Node gives them the same timers and globals.
+globalThis.window ??= globalThis;
+
 async function load(entry) {
   const output = await build({ entryPoints: [entry], bundle: true, write: false, format: 'esm', platform: 'node', logLevel: 'silent' });
   return import('data:text/javascript;base64,' + Buffer.from(output.outputFiles[0].contents).toString('base64'));

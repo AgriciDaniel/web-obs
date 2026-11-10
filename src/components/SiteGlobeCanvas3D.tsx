@@ -677,8 +677,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
           const x = (columns[index - 1].right + column.left) / 2;
           pts.push(new THREE.Vector3(x, -top - step * 0.5, 0), new THREE.Vector3(x, top + step * 0.5, 0));
         }
-        const el = document.createElement('div');
-        el.className = 'wo-sector-tag wo-road-tag';
+        const el = createDiv({ cls: 'wo-sector-tag wo-road-tag' });
         el.dataset.columnId = column.id;
         el.textContent = column.id === 'home' ? domain || column.title : `${column.title} · ${column.count}`;
         const obj = new CSS2DObject(el);
@@ -782,14 +781,11 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
     let labelCtx: LabelContext = emptyLabelContext();
 
     const createLabelSlot = (): LabelSlot => {
-      const el = document.createElement('div');
-      el.className = 'wo-node-pill is-hidden';
+      const el = createDiv({ cls: 'wo-node-pill is-hidden' });
       el.setAttribute('role', 'button');
       el.tabIndex = 0;
-      const dotEl = document.createElement('span');
-      dotEl.className = 'wo-pill-dot';
-      const textEl = document.createElement('span');
-      textEl.className = 'wo-pill-label';
+      const dotEl = createSpan({ cls: 'wo-pill-dot' });
+      const textEl = createSpan({ cls: 'wo-pill-label' });
       el.append(dotEl, textEl);
       const slot: LabelSlot = { el, textEl, badgeEl: null, obj: new CSS2DObject(el), entry: null, fresh: false };
       // The handlers read the slot's current node, so a slot can be handed from one node to another.
@@ -830,8 +826,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
       slot.badgeEl?.remove();
       slot.badgeEl = null;
       if (node.health === 'orphan' || node.health === 'broken' || node.health === 'unlisted') {
-        const badgeEl = document.createElement('span');
-        badgeEl.className = 'wo-pill-badge';
+        const badgeEl = createSpan({ cls: 'wo-pill-badge' });
         badgeEl.textContent =
           node.health === 'broken' ? String(node.statusCode || 404) : node.health === 'orphan' ? 'orphan' : 'unlisted';
         slot.el.appendChild(badgeEl);
@@ -969,8 +964,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
       for (const sec of curLayouts.sectors) {
         pushMeridianHalfArc(mPts, GLOBE_SURFACE_RADIUS, sec.startAngle, 56);
         if (curLayouts.sectors.length >= 1) {
-          const el = document.createElement('div');
-          el.className = 'wo-sector-tag';
+          const el = createDiv({ cls: 'wo-sector-tag' });
           el.textContent = `${sec.label} · ${sec.pageCount}`;
           const obj = new CSS2DObject(el);
           const rTag = GLOBE_SURFACE_RADIUS + 0.42;
@@ -1170,7 +1164,7 @@ export const SiteGlobeCanvas3D: React.FC<SiteGlobeCanvas3DProps> = ({
           let badge: BrandBadgeRuntime | undefined;
           const mark = pickBrandMark(nextManifest);
           if (mark) {
-            const canvas = document.createElement('canvas');
+            const canvas = createEl('canvas');
             const texture = new THREE.CanvasTexture(canvas);
             texture.colorSpace = THREE.SRGBColorSpace;
             texture.anisotropy = 4;

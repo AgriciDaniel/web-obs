@@ -86,6 +86,15 @@ export function buildObsidianUri(vaultName: string, obsidianPath: string): strin
 }
 
 /**
+ * The standalone app talks only to its own dev server (`/__web_obs/...`, same origin) and needs streaming and
+ * abort support, which Obsidian's requestUrl does not offer. It never runs inside Obsidian, where the plugin host
+ * adapter is used instead, so it calls the browser's own fetch explicitly.
+ */
+function devServerRequest(path: string, init?: RequestInit): Promise<Response> {
+  return window.fetch(path, init);
+}
+
+/**
  * Standalone browser host adapter (powers `npm run dev` with live local API fallback).
  */
 export function createStandaloneHost(vaultName = DEFAULT_VAULT_NAME): SiteHostAdapter {
@@ -101,7 +110,7 @@ export function createStandaloneHost(vaultName = DEFAULT_VAULT_NAME): SiteHostAd
     vaultName,
     listSites: async (): Promise<SiteSummaryItem[]> => {
       try {
-        const res = await fetch('/__web_obs/sites');
+        const res = await devServerRequest('/__web_obs/sites');
         if (!res.ok) return [];
         const data = (await res.json()) as { sites?: SiteSummaryItem[] };
         return Array.isArray(data.sites) ? data.sites : [];
@@ -111,7 +120,7 @@ export function createStandaloneHost(vaultName = DEFAULT_VAULT_NAME): SiteHostAd
     },
     loadSiteManifest: async (siteId: string): Promise<SiteGraphManifest | null> => {
       try {
-        const res = await fetch(`/__web_obs/site?id=${encodeURIComponent(siteId)}`);
+        const res = await devServerRequest(`/__web_obs/site?id=${encodeURIComponent(siteId)}`);
         if (!res.ok) return null;
         return parseSiteManifest(await res.json());
       } catch {
@@ -122,7 +131,7 @@ export function createStandaloneHost(vaultName = DEFAULT_VAULT_NAME): SiteHostAd
       const safe = sanitizeVaultRelativePath(vaultRelativePath);
       if (!safe || !safe.startsWith('sites/')) return null;
       try {
-        const res = await fetch(`/__web_obs/asset?path=${encodeURIComponent(safe)}`);
+        const res = await devServerRequest(`/__web_obs/asset?path=${encodeURIComponent(safe)}`);
         return res.ok ? await res.arrayBuffer() : null;
       } catch {
         return null;
@@ -143,7 +152,7 @@ export function createStandaloneHost(vaultName = DEFAULT_VAULT_NAME): SiteHostAd
       publish();
       let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
       try {
-        const res = await fetch(options.continueLinksSiteId ? '/__web_obs/continue-links' : '/__web_obs/crawl', {
+        const res = await devServerRequest(options.continueLinksSiteId ? '/__web_obs/continue-links' : '/__web_obs/crawl', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(options), signal: controller.signal,
         });
@@ -191,7 +200,7 @@ export function createStandaloneHost(vaultName = DEFAULT_VAULT_NAME): SiteHostAd
         }
         decoder.finish();
         if (!completedSiteId) throw new Error('Capture stream ended before completion. Please retry.');
-        const manifestRes = await fetch(`/__web_obs/site?id=${encodeURIComponent(completedSiteId)}`, { signal: controller.signal });
+        const manifestRes = await devServerRequest(`/__web_obs/site?id=${encodeURIComponent(completedSiteId)}`, { signal: controller.signal });
         if (!manifestRes.ok) throw new Error(`Saved capture could not be loaded (HTTP ${manifestRes.status}).`);
         const manifest = parseSiteManifest(await manifestRes.json());
         if (activeRun !== run || controller.signal.aborted) return null;

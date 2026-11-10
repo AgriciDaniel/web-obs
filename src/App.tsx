@@ -43,6 +43,7 @@ import type {
   SiteSummaryItem,
   ThemeMode,
 } from './types/site';
+import './standaloneDom';
 
 interface AppProps {
   host?: SiteHostAdapter;
