@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.2 - 2026-11-10
+
+Cleaner code and styles for the Obsidian directory review. Nothing changes in how the plugin looks or works.
+
+### Changed
+- **Obsidian helpers.** Map labels and canvases are created with Obsidian's own element helpers. Timers and the developer look override go through the window object.
+- **No forced styles.** The view, search, capture and site controls no longer use `!important`. More specific selectors keep the same look against Obsidian's default styles in dark and light themes, including hover, focus and reduced motion.
+- **Simpler fallbacks.** Font fallbacks avoid newer system font names, and the toolbar uses a single gap value.
+
 ## 0.3.1 - 2026-11-10
 
 The capture engine now reports the same version as the plugin.
