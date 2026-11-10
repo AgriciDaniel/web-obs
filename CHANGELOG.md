@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.3 - 2026-11-10
+
+Two cases where Publish refused a report it should have created. Reported by [gcollins808](https://github.com/gcollins808).
+
+### Fixed
+- **Crawl traps no longer block Publish.** The "Possible crawl traps" finding stored a path such as `/calendar` where a full address belongs, and the report check refused it. New captures store the full address, and captures you already have publish without a new crawl.
+- **The site's own words are not treated as promises.** A brand name, page title or page address containing a word like "guarantee" stopped the report. The promise check now covers only what the report itself says.
+
 ## 0.3.2 - 2026-11-10
 
 Cleaner code and styles for the Obsidian directory review. Nothing changes in how the plugin looks or works.

@@ -1,7 +1,7 @@
 {
   "name": "web-obs",
   "private": true,
-  "version": "0.3.2",
+  "version": "0.3.3",
   "type": "module",
   "description": "Obsidian 3D Site Globe plugin and website intelligence crawler (sitemap, content, local images, internal and external links)",
   "scripts": {
