@@ -16,7 +16,7 @@ import { AUDIT_CATEGORIES } from '../data/siteAudit';
 import { attentionNodeIds } from '../data/mapAttention';
 import {
   type Claim, type ClientTheme, THEME_HEX, type Ctx, type Horizon, type Issue, type Label, type Level, type Owner, type Ref, type Size, type Stop, type Walkthrough,
-  HORIZONS, LABEL_TEXT, OWNER_LABEL, RANKING_BASIS, bareNumbers, makeCtx, nodesAffected, promiseLanguage, renderText, resolvePath, sceneActive, stripForClient, urlKey,
+  HORIZONS, LABEL_TEXT, OWNER_LABEL, RANKING_BASIS, bareNumbers, capturedPromiseText, makeCtx, nodesAffected, promiseLanguageBeyond, renderText, resolvePath, sceneActive, stripForClient, urlKey,
 } from './core';
 import { GLOSSARY, PLAIN, type GlossaryTerm } from './plain';
 import { projectSite, unlistedSiteFields, reportValueProblems, REPORT_FIELDS } from './contract';
@@ -451,11 +451,13 @@ export function validateClientReport(r: ClientReport, ctx?: Ctx): PackageProblem
   };
   const { assets: _a, map: _m, ...noAssets } = r;
   void _a; void _m;
+  // Promise words the site itself uses (its name, a page title, an address) are not promises made by this report.
+  const captured = ctx ? capturedPromiseText(ctx.m) : [];
   walk(noAssets, '', (s, p) => {
     if (/\{\{.*\}\}/.test(s)) E(p, 'unresolved {{binding}}');
     if (s === '\u2014') E(p, 'a binding failed and rendered as a dash');
     if (/[A-Za-z]:\\|\/Users\/|\.obsidian|_site-graph/.test(s)) E(p, 'looks like a local path');
-    const pl = promiseLanguage(s);
+    const pl = promiseLanguageBeyond(s, captured);
     if (pl) E(p, `promise language "${pl}"`);
   });
 

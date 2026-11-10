@@ -207,6 +207,24 @@ class SiteAuditTests(unittest.TestCase):
             self.assertTrue({"id", "category", "tone", "title", "explanation", "targets"} <= set(f))
         self.assertIn("dup-title", {f["id"] for f in audit["findings"]})
 
+    def test_crawl_trap_targets_are_full_addresses(self):
+        nodes = [node("https://ex.com/", title="Home page title")]
+        links = [{"url": f"https://ex.com/shop?color={i}"} for i in range(12)] + [{"url": f"https://ex.com/?ref={i}"} for i in range(12)]
+        links += [{"url": "https://ex.com/a/b/a/b/page"}]
+        ext = {"https://ex.com/": {"visible_text": PROSE, "internal_links": links, "schema_blocks": [], "keywords": {}}}
+        audit = site_audit.build_site_audit(nodes=nodes, extracted_by_url=ext, internal_pair_meta={}, redirects={}, home_url="https://ex.com/",
+                                            origin="https://ex.com", brand="Ex", resources=[], sitemaps_found=[], sitemap_urls=[],
+                                            robots_text="User-agent: *\nAllow: /\n", captured_iso="2026-11-03T00:00:00Z")
+        traps = next(f for f in audit["findings"] if f["id"] == "crawl-traps")
+        urls = [t["url"] for t in traps["targets"]]
+        # A query-variants row names a path ("/shop", or "/" for the homepage); a sampled row already holds a full address.
+        self.assertIn("https://ex.com/shop", urls)
+        self.assertIn("https://ex.com/", urls)
+        self.assertIn("https://ex.com/a/b/a/b/page", urls)
+        for f in audit["findings"]:
+            for t in f["targets"]:
+                self.assertRegex(t["url"], r"^https?://", f"{f['id']} target is a full address")
+
 
 class OutputTests(unittest.TestCase):
     def test_tasks_keep_ticks_and_close_resolved(self):

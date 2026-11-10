@@ -30,6 +30,39 @@ assert.ok(!('resources' in report.map.site) && !('linkHealth' in report.map.site
 await assert.rejects(() => exportClientReport(manifest, { approvedBy: '   ' }), /approve/, 'a person must approve');
 await assert.rejects(() => exportClientReport(manifest, { approvedBy: 'A', feedbackTo: 'not an email' }), /email/, 'a bad feedback address is refused');
 
+// ---- a capture's own wording never blocks its report ---------------------------------------------------------------------------
+{
+  // A capture made up to 0.3.2 names a crawl trap by its path. The report reads it as that path on the site.
+  const traps = structuredClone(PREVIEW_SITE_MANIFEST);
+  traps.audit.findings.push({ id: 'crawl-traps', category: 'structure', tone: 'review', title: 'Possible crawl traps', explanation: 'URL patterns that can multiply without limit.', targetCount: 3,
+    targets: [{ url: '/calendar', detail: 'query-variants: 14 URLs' }, { url: `${traps.origin}/archive/2020/01/`, detail: 'calendar-archive: 40 URLs' }, { url: 'not an address', detail: 'unusable' }] });
+  const stored = JSON.stringify(traps);
+  const out = JSON.parse((await exportClientReport(traps, { approvedBy: 'Test Approver' })).json);
+  const sent = out.map.site.audit.findings.find((f) => f.id === 'crawl-traps').targets.map((t) => t.url);
+  assert.deepEqual(sent, [`${traps.origin}/calendar`, `${traps.origin}/archive/2020/01/`], 'a path target becomes a full address, a full address is kept, an unusable target is left out');
+  assert.equal(JSON.stringify(traps), stored, 'the capture itself is not changed by the export');
+
+  // Promise words the site itself uses are not promises the report makes.
+  const named = structuredClone(PREVIEW_SITE_MANIFEST);
+  named.brandName = 'Guarantee Roofing';
+  const from = `${named.origin}/services/legacy-migration`, to = `${named.origin}/services/money-back-guarantee`;
+  for (const n of named.nodes) { if (n.url === from) n.url = to; if (n.kind === 'home') n.title = 'Guarantee Roofing | Our 10x Guarantee'; }
+  for (const f of named.audit.findings) for (const t of f.targets) { if (t.url === from) t.url = to; if (t.sourceUrl === from) t.sourceUrl = to; }
+  const ok = JSON.parse((await exportClientReport(named, { approvedBy: 'Test Approver' })).json);
+  assert.equal(ok.client.name, 'Guarantee Roofing', 'a brand name with a promise word publishes');
+  assert.ok(ok.findings.some((f) => f.examples.some((e) => e.url === to)), 'a page address with a promise word publishes as an example');
+
+  // The report's own words are still checked, on the same capture.
+  const { validateClientReport } = await load('src/report/package.ts');
+  const { makeCtx } = await load('src/report/core.ts');
+  const promise = (r) => validateClientReport(r, makeCtx(named)).filter((p) => /promise language/.test(p.message)).map((p) => p.where);
+  assert.deepEqual(promise(ok), [], 'the exported report has no promise language of its own');
+  const written = structuredClone(ok); written.findings[0].fix[0] = 'We guarantee results for Guarantee Roofing.';
+  assert.deepEqual(promise(written), ['findings[0].fix[0]'], 'a promise written into the report is still refused, even beside the brand name');
+  const ranked = structuredClone(ok); ranked.findings[0].verify = 'Guarantee Roofing will rank on the first page of Google.';
+  assert.deepEqual(promise(ranked), ['findings[0].verify'], 'other promise wording is still refused');
+}
+
 // ---- file name and writing --------------------------------------------------------------------------------------------------
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wo-audit-actions-'));
 const names = new Set(Array.from({ length: 200 }, newReportFileName));

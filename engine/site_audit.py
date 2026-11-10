@@ -9,7 +9,7 @@ import re
 from collections import Counter, defaultdict
 from datetime import date, datetime
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from page_checks import STOPWORDS, significant_terms, simhash_distance, tokenize
 from sitemap import url_match_key
@@ -632,6 +632,11 @@ def _page_target(url: str, detail: str = "", source: str = "") -> dict:
     return row
 
 
+def _trap_url(row: dict, origin: str) -> str:
+    """The address a crawl trap row points at. A query-variants row names a path, so it is joined to the site: every target is a full address."""
+    return urljoin(origin.rstrip("/") + "/", row.get("path") or (row.get("sample") or [""])[0])
+
+
 def build_site_audit(*, nodes: list[dict], extracted_by_url: dict, internal_pair_meta: dict, redirects: dict,
                      home_url: str, origin: str, brand: str, resources: list[dict], sitemaps_found: list[dict],
                      sitemap_urls: list[str], robots_text: str, captured_iso: str, brand_kit: Optional[dict] = None) -> dict:
@@ -725,7 +730,7 @@ def build_site_audit(*, nodes: list[dict], extracted_by_url: dict, internal_pair
     if traps:
         F.append(_finding("crawl-traps", "structure", "review", "Possible crawl traps",
                           "URL patterns that can multiply without limit. Consider robots rules, canonicals or removing the links.",
-                          [_page_target(row.get("path") or (row.get("sample") or [""])[0], f"{row['pattern']}: {row['count']} URLs") for row in traps]))
+                          [_page_target(_trap_url(row, origin), f"{row['pattern']}: {row['count']} URLs") for row in traps]))
     if fresh["stale"]:
         F.append(_finding("stale-content", "content", "review", f"Pages not updated in over {STALE_DAYS} days",
                           "Based on the published or modified date the page declares. Review whether the content is still accurate.",

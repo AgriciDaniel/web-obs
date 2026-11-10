@@ -1,6 +1,7 @@
 // Walkthrough core: types, manifest bindings, validation. Pure (no DOM, no node APIs) so the hosted app,
 // the exported client file and the node test-suite all run the exact same rules.
-import type { EngineFinding, SiteGraphManifest } from '../types/site';
+import type { EngineFinding, EngineFindingTarget, SiteGraphManifest } from '../types/site';
+import { isHttpUrl } from './contractValues';
 
 export type Label = 'RAW' | 'FETCH' | 'LAB' | 'INFER' | 'SCOPE';
 export type Disposition = 'confirmed' | 'needs-verification' | 'likely-false-positive' | 'context-only';
@@ -92,6 +93,36 @@ export function makeCtx(m: SiteGraphManifest): Ctx {
   const F = new Map<string, EngineFinding>();
   for (const f of (m.audit?.findings ?? [])) F.set(f.id, f);
   return { m, F };
+}
+/**
+ * The capture as a report reads it: every audit target is a full http(s) address. Captures made up to 0.3.2 can name a path on the site instead
+ * (the crawl traps finding wrote "/calendar"), which a client report cannot carry. Such a path is read as that path on the captured site, and a
+ * target that is neither an address nor a path is left out. Returns the same object when nothing needs changing; the capture is never modified.
+ */
+export function withAbsoluteTargets(m: SiteGraphManifest): SiteGraphManifest {
+  const findings = m.audit?.findings;
+  if (!m.audit || !findings) return m;
+  const http = (u: unknown): boolean => isHttpUrl(u);
+  const fix = (u: unknown): string | null => {
+    if (typeof u !== 'string') return null;
+    if (http(u)) return u;
+    if (!u.startsWith('/') || u.startsWith('//')) return null;
+    try { const full = new URL(u, http(m.origin) ? m.origin : `https://${m.domain}`).toString(); return http(full) ? full : null; } catch { return null; }
+  };
+  const loose = (t: EngineFindingTarget) => !http(t.url) || (t.sourceUrl !== undefined && !http(t.sourceUrl));
+  if (!findings.some((f) => f.targets?.some(loose))) return m;
+  const fixed = findings.map((f) => (f.targets?.some(loose) ? {
+    ...f,
+    targets: f.targets.flatMap((t) => {
+      if (!loose(t)) return [t];
+      const url = fix(t.url), source = fix(t.sourceUrl);
+      if (!url) return [];
+      const { sourceUrl: _old, ...rest } = t;
+      void _old;
+      return [{ ...rest, url, ...(source ? { sourceUrl: source } : {}) }];
+    }),
+  } : f));
+  return { ...m, audit: { ...m.audit, findings: fixed } };
 }
 export const findingCount = (f: EngineFinding): number => (typeof f.targetCount === 'number' ? f.targetCount : f.targets?.length ?? 0);
 export const countOf = (c: Ctx, id: string): number => { const f = c.F.get(id); return f ? findingCount(f) : 0; };
@@ -334,6 +365,27 @@ export function bareNumbers(s: string): string[] {
 /** Forward-looking promise language ("will improve", "guarantee", "#1"), or null. */
 export function promiseLanguage(s: string): string | null {
   return s.match(PROMISE)?.[0] ?? null;
+}
+/**
+ * The capture's own text that reads like a promise: a brand called "Guarantee Roofing", a page at /money-back-guarantee, a page title.
+ * It is the site's wording, not a promise the report makes, so the check on the finished report sets these exact strings aside (longest first).
+ */
+export function capturedPromiseText(m: SiteGraphManifest): string[] {
+  const found = new Set<string>();
+  const walk = (v: unknown): void => {
+    if (typeof v === 'string') { if (PROMISE.test(v)) found.add(v); }
+    else if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === 'object') Object.values(v).forEach(walk);
+  };
+  walk(m);
+  return [...found].sort((a, b) => b.length - a.length);
+}
+/** Promise language in a string of the finished report, ignoring the captured strings from `capturedPromiseText`. */
+export function promiseLanguageBeyond(s: string, captured: string[]): string | null {
+  if (!promiseLanguage(s)) return null;
+  let rest = s;
+  for (const c of captured) rest = rest.split(c).join(' ');
+  return promiseLanguage(rest);
 }
 
 // ---------------------------------------------------------------------------

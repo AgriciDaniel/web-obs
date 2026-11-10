@@ -25,7 +25,7 @@ SOFTWARE.
 // Pure and browser-safe (no file access), so it can run inside the Obsidian plugin. The output holds only the fields on the export
 // allowlist (see contract.ts): no vault paths, page text, resource lists or agency notes.
 import type { SiteGraphManifest } from '../types/site';
-import { makeCtx, stripForClient, validate } from './core';
+import { makeCtx, stripForClient, validate, withAbsoluteTargets } from './core';
 import { buildDraft } from './draft';
 import { buildClientReport, isEmail, sealReport, validateClientReport } from './package';
 
@@ -43,13 +43,15 @@ async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-export async function exportClientReport(m: SiteGraphManifest, opts: ExportAuditOptions): Promise<ExportAuditResult> {
+export async function exportClientReport(capture: SiteGraphManifest, opts: ExportAuditOptions): Promise<ExportAuditResult> {
   const approvedBy = opts.approvedBy.trim();
   if (!approvedBy) throw new Error('Enter your name: a person has to approve what goes to a client.');
   const feedbackTo = opts.feedbackTo?.trim() || undefined;
   if (feedbackTo && !isEmail(feedbackTo)) throw new Error('The feedback address in the settings is not a valid email address.');
 
-  const sha = await sha256Hex(JSON.stringify(m));
+  // The hash names the capture as it is stored. The report is built from the same capture with every audit target as a full address.
+  const sha = await sha256Hex(JSON.stringify(capture));
+  const m = withAbsoluteTargets(capture);
   const w = buildDraft(m, sha, {});
   w.authoring.reviewState = 'approved';
   w.authoring.reviewedBy = approvedBy;
