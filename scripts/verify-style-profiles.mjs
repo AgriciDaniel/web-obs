@@ -175,6 +175,20 @@ const { validateStyles } = await import('../src/report/styles/styles.mjs');
     const r = S.createProfile(folder, 'client', 'examplestudio.example', form({ name: 'Changed' })); assert.equal(r.ok, false); assert.equal(r.code, 'exists'); assert.equal(fs.readFileSync(file, 'utf8'), before);
     const r2 = S.createProfile(folder, 'client', 'examplestudio.example', form({ name: 'Changed' }), true); assert.ok(r2.ok); assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).name, 'Changed');
   });
+  await ok('replacing keeps the old file as ONE .bak copy, byte for byte, even when the old file is broken JSON', () => {
+    const file = path.join(folder, 'clients', 'broken.example.json'); fs.writeFileSync(file, '{ not json');
+    const r = S.createProfile(folder, 'client', 'broken.example', form(), true); assert.ok(r.ok, JSON.stringify(r));
+    assert.equal(fs.readFileSync(file + '.bak', 'utf8'), '{ not json'); assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).name, 'Example Studio');
+    fs.rmSync(file); fs.rmSync(file + '.bak');
+  });
+  await ok('replacing never writes through a .bak link (the file it points to is untouched)', () => {
+    const file = path.join(folder, 'clients', 'linked-bak.example.json'); fs.writeFileSync(file, JSON.stringify({ name: 'Old' }));
+    const victim = path.join(tmp, 'victim-create.txt'); fs.writeFileSync(victim, 'keep me');
+    try { fs.symlinkSync(victim, file + '.bak'); } catch { fs.rmSync(file); return; }
+    assert.ok(S.createProfile(folder, 'client', 'linked-bak.example', form(), true).ok);
+    assert.equal(fs.readFileSync(victim, 'utf8'), 'keep me'); assert.equal(fs.lstatSync(file + '.bak').isSymbolicLink(), false); assert.equal(JSON.parse(fs.readFileSync(file + '.bak', 'utf8')).name, 'Old');
+    fs.rmSync(file); fs.rmSync(file + '.bak');
+  });
   await ok('an invalid form writes no file and creates no folder', () => {
     const f2 = path.join(tmp, 'styles2'); const r = S.createProfile(f2, 'agency', '', form({ accent: 'red' })); assert.equal(r.ok, false); assert.equal(r.code, 'invalid'); assert.equal(fs.existsSync(f2), false);
   });
@@ -354,6 +368,22 @@ const { validateStyles } = await import('../src/report/styles/styles.mjs');
     const r = S.readProfileForEdit(d, 'client:flat.test.json'); assert.equal(r.shape, 'flat'); assert.equal(r.form.cardText, '#eeeeee');
     S.updateProfile(d, 'client:flat.test.json', r.form, { ...r.form, accent: '#e8743b', cardText: '' }, r.baseHash); const now = read(file);
     assert.equal(now.accent, '#e8743b'); assert.equal(now.cardText, undefined); assert.equal(now.keepMe, true); assert.equal(now.colors, undefined);
+  });
+  await ok('saving never writes through a .bak link, and a folder at that name is refused (nothing is written)', () => {
+    const d = mk('bak-link'); const file = path.join(d, 'agency.json'); fs.writeFileSync(file, JSON.stringify(HOME));
+    const victim = path.join(tmp, 'victim-edit.txt'); fs.writeFileSync(victim, 'keep me');
+    try { fs.symlinkSync(victim, file + '.bak'); } catch { return; }
+    const r = S.readProfileForEdit(d, 'agency'); const res = S.updateProfile(d, 'agency', r.form, { ...r.form, name: 'Linked' }, r.baseHash); assert.ok(res.ok, JSON.stringify(res));
+    assert.equal(fs.readFileSync(victim, 'utf8'), 'keep me'); assert.equal(fs.lstatSync(file + '.bak').isSymbolicLink(), false); assert.equal(read(file + '.bak').name, HOME.name);
+    const d2 = mk('bak-folder'); const f2 = path.join(d2, 'agency.json'); fs.writeFileSync(f2, JSON.stringify(HOME)); fs.mkdirSync(f2 + '.bak'); const before = fs.readFileSync(f2, 'utf8');
+    const r2 = S.readProfileForEdit(d2, 'agency'); assert.equal(S.updateProfile(d2, 'agency', r2.form, { ...r2.form, name: 'X' }, r2.baseHash).ok, false); assert.equal(fs.readFileSync(f2, 'utf8'), before);
+  });
+  await ok('a clients folder that is a link is not edited through', () => {
+    const d = path.join(tmp, 'clients-link'); fs.mkdirSync(d); const outside = path.join(tmp, 'outside-clients'); fs.mkdirSync(outside);
+    const file = path.join(outside, 'x.example.json'); fs.writeFileSync(file, JSON.stringify({ name: 'Outside', colors: { accent_orange: '#e8743b' } })); const before = fs.readFileSync(file, 'utf8');
+    try { fs.symlinkSync(outside, path.join(d, 'clients'), 'junction'); } catch { return; }
+    const r = S.readProfileForEdit(d, 'client:x.example.json'); const res = r.ok ? S.updateProfile(d, 'client:x.example.json', r.form, { ...r.form, name: 'Changed' }, r.baseHash) : r;
+    assert.equal(res.ok, false); assert.equal(fs.readFileSync(file, 'utf8'), before);
   });
   await ok('a form that does not pass is never written (the file and the backup stay as they were)', () => {
     const d = mk('invalid'); const file = path.join(d, 'agency.json'); fs.writeFileSync(file, JSON.stringify(HOME)); const before = fs.readFileSync(file, 'utf8'); const r = S.readProfileForEdit(d, 'agency');

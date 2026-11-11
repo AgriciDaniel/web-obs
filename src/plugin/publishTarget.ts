@@ -51,7 +51,7 @@ const INGEST_ROUTE = '/ingest/v1/reports';
 const BARE_HOST = /^(localhost|127\.0\.0\.1|[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+)(:\d{1,5})?\/?$/;
 const DRIVE_PATH = /^[A-Za-z]:[\\/]/;
 const SSH =/^([A-Za-z0-9][A-Za-z0-9._@-]*):(\/[A-Za-z0-9._/~-]*)$/;
-export const OLD_SERVER_HINT = 'This server does not accept a report with a look yet. Update the report server and the ingest to 0.1.4 first, or publish with the Default look.';
+export const OLD_SERVER_HINT = 'This server does not accept a report with a look yet. Update the report server and the ingest to 0.1.4 first, or publish with the Default look while the profiles folder has no default.json.';
 const refused = (status: number) => `The server refused the upload (HTTP ${status}). Check the Publish secret and the Cloudflare Access ID and secret in Web-Obs settings (Client reports), and that the address is right. 3xx = Cloudflare Access login page (token missing or not accepted); 401/403/404 = credentials were rejected, access was blocked, or the route is wrong.`;
 
 export function parsePublishTarget(text: string): PublishTarget {

@@ -53,7 +53,7 @@ A file that is already a flat styles file (`{ "accent": "#F2994A", "name": "..."
 
 1. The chosen file is read and turned into flat styles, then checked with the same validator the ingest and the report server use (`src/report/styles/styles.mjs`, an exact copy; `scripts/verify-report-look.mjs` checks it against the report app's sha256). A profile that needs a fix stops the publish with a plain message and nothing is sent.
 2. The report is built with the look inside it. For an https target the report is sent as ONE request with two named parts, `styles_<hash>` and `data_<hash>` (the hash is the first 12 hex characters of the SHA-256 of the styles). For a folder or ssh target the report file holds the look.
-3. A server older than 0.1.4 refuses that request. The dialog says so: update the report server and the ingest first, or publish with the Default look. A report with the Default look publishes to any version.
+3. A server older than 0.1.4 refuses that request. The dialog says so: update the report server and the ingest first, or publish with the Default look. A report with the Default look publishes to any version, as long as the profiles folder has no `default.json` (a `default.json` makes Default carry a look).
 4. The dialog shows a one-line summary of the look (accent, card color, fonts), what was adjusted for readability, and a reminder that everything in a look is visible to anyone who has the report link. Put no private notes or contact details in a profile.
 
 A look travels with its report: old links keep the look they were published with. To change it, publish again.
@@ -64,8 +64,8 @@ Agency and the client for the captured site are always in the Look list. A choic
 
 - **Fields:** name, accent, secondary, card surface (optional), text, muted, heading font, body font (Oswald, Inter or the system font), heading case, footer text. The form starts from what the capture knows about the site (name, theme color, palette, a bundled font it uses). A logo is mentioned but not sent: logos are not part of a look yet.
 - **Checks:** the same validator the ingest and the report server use, with the contrast notes shown under the form.
-- **Save profile** writes the file and selects it. Agency writes `agency.json`; a client writes `clients/<site-domain>.json`. The name comes from the capture's domain (lower case, letters, digits, dots and dashes only), never from the form. The file is written to a temporary name and moved into place. A link in place of the styles folder is refused. An existing file is never replaced without a second, explicit "Replace the file".
-- **Cancel** returns to the dialog on Default. **Send with Default look** publishes at once with the built-in look. Nothing leaves the computer except on Publish.
+- **Save profile** writes the file and selects it. Agency writes `agency.json`; a client writes `clients/<site-domain>.json`. The name comes from the capture's domain (lower case, letters, digits, dots and dashes only), never from the form. The file is written to a temporary name and moved into place. A link in place of the styles folder is refused. An existing file is never replaced without a second, explicit "Replace the file", and when it is replaced the old file is kept as `<name>.json.bak`.
+- **Cancel** returns to the dialog on Default. **Send with Default look** publishes at once with the Default look (the built-in look, unless the profiles folder has a `default.json`). Nothing leaves the computer except on Publish.
 - Everything in a look is visible to anyone who has the report link; the form says so.
 
 Later: the profile source becomes the tagged client contract in the home vault. All finding and creating of profiles goes through two functions in `src/plugin/profileSource.ts` (`findProfile`, `createProfile`); swapping the source means replacing those two.
@@ -90,7 +90,7 @@ The manual create-a-profile form is the **backup path**. When the plugin is inte
 
 When the Look is Agency or a client that already has a profile file, **Edit profile** appears next to the Look. It opens the same form, filled from the saved file (every field, card text included), with the same checks, the same **Use readable text** help and the same contrast notes.
 
-- **Save changes** writes the file in place: a temporary file in the same folder, then a rename, so a half-written file never appears. The previous version is copied next to it as `<name>.json.bak` (one backup, replaced by each save). No other file is touched.
+- **Save changes** writes the file in place: a temporary file in the same folder, then a rename, so a half-written file never appears. The previous version is copied next to it as `<name>.json.bak` (one backup, replaced by each save). An old `.bak` that is a link is removed, never written through, and a profiles or clients folder that is a link is refused. No other file is touched.
 - **Save changes and publish** saves first and publishes second. If the save does not happen (for example the file was changed by something else after it was opened), nothing is published and the reason is shown.
 - Only the fields you changed are written. Keys the form does not know are kept as they are, never run or interpreted. Clearing a field removes its key. A flat styles file stays flat; a brand-profile file keeps its own shape.
 - A file that is not readable JSON, is too large (64 KB limit) or is not a plain file is reported in words and is not opened.

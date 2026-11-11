@@ -65,6 +65,8 @@ export function createProfile(folder: string, kind: 'agency' | 'client', domain:
     let exists = false; try { fs.lstatSync(t.file); exists = true; } catch { /* free */ }
     if (exists && !overwrite) return { ok: false, code: 'exists', message: 'A profile file with this name already exists.' };
     if (exists && !fs.lstatSync(t.file).isFile()) return { ok: false, code: 'unsafe', message: 'The existing profile is not a plain file, so it was left alone.' };
+    // Replacing a profile keeps the old one as the .bak copy, the same as editing does. Its bytes are copied as they are, so a broken file can still be replaced.
+    if (exists) writeBackup(t.file, fs.readFileSync(t.file));
     const tmp = `${t.file}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(profile, null, 2) + '\n', { flag: 'wx' });
     try { fs.renameSync(tmp, t.file); } catch (e) { try { fs.unlinkSync(tmp); } catch { /* gone */ } throw e; }
@@ -76,6 +78,24 @@ export function createProfile(folder: string, kind: 'agency' | 'client', domain:
 const MAX_BYTES = 64 * 1024;
 const CLIENT_NAME = /^[A-Za-z0-9][A-Za-z0-9._ -]{0,80}\.json$/;
 const sha = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
+
+/** True when the profiles folder and the folder holding `file` are plain folders, not links. */
+function plainFolders(folder: string, file: string): boolean {
+  for (const d of [folder, path.dirname(file)]) { const st = fs.lstatSync(d); if (st.isSymbolicLink() || !st.isDirectory()) return false; }
+  return true;
+}
+/**
+ * Keeps ONE backup copy of `data` next to `file` (<name>.json.bak). An old backup that is a plain file or a link is removed first; removing a link never
+ * touches what it points to, so a planted .bak link cannot redirect the write. Anything else at that name (a folder) is refused.
+ */
+function writeBackup(file: string, data: string | Buffer): string {
+  const bak = file + '.bak';
+  let st: fs.Stats | null = null;
+  try { st = fs.lstatSync(bak); } catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+  if (st) { if (!st.isFile() && !st.isSymbolicLink()) throw new Error('The old backup is not a plain file.'); fs.unlinkSync(bak); }
+  fs.writeFileSync(bak, data, { flag: 'wx' });
+  return bak;
+}
 
 /** The file a choice id points to: agency.json, or clients/<name>.json for any plain client file name. Null for anything else (Default, odd names, folders). */
 export function fileOfChoice(folder: string, id: string): string | null {
@@ -114,13 +134,14 @@ export type UpdateResult = { ok: true; id: string; file: string; backup: string 
 export function updateProfile(folder: string, id: string, initial: StyleForm, form: StyleForm, baseHash?: string): UpdateResult {
   try {
     const file = fileOfChoice(folder, id); if (!file) return { ok: false, code: 'unsafe', message: 'That look is not a profile file, so it cannot be changed.' };
+    if (!plainFolders(folder, file)) return { ok: false, code: 'unsafe', message: 'The profiles folder is a link or not a plain folder, so nothing was written.' };
     const checked = formToStyles(form); if (!checked.styles) return { ok: false, code: 'invalid', message: checked.errors[0] ?? 'The profile needs a fix before it can be saved.' };
     const cur = readPlain(file); if (!cur.ok) return { ok: false, code: 'unsafe', message: cur.message };
     if (baseHash && sha(cur.text) !== baseHash) return { ok: false, code: 'changed', message: 'The profile file changed since you opened it. Close this and open it again so nothing is lost.' };
     if (path.relative(folder, file).startsWith('..')) return { ok: false, code: 'unsafe', message: 'The profile would be outside the profiles folder.' };
     const next = applyFormToRaw(cur.raw, initial, form);
-    const bak = file + '.bak', tmp = `${file}.${process.pid}.tmp`;
-    fs.copyFileSync(file, bak);
+    const tmp = `${file}.${process.pid}.tmp`;
+    const bak = writeBackup(file, cur.text);
     fs.writeFileSync(tmp, JSON.stringify(next, null, 2) + '\n', { flag: 'wx' });
     try { fs.renameSync(tmp, file); } catch (e) { try { fs.unlinkSync(tmp); } catch { /* gone */ } throw e; }
     return { ok: true, id, file, backup: bak };

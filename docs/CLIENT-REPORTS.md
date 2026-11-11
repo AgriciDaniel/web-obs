@@ -84,7 +84,7 @@ Both names end in the same short hash of the look, so the server can pair them. 
 
 ### Which report app version is needed
 
-- **The paired request needs report app 0.1.4 or later** on the server and the ingest. An older server does not know it and answers that it is not a client report. For a report with a look the plugin turns that into a plain message: update the report server and the ingest to 0.1.4, or publish with the Default look. A report with the Default look is sent as a plain report and works with any server.
+- **The paired request needs report app 0.1.4 or later** on the server and the ingest. An older server does not know it and answers that it is not a client report. For a report with a look the plugin turns that into a plain message: update the report server and the ingest to 0.1.4, or publish with the Default look. A report with the Default look is sent as a plain report and works with any server, unless the profiles folder has a `default.json`, which makes Default carry a look.
 - **Text on cards (`cardText`, `cardMuted`) needs 0.1.6 or later.** An older server refuses the unknown names.
 - **The shared check the plugin copies is the 0.1.7 code.** It draws light cards opaque, makes the small label chips readable and nudges built in colors on a card that is not dark. 0.1.7 changes how a look is drawn, not what a server accepts, so an older server (0.1.4 or later) accepts the same looks.
 - The copy lives in `src/report/styles/` and is not edited here. `scripts/verify-report-look.mjs` compares each file with the sha256 of the report app's file, so a copy that drifts fails.

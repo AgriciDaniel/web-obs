@@ -73,17 +73,23 @@ export function useAuditActions({ manifest, actions, onOpenUrl, onArchived }: Pr
 
   const setField = (k: keyof StyleForm, v: string) => setDraft((d) => (d ? { ...d, form: { ...d.form, [k]: v } } : d));
   const lk = lookOf(actions);
+  // The look most recently asked for. A preview or draft that arrives after another look was picked is dropped, so it never shows for the wrong look.
+  const wantedStyle = useRef('default');
   const pickStyle = (id: string, list: StyleChoiceInfo[] = styleChoices) => {
+    wantedStyle.current = id;
     setStyleId(id); setStylePreview(null); setDraft(null); setReplaceAsk(null);
+    const stillWanted = () => wantedStyle.current === id;
     if (list.find((c) => c.id === id)?.missing) {
-      lk?.styleDraft(manifest.siteId, id).then((d) => setDraft({ ...d, initial: d.form })).catch(() => setStylePreview({ id, label: id, summary: '', notes: [], problem: 'The starting values could not be prepared.' }));
+      lk?.styleDraft(manifest.siteId, id).then((d) => { if (stillWanted()) setDraft({ ...d, initial: d.form }); }).catch(() => { if (stillWanted()) setStylePreview({ id, label: id, summary: '', notes: [], problem: 'The starting values could not be prepared.' }); });
       return;
     }
-    lk?.previewStyle(id).then(setStylePreview).catch(() => setStylePreview({ id, label: id, summary: '', notes: [], problem: 'That look could not be read.' }));
+    lk?.previewStyle(id).then((p) => { if (stillWanted()) setStylePreview(p); }).catch(() => { if (stillWanted()) setStylePreview({ id, label: id, summary: '', notes: [], problem: 'That look could not be read.' }); });
   };
 
   const open = (next: 'publish' | 'archive') => {
     setMode(next); setError(null); setPublished(null); setPlan(null); setTyped(''); setDone(null); setCopied(false); setSaved(null); setReplaceAsk(null); setDiscard(null);
+    // Start from Default every time, so a look picked the last time (perhaps for another site) is never used before this site's list has loaded.
+    wantedStyle.current = 'default'; setStyleId('default'); setStyleChoices([]); setStylePreview(null); setDraft(null);
     if (next === 'publish' && actions && lk) {
       lk.styleChoices(manifest.domain).then((list) => { setStyleChoices(list); const r = resolveDefaultLook({ domain: manifest.domain, choices: list, preference: actions.stylePreference, lastId: actions.lastStyleId }); setWhy(r.reason); setWhyId(r.id); pickStyle(r.id, list); }).catch(() => { setStyleChoices([]); setStyleId('default'); setStylePreview(null); });
     }
@@ -220,7 +226,7 @@ export function useAuditActions({ manifest, actions, onOpenUrl, onArchived }: Pr
         </div> : draft ? <div className="wo-audit-confirm-row">
           <button type="button" className="wo-audit-button is-primary" disabled={!canPublish || !formOk} aria-describedby={reason ? reasonId : undefined} title={formHint ?? 'Writes the profile file, then publishes the report with it'} onClick={() => saveProfile(true)}>{busy ? 'Working…' : 'Save profile and publish'}</button>
           <button type="button" className="wo-audit-button" disabled={busy || !formOk} title={formHint ?? 'Writes the profile file only; nothing is published'} onClick={() => saveProfile(false)}>Save profile</button>
-          <button type="button" className="wo-audit-button" disabled={!canPublish} title="Publishes now with the built-in look; the form is not saved" onClick={sendDefault}>Send with Default look</button>
+          <button type="button" className="wo-audit-button" disabled={!canPublish} title="Publishes now with the Default look (the built-in look, or default.json when the profiles folder has one); the form is not saved" onClick={sendDefault}>Send with Default look</button>
           <button type="button" className="wo-audit-link" onClick={cancelDraft}>Cancel</button>
         </div> : <div className="wo-audit-confirm-row">
           <button type="button" className="wo-audit-button is-primary" disabled={!canPublish || lookBlocked} aria-describedby={reason ? reasonId : undefined} onClick={publish}>{busy ? 'Creating…' : 'Approve and create report'}</button>
