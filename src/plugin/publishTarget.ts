@@ -52,6 +52,15 @@ const BARE_HOST = /^(localhost|127\.0\.0\.1|[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9]
 const DRIVE_PATH = /^[A-Za-z]:[\\/]/;
 const SSH =/^([A-Za-z0-9][A-Za-z0-9._@-]*):(\/[A-Za-z0-9._/~-]*)$/;
 export const OLD_SERVER_HINT = 'This server does not accept a report with a look yet. Update the report server and the ingest to 0.1.4 first, or publish with the Default look while the profiles folder has no default.json.';
+/**
+ * A report with a look that does not go through the https ingest (an SSH target, a folder target, the client reports folder, or a destination chosen later) carries the
+ * look inside its file. A report server older than 0.1.4 does not know that field and does not serve such a report at all, and unlike the https ingest it cannot be asked
+ * or answer, so the dialog says it before the report goes out.
+ */
+export const LOOK_NEEDS_SERVER_NOTE = 'This report carries a look, and it does not go through an https publish target, so the plugin cannot ask the report server for its version. The look needs report server 0.1.4 or later: an older server will not show this report at all. If unsure, publish without a look (the Default look while the profiles folder has no default.json).';
+export function lookServerNote(target: PublishTarget, carriesLook: boolean): string | null {
+  return carriesLook && target.kind !== 'https' ? LOOK_NEEDS_SERVER_NOTE : null;
+}
 const refused = (status: number) => `The server refused the upload (HTTP ${status}). Check the Publish secret and the Cloudflare Access ID and secret in Web-Obs settings (Client reports), and that the address is right. 3xx = Cloudflare Access login page (token missing or not accepted); 401/403/404 = credentials were rejected, access was blocked, or the route is wrong.`;
 
 export function parsePublishTarget(text: string): PublishTarget {

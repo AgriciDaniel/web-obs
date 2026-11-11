@@ -14,7 +14,7 @@ import path from 'node:path';
 import { profileTarget } from './profileSource';
 import { usText } from '../data/profileForm';
 import { contrast } from '../report/styles/color.mjs';
-import { BUNDLED_FONTS, deriveStyleOutput, validateStyles } from '../report/styles/styles.mjs';
+import { BUNDLED_FONTS, STYLE_SLOTS, deriveStyleOutput, validateStyles } from '../report/styles/styles.mjs';
 
 export const PROFILE_MAX_BYTES = 64 * 1024;
 export const DEFAULT_STYLES_SUBFOLDER = path.join('.web-obs', 'styles');
@@ -26,6 +26,18 @@ export interface StylePreview { id: string; label: string; styles: Record<string
 const isObj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v);
 const own = (o: Record<string, unknown>, k: string): unknown => (Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined);
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v.length > 0 ? v : undefined);
+
+/** Whether a key is within two edits of a styles name, ignoring case, dashes and underscores: a slip of the hand rather than a key of its own. */
+function nearStylesName(key: string): boolean {
+  const plain = (t: string) => t.toLowerCase().replace(/[-_ ]/g, '');
+  const k = plain(key); if (k.length < 3 || k.length > 24) return false;
+  const distance = (a: string, b: string): number => {
+    let row = Array.from({ length: b.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= a.length; i++) { const next = [i]; for (let j = 1; j <= b.length; j++) next[j] = Math.min(row[j] + 1, next[j - 1] + 1, row[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); row = next; }
+    return row[b.length];
+  };
+  return STYLE_SLOTS.some((slot) => { const t = plain(slot); return distance(k, t) <= (t.length <= 4 ? 1 : 2); });
+}
 
 /**
  * Turns a profile (or an already flat styles object) into flat styles. Never throws. `errors` is empty when `styles` is set.
@@ -39,7 +51,13 @@ export function profileToStyles(raw: unknown): { styles: Record<string, string> 
     if (!isObj(raw)) return { styles: null, notes, errors: ['The profile is not a JSON object.'] };
     let flat: Record<string, unknown>;
     if (!isObj(own(raw, 'colors'))) {
-      flat = raw; // already a flat styles file
+      // Already a flat styles file. Keys that are not styles names (a note someone keeps in the file, a key from a newer version) are left out and named,
+      // as the extra keys of a profile with "colors" are. The editor keeps them in the file; the validator and the server stay strict about what is sent.
+      flat = {};
+      const extra: string[] = [];
+      // A key that is nearly a styles name ("acent", "Surface") is a typo, not a note: it stays in, so the validator refuses the file and names the key.
+      for (const k of Object.keys(raw)) { if (STYLE_SLOTS.includes(k) || nearStylesName(k)) flat[k] = raw[k]; else extra.push(k); }
+      if (extra.length) notes.push(`${extra.slice(0, 5).map((k) => `"${k.slice(0, 40)}"`).join(', ')}${extra.length > 5 ? ` and ${extra.length - 5} more` : ''} ${extra.length === 1 ? 'is not a styles name and is' : 'are not styles names and are'} not sent.`);
     } else {
       const c = own(raw, 'colors') as Record<string, unknown>, f = isObj(own(raw, 'fonts')) ? (own(raw, 'fonts') as Record<string, unknown>) : {};
       const a = isObj(own(raw, 'attribution')) ? (own(raw, 'attribution') as Record<string, unknown>) : {};

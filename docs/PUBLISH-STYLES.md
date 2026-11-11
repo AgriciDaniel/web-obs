@@ -9,7 +9,7 @@ A client report can carry its own look: colors, two bundled fonts, the agency na
 | A report with a look, sent as the paired request | 0.1.4 or later |
 | The readability check that refuses an unreadable card color | 0.1.5 or later |
 | Text on cards (`cardText`, `cardMuted`) | 0.1.6 or later |
-| The shared style check this plugin copies (cards drawn opaque for dark text, readable label chips, readable built in colors) | 0.1.7 (the copy in `src/report/styles/` is the 0.1.7 code) |
+| The shared style check this plugin copies (cards drawn opaque for dark text, readable label chips, readable built in colors) | 0.1.7 (the copy in `src/report/styles/` is the 0.1.7 code: `apps/viewer/brand` at tag `v0.1.7`, commit `65eccc7c902f` of the report app; `scripts/verify-report-look.mjs` records it next to the hashes) |
 
 A report with the Default look is sent as a plain report and works with any server. A look that uses only the slots an older server knows works with that server; a look that uses `cardText` or `cardMuted` is refused by a server older than 0.1.6 (it does not know the names).
 
@@ -51,8 +51,8 @@ A file that is already a flat styles file (`{ "accent": "#F2994A", "name": "..."
 
 ## What Publish does
 
-1. The chosen file is read and turned into flat styles, then checked with the same validator the ingest and the report server use (`src/report/styles/styles.mjs`, an exact copy; `scripts/verify-report-look.mjs` checks it against the report app's sha256). A profile that needs a fix stops the publish with a plain message and nothing is sent.
-2. The report is built with the look inside it. For an https target the report is sent as ONE request with two named parts, `styles_<hash>` and `data_<hash>` (the hash is the first 12 hex characters of the SHA-256 of the styles). For a folder or ssh target the report file holds the look.
+1. The chosen file is read and turned into flat styles, then checked with the same validator the ingest and the report server use (`src/report/styles/styles.mjs`, an exact copy; `scripts/verify-report-look.mjs` checks it against the report app's sha256). A profile that needs a fix stops the publish with a plain message and nothing is sent. Keys in a profile file that are not styles names are left out and named in the dialog; they are never sent, and editing the profile keeps them in the file. A key that is nearly a styles name (`acent`, `Surface`) is treated as a typo and stops the publish with the key named.
+2. The report is built with the look inside it. For an https target the report is sent as ONE request with two named parts, `styles_<hash>` and `data_<hash>` (the hash is the first 12 hex characters of the SHA-256 of the styles). For a folder or ssh target the report file holds the look. Those routes skip the ingest, so the plugin cannot ask the server for its version: a report server older than 0.1.4 does not know the look field and does not show such a report at all (the link is refused like a bad one). The Publish dialog says so whenever a report with a look goes anywhere but an https target. If unsure, publish without a look.
 3. A server older than 0.1.4 refuses that request. The dialog says so: update the report server and the ingest first, or publish with the Default look. A report with the Default look publishes to any version, as long as the profiles folder has no `default.json` (a `default.json` makes Default carry a look).
 4. The dialog shows a one-line summary of the look (accent, card color, fonts), what was adjusted for readability, and a reminder that everything in a look is visible to anyone who has the report link. Put no private notes or contact details in a profile.
 
@@ -107,7 +107,7 @@ The setting **Default look when publishing** decides which Look the dialog prese
 | Client profile for this site, else the Agency profile, else Default (recommended, the default) | the client profile named after the site, else Agency, else Default |
 | Agency profile | Agency, else Default |
 | Default look | Default |
-| Remember my last choice | the look used last time if it still exists, else the recommended order above |
+| Remember my last choice | the look used last time if it still exists; a client profile is reused only for its own site; else the recommended order above |
 
 A look that has no profile file yet is never preselected.
 

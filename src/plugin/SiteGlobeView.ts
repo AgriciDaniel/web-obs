@@ -25,7 +25,7 @@ import {
 } from '../obsidian/hostAdapter';
 import { exportClientReport } from '../report/exportAudit';
 import { archiveToTrash, planArchive, reportLink, writeReportFile } from './auditActions';
-import { describeTarget, parsePublishTarget, publishToTarget } from './publishTarget';
+import { describeTarget, lookServerNote, parsePublishTarget, publishToTarget } from './publishTarget';
 import { makeSecretProvider, type SecretStore } from './publishSecrets';
 import { askIngestSecret } from './publishSecretsUi';
 import { askDestination } from './publishDestinationUi';
@@ -565,7 +565,11 @@ export class SiteGlobeView extends ItemView {
         if (styleId !== 'agency' && !styleId.startsWith('client:')) return { ok: false, code: 'unsafe', message: 'That style choice cannot be created.' };
         return createProfile(resolveStylesFolder(vaultRoot, settings().stylesFolder), styleId === 'agency' ? 'agency' : 'client', m.domain, form, overwrite);
       },
-      previewStyle: async (styleId) => loadStyleChoice(resolveStylesFolder(vaultRoot, settings().stylesFolder), styleId),
+      previewStyle: async (styleId) => {
+        const preview = loadStyleChoice(resolveStylesFolder(vaultRoot, settings().stylesFolder), styleId);
+        const note = lookServerNote(parsePublishTarget(settings().publishTarget), Boolean(preview.styles) && !preview.problem);
+        return note ? { ...preview, notes: [...preview.notes, note] } : preview;
+      },
       publish: async (siteId, approvedBy, styleId = 'default') => {
         const s = settings();
         // The look is read and checked BEFORE anything is built or sent; a profile that needs a fix stops the publish with a plain message.

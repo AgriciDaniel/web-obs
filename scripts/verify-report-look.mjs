@@ -25,7 +25,15 @@ const SHA = {
   'styles.mjs': '9fe38cdc31682188dbddddee8780489c860da6b6e38cc5f9dfd927898cfa5ad0',
   'styles-hash.mjs': '86abbb1ae3a63a0deed80f6008b135ed80644153537da43941aadcb212858d60',
 };
+// Where the three copies come from. The hashes above catch an edit here; this names what they were copied from, so drift from the report app can be seen by
+// comparing against that commit. (The report app repository is private: gcollins808/web-obs-client-report.)
+const SOURCE = { app: 'web-obs-client-report', version: '0.1.7', tag: 'v0.1.7', commit: '65eccc7c902fb8ce525719e3a8a0d846b842d1bb', folder: 'apps/viewer/brand', files: Object.keys(SHA) };
 console.log('the shared styles code');
+await ok('the copies name their source (report app version, tag, commit and paths), and the docs and the README of the copy name the same version and commit', () => {
+  assert.match(SOURCE.commit, /^[0-9a-f]{40}$/); assert.equal(SOURCE.tag, 'v' + SOURCE.version); assert.deepEqual(SOURCE.files, ['color.mjs', 'styles.mjs', 'styles-hash.mjs']);
+  const readme = fs.readFileSync(path.join('src', 'report', 'styles', 'README.md'), 'utf8'), docs = fs.readFileSync(path.join('docs', 'PUBLISH-STYLES.md'), 'utf8');
+  for (const [name, text] of [['README', readme], ['PUBLISH-STYLES', docs]]) { assert.ok(text.includes(SOURCE.version), name + ' names the version'); assert.ok(text.includes(SOURCE.commit.slice(0, 12)), name + ' names the commit'); assert.ok(text.includes(SOURCE.folder), name + ' names the folder'); }
+});
 await ok('the three shared modules match the report app files (sha256), so a copy that drifts fails here', () => {
   for (const [f, h] of Object.entries(SHA)) assert.equal(crypto.createHash('sha256').update(fs.readFileSync(path.join('src', 'report', 'styles', f), 'utf8').split(String.fromCharCode(13, 10)).join(String.fromCharCode(10))).digest('hex'), h, f); // line endings
 });

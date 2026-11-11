@@ -32,7 +32,9 @@ export function resolveDefaultLook(input: { domain: string; choices: LookChoiceL
     if (pref === 'default') return { id: 'default', reason: 'Chosen because your setting is Default look. Change it above for this report.' };
     if (pref === 'agency') return have('agency') ? { id: 'agency', reason: 'Chosen because your setting is the Agency profile. Change it above for this report.' } : { id: 'default', reason: 'Your setting is the Agency profile, but there is none yet, so the built-in look is used.' };
     if (pref === 'last') {
-      if (input.lastId && have(input.lastId)) return { id: input.lastId, reason: 'Chosen because it is the look you used last time. Change it above for this report.' };
+      // A client profile belongs to one site: the one used last time for another client is never preselected here.
+      const othersClient = norm(input.lastId).startsWith('client:') && norm(input.lastId) !== norm(clientId);
+      if (input.lastId && have(input.lastId) && !othersClient) return { id: input.lastId, reason: 'Chosen because it is the look you used last time. Change it above for this report.' };
       return auto();
     }
     return auto();

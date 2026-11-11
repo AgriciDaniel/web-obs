@@ -434,7 +434,7 @@ const { validateStyles } = await import('../src/report/styles/styles.mjs');
     const r = (pref, c, a, lastId) => D.resolveDefaultLook({ domain: 'example-client.com', choices: CHOICES(c, a), preference: pref, lastId });
     assert.equal(r('agency', true, true).id, 'agency', 'agency wins over the client file'); assert.equal(r('agency', true, false).id, 'default'); assert.match(r('agency', true, false).reason, /none yet/);
     assert.equal(r('default', true, true).id, 'default');
-    assert.equal(r('last', true, true, 'client:other.test.json').id, 'client:other.test.json'); assert.equal(r('last', true, true, 'agency').id, 'agency'); assert.equal(r('last', true, true, 'default').id, 'default');
+    assert.equal(r('last', true, true, 'client:other.test.json').id, 'client:example-client.com.json', "another client's profile is not reused for this site"); assert.equal(r('last', true, true, 'agency').id, 'agency'); assert.equal(r('last', true, true, 'default').id, 'default');
     assert.equal(r('last', true, true, 'client:gone.test.json').id, 'client:example-client.com.json', 'a last choice that no longer exists falls back to auto'); assert.equal(r('last', false, true, undefined).id, 'agency');
     assert.equal(r('last', true, true, 'client:example-client.com.json').id, 'client:example-client.com.json');
   });
@@ -446,6 +446,53 @@ const { validateStyles } = await import('../src/report/styles/styles.mjs');
   });
   await ok('the seam: profileSource.ts exports the decision and the edit functions beside findProfile and createProfile', () => {
     for (const k of ['findProfile', 'createProfile', 'resolveDefaultLook', 'readProfileForEdit', 'updateProfile']) assert.equal(typeof S[k], 'function', k);
+  });
+}
+
+// ---- review of the look: extra keys in a flat file, targets that cannot be asked for their version, a remembered client profile ----
+{
+  const P = await load('src/plugin/stylesProfiles.ts');
+  const T = await load('src/plugin/publishTarget.ts');
+  const L = await load('src/data/defaultLook.ts');
+  console.log('review answers');
+  await ok('a flat profile with extra keys publishes: the extra keys are left out and named, and the file the editor keeps is the one that publishes', () => {
+    const flat = { name: 'Flat', accent: '#2a7fff', surface: '#101010', keepMe: true, note_to_self: 'ask about the logo' };
+    assert.equal(validateStyles(flat).ok, false, 'the shared validator itself stays strict');
+    const r = P.profileToStyles(flat);
+    assert.deepEqual(r.errors, []); assert.deepEqual(r.styles, { name: 'Flat', accent: '#2a7fff', surface: '#101010' });
+    assert.ok(r.notes.some((x) => x.includes('"keepMe"') && x.includes('"note_to_self"') && x.includes('not sent')), r.notes.join(' | '));
+    assert.equal(JSON.stringify(r.styles).includes('logo'), false, 'nothing of an extra key is sent');
+    const one = P.profileToStyles({ accent: '#2a7fff', keepMe: 1 }); assert.ok(one.notes.some((x) => x === '"keepMe" is not a styles name and is not sent.'), one.notes.join(' | '));
+    const many = P.profileToStyles({ accent: '#2a7fff', a1: 1, a2: 1, a3: 1, a4: 1, a5: 1, a6: 1, a7: 1 }); assert.ok(many.notes.some((x) => x.includes('and 2 more')), many.notes.join(' | '));
+    assert.deepEqual(P.profileToStyles({ accent: '#2a7fff' }).notes, [], 'a flat file without extra keys has no note');
+  });
+  await ok('a wrong value in a flat profile still stops the publish, with or without extra keys', () => {
+    const r = P.profileToStyles({ accent: 'red', keepMe: true }); assert.equal(r.styles, null); assert.ok(r.errors[0].includes('accent'));
+  });
+  await ok('a key that is nearly a styles name is a typo and still stops the publish with the key named; a key of its own does not', () => {
+    for (const typo of ['acent', 'Accent', 'surfase', 'card_text', 'headingfont', 'footer-text', 'lnk']) { const r = P.profileToStyles({ accent: '#2a7fff', [typo]: '#112233' }); assert.equal(r.styles, null, typo); assert.ok(r.errors[0].includes(`"${typo}"`), typo + ': ' + r.errors[0]); }
+    for (const own of ['keepMe', 'note_to_self', 'voice', 'logo', 'updated', 'x', 'comment']) { const r = P.profileToStyles({ accent: '#2a7fff', [own]: 'anything' }); assert.deepEqual(r.styles, { accent: '#2a7fff' }, own); assert.ok(r.notes[0].includes(`"${own}"`), own); }
+  });
+  await ok('a look on a target that is not https says it needs report server 0.1.4 or later; https and a report without a look say nothing', () => {
+    for (const text of ['reports@host.example.com:/srv/reports', 'C:\\reports\\out', '']) {
+      const note = T.lookServerNote(T.parsePublishTarget(text), true);
+      assert.ok(note && note.includes('0.1.4 or later') && note.includes('will not show this report at all') && note.includes('no default.json'), text);
+      assert.equal(T.lookServerNote(T.parsePublishTarget(text), false), null, text + ' without a look');
+    }
+    assert.equal(T.lookServerNote(T.parsePublishTarget('https://audit.example.com'), true), null, 'the https ingest answers for itself (OLD_SERVER_HINT)');
+    const view = fs.readFileSync('src/plugin/SiteGlobeView.ts', 'utf8');
+    assert.ok(view.includes('lookServerNote(parsePublishTarget(settings().publishTarget), Boolean(preview.styles) && !preview.problem)'), 'the Publish dialog preview carries the note');
+  });
+  await ok('with Remember my last choice, a client profile is reused only for its own site', () => {
+    const choices = [{ id: 'default' }, { id: 'agency' }, { id: 'client:alpha.test.json' }, { id: 'client:beta.test.json' }];
+    const pick = (domain, lastId, list = choices) => L.resolveDefaultLook({ domain, choices: list, preference: 'last', lastId }).id;
+    assert.equal(pick('alpha.test', 'client:alpha.test.json'), 'client:alpha.test.json', 'the same site gets its profile again');
+    assert.equal(pick('ALPHA.test', 'client:alpha.test.json'), 'client:alpha.test.json');
+    assert.equal(pick('beta.test', 'client:alpha.test.json'), 'client:beta.test.json', "another site falls back to its own profile, never the other client's");
+    assert.equal(pick('gamma.test', 'client:alpha.test.json'), 'agency', 'a site without a profile falls back to the Agency profile');
+    assert.equal(pick('gamma.test', 'client:alpha.test.json', [{ id: 'default' }, { id: 'client:alpha.test.json' }]), 'default');
+    assert.equal(pick('beta.test', 'agency'), 'agency', 'a remembered Agency or Default choice is reused for any site');
+    assert.equal(pick('beta.test', 'default'), 'default');
   });
 }
 
