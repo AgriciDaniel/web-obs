@@ -28,6 +28,7 @@ import type { SiteGraphManifest } from '../types/site';
 import { makeCtx, stripForClient, validate, withAbsoluteTargets } from './core';
 import { buildDraft } from './draft';
 import { buildClientReport, isEmail, sealReport, validateClientReport } from './package';
+import { validateStyles } from './styles/styles.mjs';
 
 export interface ExportAuditOptions {
   /** A person must approve what goes to a client. */
@@ -35,6 +36,8 @@ export interface ExportAuditOptions {
   /** Where the client's feedback is sent (shown in the file; the report server may hold it instead). */
   feedbackTo?: string;
   createdAt?: string;
+  /** The look this report carries (flat styles, already built from a profile). Checked again here with the shared validator. */
+  styles?: Record<string, string>;
 }
 export interface ExportAuditResult { json: string; sizeKb: number; clientName: string; findings: number; top: string[] }
 
@@ -59,7 +62,9 @@ export async function exportClientReport(capture: SiteGraphManifest, opts: Expor
 
   const res = validate(w, m, { manifestSha: sha, mode: 'client' });
   if (!res.ok) throw new Error(`The report is not ready to send: ${res.errors[0]?.message ?? 'it failed its checks'}`);
-  const built = buildClientReport(w, m, { createdAt: opts.createdAt ?? new Date().toISOString(), feedbackDefaults: { to: feedbackTo } });
+  let styles: Record<string, string> | undefined;
+  if (opts.styles) { const v = validateStyles(opts.styles); if (!v.ok || !v.styles) throw new Error(`The look is not valid: ${v.errors[0] ?? 'it failed its checks'}`); styles = v.styles; }
+  const built = buildClientReport(w, m, { createdAt: opts.createdAt ?? new Date().toISOString(), feedbackDefaults: { to: feedbackTo }, ...(styles ? { styles } : {}) });
   const report = await sealReport(built, sha256Hex);
   const problems = validateClientReport(report, makeCtx(m));
   if (problems.length) throw new Error(`The client report failed its own checks: ${problems[0].where}: ${problems[0].message}`);

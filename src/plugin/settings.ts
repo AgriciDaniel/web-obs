@@ -11,6 +11,9 @@ import {
 import type { GlobeViewMode } from '../types/site';
 import { ensurePythonEngineReady } from './pythonRuntime';
 import { SECRET_NAMES, type SecretName } from './publishTarget';
+import { DEFAULT_LOOK_PREFERENCES, isDefaultLookPreference, type DefaultLookPreference } from '../data/defaultLook';
+import { listProfileSummaries, resolveStylesFolder } from './stylesProfiles';
+import { ProfileEditorModal } from './ProfileEditorModal';
 import { saveSecret, type SecretStore } from './publishSecrets';
 
 export interface WebObsPluginSettings {
@@ -47,6 +50,12 @@ export interface WebObsPluginSettings {
   clientApproverName: string;
   /** Where the client's feedback is addressed in the report file. Empty: none. */
   clientFeedbackEmail: string;
+  /** The folder with the style profiles for Publish (agency.json, clients/<name>.json, optional default.json). A full path, or relative to the vault. Empty: .web-obs/styles in the vault. */
+  stylesFolder: string;
+  /** The look chosen last time in the Publish dialog: default, agency or client:<file>. */
+  stylesChoice: string;
+  /** Which look the Publish dialog starts on: auto (client profile for the site, else the Agency profile, else Default), agency, default or last. */
+  defaultLook: DefaultLookPreference;
 }
 
 export const DEFAULT_WEB_OBS_SETTINGS: WebObsPluginSettings = {
@@ -75,6 +84,9 @@ export const DEFAULT_WEB_OBS_SETTINGS: WebObsPluginSettings = {
   publishEnvSecrets: false,
   clientApproverName: '',
   clientFeedbackEmail: '',
+  stylesFolder: '',
+  stylesChoice: 'default',
+  defaultLook: 'auto',
 };
 
 interface SettingTabBridge {
@@ -91,6 +103,23 @@ export class WebObsSettingTab extends PluginSettingTab {
     super(app, plugin);
     this.pluginRef = plugin;
     this.bridge = bridge;
+  }
+
+  /** The "Style profiles" list: Agency and each client profile with a one-line summary and any problem, with Edit. There is no delete in this version. */
+  private renderStyleProfiles(containerEl: HTMLElement): void {
+    new Setting(containerEl).setName('Style profiles').setHeading();
+    const adapter = this.app.vault.adapter;
+    const vaultBase = adapter instanceof FileSystemAdapter ? adapter.getBasePath() : '.';
+    const folder = resolveStylesFolder(vaultBase, this.bridge.settings.stylesFolder);
+    const list = listProfileSummaries(folder);
+    const intro = containerEl.createEl('p', { cls: 'setting-item-description', text: list.length ? 'Edit changes the profile file in place and keeps the previous version as a .bak copy next to it. There is no delete in this version: to remove a profile, delete its file in the styles folder.' : 'No style profiles yet. Create one from the Look list when you press Publish on an audit.' });
+    void intro;
+    for (const p of list) {
+      new Setting(containerEl)
+        .setName((p.kind === 'agency' ? 'Agency: ' : 'Client: ') + p.label)
+        .setDesc(p.problem ? 'Needs a fix: ' + p.problem : p.summary)
+        .addButton((b) => b.setButtonText('Edit').onClick(() => new ProfileEditorModal(this.app, { folder, id: p.id, onDone: () => { containerEl.empty(); this.renderSettings(containerEl); } }).open()));
+    }
   }
 
   // Modern Obsidian can discover the tab through settings search. Older hosts use display().
@@ -349,7 +378,7 @@ export class WebObsSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl).setName('Client reports').setHeading();
-    const text = (name: string, desc: string, key: 'clientReportsFolder' | 'clientReportLinkBase' | 'clientApproverName' | 'clientFeedbackEmail' | 'publishTarget' | 'publishLinkBase', placeholder: string) =>
+    const text = (name: string, desc: string, key: 'clientReportsFolder' | 'clientReportLinkBase' | 'clientApproverName' | 'clientFeedbackEmail' | 'publishTarget' | 'publishLinkBase' | 'stylesFolder', placeholder: string) =>
       new Setting(containerEl).setName(name).setDesc(desc).addText((t) => t
         .setPlaceholder(placeholder)
         .setValue(this.bridge.settings[key])
@@ -376,6 +405,12 @@ export class WebObsSettingTab extends PluginSettingTab {
       .addToggle((tg) => tg.setValue(this.bridge.settings.publishEnvSecrets).onChange(async (v) => { this.bridge.settings.publishEnvSecrets = v; await this.bridge.saveSettings(); }));
     text('Report viewer address', 'For ssh and folder targets: the public address of the report viewer, for example https://audit.example.com, so the link can be shown. Not needed for https.', 'publishLinkBase', 'https://audit.example.com');
     text('Approved by', 'Your name, pre-filled when you publish. A person approves what goes to a client.', 'clientApproverName', 'Your name');
+    text('Style profiles folder', 'Optional. The folder with the looks Publish can send with a report: agency.json, a clients folder with one file per client, and an optional default.json. A full path, or a path inside the vault. Empty: .web-obs/styles in the vault. Everything in these files is visible to anyone who has the report link.', 'stylesFolder', '.web-obs/styles');
+    new Setting(containerEl).setName('Default look when publishing').setDesc('Which look the dialog starts on. You can change it for each report. The recommended choice uses the client profile named after the site, then the agency profile, then the default look.').addDropdown((d) => {
+      for (const p of DEFAULT_LOOK_PREFERENCES) d.addOption(p.id, p.label);
+      d.setValue(isDefaultLookPreference(this.bridge.settings.defaultLook) ? this.bridge.settings.defaultLook : 'auto').onChange(async (v) => { this.bridge.settings.defaultLook = isDefaultLookPreference(v) ? v : 'auto'; await this.bridge.saveSettings(); });
+    });
+    this.renderStyleProfiles(containerEl);
     text('Client feedback address', 'Where the client report says feedback is sent. Optional.', 'clientFeedbackEmail', 'you@your-agency.example');
   }
 }

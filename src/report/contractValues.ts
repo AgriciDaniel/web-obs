@@ -79,6 +79,7 @@ export const REPORT_SPEC = obj({
   }),
   client: obj({ name: line(200), domain: re(253, '^[A-Za-z0-9._:-]+$'), accent: nul(HEXC), preparedFor: line(200), presenter: line(200), logo: line(100), theme: obj({ accent: HEXC, secondary: HEXC, dark: TOKENS, light: TOKENS }) }),
   feedback: obj({ to: re(254, EMAIL), subject: line(300) }),
+  styles: obj({ accent: HEXC, secondary: HEXC, link: HEXC, text: HEXC, muted: HEXC, surface: HEXC, cardText: HEXC, cardMuted: HEXC, headingFont: en('Oswald', 'Inter'), bodyFont: en('Oswald', 'Inter'), headingCase: en('uppercase', 'none', 'capitalize', 'lowercase'), name: line(160), footerText: line(240) }), // the styles validator is the authority (80 and 120 characters, counted as characters); these allow the same text counted in UTF-16 units
   labels: obj({ RAW: line(100), FETCH: line(100), LAB: line(100), INFER: line(100), SCOPE: line(100) }),
   summary: obj({ pagesMapped: num, findingsCount: num, bySeverity: obj({ high: num, medium: num, low: num }) }),
   findings: arr(FINDING, 200), glossary: arr(obj({ id: line(100), term: line(200), plain: text(2000) }), 200),

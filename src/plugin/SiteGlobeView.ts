@@ -25,10 +25,13 @@ import {
 } from '../obsidian/hostAdapter';
 import { exportClientReport } from '../report/exportAudit';
 import { archiveToTrash, planArchive, reportLink, writeReportFile } from './auditActions';
-import { describeTarget, parsePublishTarget, publishToTarget } from './publishTarget';
+import { describeTarget, lookServerNote, parsePublishTarget, publishToTarget } from './publishTarget';
 import { makeSecretProvider, type SecretStore } from './publishSecrets';
 import { askIngestSecret } from './publishSecretsUi';
 import { askDestination } from './publishDestinationUi';
+import { listStyleChoices, loadStyleChoice, resolveStylesFolder } from './stylesProfiles';
+import { agencyNameFromFolder, createProfile, readProfileForEdit, updateProfile } from './profileSource';
+import { draftFromManifest } from '../data/profileForm';
 import type {
   AuditActions,
   CrawlOptions,
@@ -545,8 +548,33 @@ export class SiteGlobeView extends ItemView {
       get approver() { return settings().clientApproverName; },
       get publishReady() { return true; }, // with nothing set, Publish opens the destination dialog
       get publishTargetLabel() { try { const p = parsePublishTarget(settings().publishTarget); return p.kind === 'none' ? null : describeTarget(p); } catch { return null; } },
-      publish: async (siteId, approvedBy) => {
+      get lastStyleId() { return settings().stylesChoice; },
+      get stylePreference() { return settings().defaultLook; },
+      styleEdit: async (styleId) => readProfileForEdit(resolveStylesFolder(vaultRoot, settings().stylesFolder), styleId),
+      saveStyleEdit: async (styleId, initial, form, baseHash) => updateProfile(resolveStylesFolder(vaultRoot, settings().stylesFolder), styleId, initial, form, baseHash),
+      styleChoices: async (domain) => listStyleChoices(resolveStylesFolder(vaultRoot, settings().stylesFolder), domain),
+      styleDraft: async (siteId, styleId) => {
+        const m = await this.loadVaultSiteManifest(siteId);
+        const agencyName = agencyNameFromFolder(resolveStylesFolder(vaultRoot, settings().stylesFolder));
+        return draftFromManifest(m, styleId === 'agency' ? 'agency' : 'client', agencyName);
+      },
+      saveStyleProfile: async (siteId, styleId, form, overwrite = false) => {
+        // Only the Save button reaches this. The file name comes from the capture's domain, never from the form.
+        const m = await this.loadVaultSiteManifest(siteId);
+        if (!m) return { ok: false, code: 'failed', message: 'That capture could not be read.' };
+        if (styleId !== 'agency' && !styleId.startsWith('client:')) return { ok: false, code: 'unsafe', message: 'That style choice cannot be created.' };
+        return createProfile(resolveStylesFolder(vaultRoot, settings().stylesFolder), styleId === 'agency' ? 'agency' : 'client', m.domain, form, overwrite);
+      },
+      previewStyle: async (styleId) => {
+        const preview = loadStyleChoice(resolveStylesFolder(vaultRoot, settings().stylesFolder), styleId);
+        const note = lookServerNote(parsePublishTarget(settings().publishTarget), Boolean(preview.styles) && !preview.problem);
+        return note ? { ...preview, notes: [...preview.notes, note] } : preview;
+      },
+      publish: async (siteId, approvedBy, styleId = 'default') => {
         const s = settings();
+        // The look is read and checked BEFORE anything is built or sent; a profile that needs a fix stops the publish with a plain message.
+        const look = loadStyleChoice(resolveStylesFolder(vaultRoot, s.stylesFolder), styleId);
+        if (look.problem) throw new Error(look.problem);
         // Publish with push: when a publish target is set the report is sent there and the link comes back; the file is not also saved locally.
         let target = parsePublishTarget(s.publishTarget);
         let folder = s.clientReportsFolder.trim();
@@ -560,16 +588,17 @@ export class SiteGlobeView extends ItemView {
         }
         const manifest = await this.loadVaultSiteManifest(siteId);
         if (!manifest) throw new Error('That capture could not be read.');
-        const result = await exportClientReport(manifest, { approvedBy, feedbackTo: s.clientFeedbackEmail || undefined });
+        const result = await exportClientReport(manifest, { approvedBy, feedbackTo: s.clientFeedbackEmail || undefined, ...(look.styles ? { styles: look.styles } : {}) });
+        if (s.stylesChoice !== styleId) { s.stylesChoice = styleId; await this.plugin.saveSettings?.(); }
         if (target.kind !== 'none') {
           const store = (this.app as unknown as { secretStorage?: SecretStore }).secretStorage;
           const secret = makeSecretProvider({ store, session: this.publishSecretMemory,
             ask: () => s.publishEnvSecrets && process.env.WEBOBS_INGEST_SECRET ? Promise.resolve(null) : askIngestSecret(this.app) });
           const pushed = await publishToTarget(target, result.json, { hours: 72, linkBase: s.publishLinkBase, deps: { secret, env: s.publishEnvSecrets ? process.env : undefined } });
-          return { file: null, folder: null, pushedTo: pushed.via, expires: pushed.expires, link: pushed.link, sizeKb: result.sizeKb, clientName: result.clientName, findings: result.findings, top: result.top };
+          return { lookLabel: look.styles ? look.label : undefined, file: null, folder: null, pushedTo: pushed.via, expires: pushed.expires, link: pushed.link, sizeKb: result.sizeKb, clientName: result.clientName, findings: result.findings, top: result.top };
         }
         const { file } = writeReportFile(folder, result.json);
-        return { file, folder, link: s.clientReportLinkBase.trim() ? reportLink(s.clientReportLinkBase, file) : null, sizeKb: result.sizeKb, clientName: result.clientName, findings: result.findings, top: result.top };
+        return { lookLabel: look.styles ? look.label : undefined, file, folder, link: s.clientReportLinkBase.trim() ? reportLink(s.clientReportLinkBase, file) : null, sizeKb: result.sizeKb, clientName: result.clientName, findings: result.findings, top: result.top };
       },
       previewArchive: async (siteId) => { assertArchiveIdle(); return planArchive(vaultRoot, siteId); },
       archive: async (siteId, confirm) => {

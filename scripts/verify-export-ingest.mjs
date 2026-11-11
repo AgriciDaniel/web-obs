@@ -24,13 +24,15 @@ const { createServer } = await import(pathToFileURL(path.join(serverDir, 'server
 
 const manifest = structuredClone(PREVIEW_SITE_MANIFEST);
 const exported = await exportClientReport(manifest, { approvedBy: 'Test Approver', feedbackTo: 'feedback@agency.example' });
+const LOOK = { accent: '#F2994A', surface: '#101010', headingFont: 'Oswald', bodyFont: 'Inter', name: 'Example Agency', footerText: 'Prepared by Example Agency' };
+const looked = await exportClientReport(manifest, { approvedBy: 'Test Approver', styles: LOOK });
 const without = await exportClientReport(manifest, { approvedBy: 'Test Approver' });
 assert.deepEqual(checkIncomingReport(JSON.parse(exported.json)), [], 'the checker finds no problem in the exporter output');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'wo-export-ingest-'));
 const reportsDir = path.join(tmp, 'reports'), registryDir = path.join(tmp, 'registry');
 fs.mkdirSync(reportsDir); fs.mkdirSync(registryDir);
-fs.writeFileSync(path.join(tmp, 'app.html'), '<html></html>');
+fs.writeFileSync(path.join(tmp, 'app.html'), '<html><head><title>Website review</title><!--wo-brand--></head><body></body></html>');
 const SECRET = 'export-ingest-secret-' + 'x'.repeat(30);
 const ing = createIngestServer({ enabled: true, secret: SECRET, reportsDir, registryDir, auditLog: path.join(tmp, 'audit.log'), publicBase: 'https://audit.example.test', requireHttps: false, trustProxy: false, deniedDelayMs: 0, requireAccessHeader: false, acknowledgeNoEdgeAuth: true });
 await new Promise((r) => ing.server.listen(0, '127.0.0.1', r));
@@ -48,6 +50,20 @@ try {
     assert.equal(served.status, 200, `and the viewer server serves it ${name}`);
     assert.equal((await served.json()).format, 'webobs.client-report');
   }
+  // A report that carries a look: the plugin's own https publish sends the two-part request, the real ingest accepts it, the real viewer server serves the look.
+  let sentBody = '';
+  const post = async (url, headers, body) => { sentBody = body; const r = await fetch(url, { method: 'POST', headers: { ...headers, ...H }, body }); return { status: r.status, body: await r.text() }; };
+  const pushed = await publishToTarget(parsePublishTarget('http://127.0.0.1:' + ing.server.address().port), looked.json, { hours: 24, deps: { secret: () => SECRET, post } });
+  const parts = Object.keys(JSON.parse(sentBody));
+  assert.equal(parts.length, 2, 'the request has exactly two parts');
+  assert.ok(parts.some((k) => k.startsWith('styles_')) && parts.some((k) => k.startsWith('data_')), 'named styles_<hash> and data_<hash>');
+  assert.equal(parts[0].split('_')[1], parts[1].split('_')[1], 'with the same hash');
+  const tok = pushed.link.split('/r/')[1];
+  const page = await (await fetch(`http://127.0.0.1:${view.server.address().port}/r/${tok}`, { headers: H })).text();
+  assert.ok(page.includes('id="wo-styles"') && page.includes('--rp-accent:#f2994a') && page.includes('<title>Example Agency'), 'the viewer server writes the look into the first bytes of the page');
+  const stored = fs.readdirSync(reportsDir).map((f) => JSON.parse(fs.readFileSync(path.join(reportsDir, f), 'utf8')));
+  assert.equal(stored.filter((r) => r.styles).length, 1, 'the look was stored with its report');
+  console.log('Publish with a look OK: the plugin exporter and https publish send the two-part request, the ingest accepts it (201), and the viewer server serves the look.');
 } finally {
   await new Promise((r) => ing.server.close(r)); await new Promise((r) => view.server.close(r));
   fs.rmSync(tmp, { recursive: true, force: true });

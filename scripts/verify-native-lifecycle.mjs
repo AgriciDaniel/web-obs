@@ -84,7 +84,7 @@ async function hostHarness({ deferred = false, manifest = fixture, spawnError = 
     './engineStop': engineStop,
     obsidian: { ItemView, FileSystemAdapter: Adapter, Notice: class { constructor(message) { notices.push(message); } }, TFile: class {}, normalizePath: (value) => value },
     '../App': {},
-    '../report/exportAudit': {}, './auditActions': { planArchive: (_vault, domain) => ({ domain }) }, './publishTarget': {}, './publishSecrets': {}, './publishSecretsUi': {}, './publishDestinationUi': {},
+    '../report/exportAudit': {}, './auditActions': { planArchive: (_vault, domain) => ({ domain }) }, './publishTarget': {}, './publishSecrets': {}, './publishSecretsUi': {}, './publishDestinationUi': {}, './stylesProfiles': {}, './profileSource': {}, '../data/profileForm': {},
     '../obsidian/hostAdapter': {
       WEB_OBS_VIEW_TYPE: 'web-obs-site-globe', sanitizeExternalHttpUrl: () => null,
       sanitizeVaultRelativePath: (value) => value,
