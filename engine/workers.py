@@ -219,8 +219,16 @@ def _stop_owned(process, known=None):
     if process.is_alive() or owned:
         if os.name == 'nt':
             import subprocess
-            subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
-                           stdin=subprocess.DEVNULL, capture_output=True, timeout=3, check=False)
+            try:
+                subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
+                               stdin=subprocess.DEVNULL, capture_output=True, timeout=10, check=False)
+            except subprocess.TimeoutExpired:
+                # taskkill can outlast its limit on a busy machine. End the
+                # worker directly and report it if it still does not exit.
+                process.kill()
+                process.join(timeout=2)
+                if process.is_alive():
+                    raise WorkerError('Owned process cleanup could not be confirmed within its grace period.') from None
         else:
             # Browser launchers can create their own process group. Kill each
             # verified owned group as well as individual descendants.
